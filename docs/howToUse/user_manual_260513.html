@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — 사용설명서</title>
+<meta name="description" content="User Manual v1.0 · 2026-05-13 · Phase 0 기준">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #ea580c; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic',
+        sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* ---------- Topbar ---------- */
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 24px;
+}
+.topbar .brand {
+    font-weight: 700;
+    color: var(--fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.05rem;
+}
+.topbar .brand .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+}
+.topbar nav {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    align-items: center;
+}
+.topbar nav a {
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+    text-decoration: none;
+    font-size: 0.92rem;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+}
+.topbar nav a:hover { background: var(--accent-soft); color: var(--accent); }
+.topbar nav a.active { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- Layout ---------- */
+.layout {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    gap: 36px;
+}
+
+/* ---------- TOC Sidebar ---------- */
+.toc {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+    max-height: calc(100vh - 110px);
+    overflow-y: auto;
+    padding: 18px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    font-size: 0.88rem;
+}
+.toc h3 {
+    margin: 0 0 10px;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-soft);
+    font-weight: 600;
+}
+.toc ul { list-style: none; padding-left: 12px; margin: 4px 0; }
+.toc > ul { padding-left: 0; }
+.toc li { margin: 2px 0; }
+.toc a {
+    display: block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: var(--fg-muted);
+    text-decoration: none;
+    line-height: 1.3;
+    transition: background 0.12s, color 0.12s;
+}
+.toc a:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- Main content ---------- */
+.content {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 40px 56px 56px;
+    min-width: 0;
+}
+
+.page-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+    margin-bottom: 28px;
+}
+.page-header .tag {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 3px 10px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+.page-header h1 {
+    margin: 6px 0 4px;
+    font-size: 2.05rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+}
+.page-header .subtitle {
+    color: var(--fg-muted);
+    font-size: 0.95rem;
+}
+
+/* ---------- Typography ---------- */
+.content h1 { font-size: 1.95rem; margin: 36px 0 12px; line-height: 1.25; }
+.content h2 {
+    font-size: 1.55rem;
+    margin: 44px 0 14px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    line-height: 1.3;
+}
+.content h3 { font-size: 1.22rem; margin: 28px 0 10px; }
+.content h4 { font-size: 1.05rem; margin: 22px 0 8px; }
+.content h5 { font-size: 0.95rem; margin: 18px 0 6px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.content p { margin: 0 0 14px; }
+.content ul, .content ol { margin: 0 0 16px; padding-left: 26px; }
+.content li { margin: 4px 0; }
+.content li > ul, .content li > ol { margin: 4px 0; }
+
+.content a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 30%, transparent); text-underline-offset: 3px; }
+.content a:hover { text-decoration-color: var(--accent); }
+
+.content strong { color: var(--fg); font-weight: 700; }
+.content em { color: var(--fg); }
+
+.content hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 36px 0;
+}
+
+/* ---------- Header anchors ---------- */
+.content h1, .content h2, .content h3, .content h4 {
+    scroll-margin-top: 76px;
+    position: relative;
+}
+.headerlink {
+    color: var(--fg-soft);
+    text-decoration: none;
+    margin-left: 8px;
+    opacity: 0;
+    font-weight: 400;
+    transition: opacity 0.15s;
+}
+.content h1:hover .headerlink,
+.content h2:hover .headerlink,
+.content h3:hover .headerlink,
+.content h4:hover .headerlink { opacity: 1; }
+
+/* ---------- Tables ---------- */
+.content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0 20px;
+    font-size: 0.93rem;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+.content th {
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    font-size: 0.88rem;
+}
+.content td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    vertical-align: top;
+}
+.content tr:last-child td { border-bottom: none; }
+.content tr:hover td { background: var(--bg-soft); }
+
+/* ---------- Code ---------- */
+.content code {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Consolas, 'Liberation Mono', monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+}
+.content pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 16px 18px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    overflow-x: auto;
+    margin: 14px 0 20px;
+    line-height: 1.55;
+    font-size: 0.88rem;
+}
+.content pre code {
+    background: transparent;
+    padding: 0;
+    border: 0;
+    font-size: inherit;
+}
+
+/* ---------- Blockquote ---------- */
+.content blockquote {
+    margin: 16px 0;
+    padding: 12px 18px;
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--fg);
+}
+.content blockquote p:last-child { margin-bottom: 0; }
+
+/* ---------- Pygments syntax highlighting ---------- */
+.codehilite { background: var(--code-bg); }
+.codehilite .hll { background-color: #ffffcc; }
+.codehilite .c, .codehilite .ch, .codehilite .cm, .codehilite .c1, .codehilite .cs { color: #6a737d; font-style: italic; }
+.codehilite .err { color: #b31d28; }
+.codehilite .k, .codehilite .kc, .codehilite .kd, .codehilite .kn, .codehilite .kp, .codehilite .kr, .codehilite .kt { color: #d73a49; font-weight: 600; }
+.codehilite .o { color: #d73a49; }
+.codehilite .nb { color: #005cc5; }
+.codehilite .nf { color: #6f42c1; }
+.codehilite .s, .codehilite .s1, .codehilite .s2, .codehilite .sb, .codehilite .sc, .codehilite .sd { color: #032f62; }
+.codehilite .m, .codehilite .mi, .codehilite .mf { color: #005cc5; }
+.codehilite .ow { color: #d73a49; }
+.codehilite .nt { color: #22863a; }
+@media (prefers-color-scheme: dark) {
+    .codehilite .c, .codehilite .ch, .codehilite .cm, .codehilite .c1 { color: #6b7280; }
+    .codehilite .k, .codehilite .kt { color: #ff7b72; }
+    .codehilite .nb { color: #79c0ff; }
+    .codehilite .nf { color: #d2a8ff; }
+    .codehilite .s, .codehilite .s1, .codehilite .s2 { color: #a5d6ff; }
+    .codehilite .m, .codehilite .mi, .codehilite .mf { color: #79c0ff; }
+    .codehilite .ow { color: #ff7b72; }
+    .codehilite .nt { color: #7ee787; }
+}
+
+/* ---------- Footer ---------- */
+.footer {
+    text-align: center;
+    color: var(--fg-soft);
+    font-size: 0.85rem;
+    padding: 32px 0 12px;
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 920px) {
+    .layout { grid-template-columns: 1fr; padding: 16px; gap: 16px; }
+    .toc { position: static; max-height: none; }
+    .content { padding: 24px 18px 32px; }
+    .content h1 { font-size: 1.55rem; }
+    .content h2 { font-size: 1.3rem; }
+    .topbar { padding: 0 16px; gap: 12px; }
+    .topbar nav a { padding: 6px 8px; font-size: 0.86rem; }
+}
+
+/* ---------- Print ---------- */
+@media print {
+    .topbar, .toc { display: none; }
+    .layout { grid-template-columns: 1fr; padding: 0; }
+    .content { box-shadow: none; border: 0; padding: 0; }
+    body { background: white; }
+}
+
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a href="../index.html" class="brand"><span class="dot"></span>YCollector docs</a>
+  <nav>
+    <a href="../index.html">Index</a>
+    <a href="../plan/youtube_downloader_plan_260508.html">Plan</a>
+    <a href="../motif/youtube_downloader_motif_260508.html">Motif</a>
+    <a href="../howToUse/user_manual_260513.html" class="active">사용설명서</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="toc">
+    <h3>목차</h3>
+    
+<ul>
+<li><a href="#0">0. 한눈에 보기</a></li>
+<li><a href="#1">1. 시작하기</a><ul>
+<li><a href="#11">1.1 시스템 요구사항</a></li>
+<li><a href="#12-4">1.2 설치 — 4단계</a><ul>
+<li><a href="#step-1-python">Step 1. Python 설치</a></li>
+<li><a href="#step-2-uv">Step 2. uv 설치 (권장)</a></li>
+<li><a href="#step-3-ffmpeg">Step 3. FFmpeg 설치</a></li>
+<li><a href="#step-4-ycollector">Step 4. YCollector 설치</a></li>
+</ul>
+</li>
+<li><a href="#13">1.3 첫 다운로드</a></li>
+</ul>
+</li>
+<li><a href="#2-cli">2. CLI 사용법</a><ul>
+<li><a href="#21">2.1 명령 구조</a></li>
+<li><a href="#22">2.2 옵션 일람</a></li>
+<li><a href="#23">2.3 실전 예시</a><ul>
+<li><a href="#a">A. 한 영상</a></li>
+<li><a href="#b">B. 여러 영상 한 번에</a></li>
+<li><a href="#c">C. 출력 폴더 변경</a></li>
+<li><a href="#d-mkv">D. 최고 화질 + mkv</a></li>
+<li><a href="#e-m4a">E. 오디오만 (m4a)</a></li>
+<li><a href="#f">F. 한국어 자막만</a></li>
+<li><a href="#g">G. 비공개 / 멤버십 / 연령제한 영상</a></li>
+<li><a href="#h-url">H. URL 리스트 파일에서</a></li>
+<li><a href="#i-stdin">I. stdin 파이프 (다른 명령에서)</a></li>
+<li><a href="#j-yt-dlp">J. 재생목록 / 채널 (yt-dlp가 자동 펼침)</a></li>
+</ul>
+</li>
+<li><a href="#24">2.4 종료 코드</a></li>
+</ul>
+</li>
+<li><a href="#3-gui">3. GUI 사용법</a><ul>
+<li><a href="#31-phase-0-day-1">3.1 메인 윈도우 (Phase 0 Day 1)</a></li>
+<li><a href="#32">3.2 사용 흐름</a></li>
+<li><a href="#33">3.3 키보드</a></li>
+<li><a href="#34">3.4 출력 폴더 변경</a></li>
+</ul>
+</li>
+<li><a href="#4">4. 상황별 가이드</a><ul>
+<li><a href="#41">4.1 강의 / 튜토리얼 시리즈 보관</a></li>
+<li><a href="#42">4.2 음악 백업</a></li>
+<li><a href="#43">4.3 자기 채널 백업 (비공개 포함)</a></li>
+<li><a href="#44">4.4 라이브 방송</a></li>
+<li><a href="#45-4k-hdr">4.5 4K HDR 받기</a></li>
+<li><a href="#46-id">4.6 정확한 포맷 ID 고르기</a></li>
+</ul>
+</li>
+<li><a href="#5">5. 문제 해결</a><ul>
+<li><a href="#51-yt-dlp-not-found-in-path">5.1 yt-dlp not found in PATH</a></li>
+<li><a href="#52-ffmpeg-not-found">5.2 FFmpeg not found 또는 병합 실패</a></li>
+<li><a href="#53-sign-in-to-confirm-youre-not-a-bot">5.3 "Sign in to confirm you're not a bot"</a><ul>
+<li><a href="#1_1">1순위: 쿠키 임포트 (가장 효과적)</a></li>
+<li><a href="#2">2순위: 다른 브라우저 시도</a></li>
+<li><a href="#3-yt-dlp">3순위: yt-dlp 갱신</a></li>
+<li><a href="#4-potoken-provider-phase-2-ui">4순위: PoToken provider (Phase 2에서 가이디드 UI로 추가 예정)</a></li>
+</ul>
+</li>
+<li><a href="#54">5.4 다운로드가 너무 느림</a></li>
+<li><a href="#55">5.5 한글 파일명 깨짐</a></li>
+<li><a href="#56-4k">5.6 4K가 안 받아짐</a></li>
+<li><a href="#57-gui">5.7 GUI가 안 뜨고 에러</a></li>
+<li><a href="#58-requested-format-is-not-available">5.8 Requested format is not available</a></li>
+<li><a href="#59-ssl">5.9 SSL 인증서 에러</a></li>
+<li><a href="#510">5.10 디스크 가득 참</a></li>
+</ul>
+</li>
+<li><a href="#6-faq">6. 자주 묻는 질문 (FAQ)</a><ul>
+<li><a href="#q1">Q1. 무료인가요?</a></li>
+<li><a href="#q2">Q2. 어떤 사이트를 지원하나요?</a></li>
+<li><a href="#q3">Q3. 모바일에서 쓸 수 있나요?</a></li>
+<li><a href="#q4">Q4. 클라우드 동기화 되나요?</a></li>
+<li><a href="#q5-drm-youtube-movies">Q5. DRM 보호 영상(YouTube Movies 구매작 등)을 받을 수 있나요?</a></li>
+<li><a href="#q6">Q6. 저작권 문제는?</a></li>
+<li><a href="#q7">Q7. 채널 자동 동기화는 언제?</a></li>
+<li><a href="#q8-transcribe">Q8. 전사(Transcribe)는 언제?</a></li>
+<li><a href="#q9">Q9. 데이터 / 쿠키가 어디에 저장되나요?</a></li>
+<li><a href="#q10-yt-dlp">Q10. yt-dlp를 직접 쓰는 것과 뭐가 다른가요?</a></li>
+<li><a href="#q11-macos-linux">Q11. macOS / Linux에서도 되나요?</a></li>
+<li><a href="#q12">Q12. 업데이트는 어떻게?</a></li>
+</ul>
+</li>
+<li><a href="#7-roadmap">7. 향후 기능 (Roadmap 요약)</a></li>
+<li><a href="#8-6-d1d6">8. 차별화 6가지 (D1~D6 — 미래 가치)</a></li>
+<li><a href="#9">9. 도움 받기 / 기여</a></li>
+</ul>
+
+  </aside>
+
+  <main class="content">
+    <div class="page-header">
+      <span class="tag">USE</span>
+      <h1>YCollector — 사용설명서</h1>
+      <div class="subtitle">User Manual v1.0 · 2026-05-13 · Phase 0 기준</div>
+    </div>
+    <h1 id="ycollector">YCollector 사용설명서<a class="headerlink" href="#ycollector" title="Permanent link">¶</a></h1>
+<ul>
+<li><strong>문서 버전</strong>: 1.0 (Phase 0 Day 1 기준)</li>
+<li><strong>작성일</strong>: 2026-05-13 (YYMMDD: 260513)</li>
+<li><strong>대상</strong>: 데스크톱(Windows 우선) 사용자</li>
+<li><strong>연관</strong>:
+  <a href="../plan/youtube_downloader_plan_260508.html">설계 계획</a> ·
+  <a href="../motif/youtube_downloader_motif_260508.html">경쟁/모티프 조사</a> ·
+  <a href="../index.html">인덱스</a></li>
+</ul>
+<hr />
+<h2 id="0">0. 한눈에 보기<a class="headerlink" href="#0" title="Permanent link">¶</a></h2>
+<div class="codehilite"><pre><span></span><code>설치  →  uv sync           (의존성 설치)
+       →  uv run ycollector URL    (CLI 1회 다운로드)
+       →  uv run ycollector-gui    (GUI 실행)
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>단계</th>
+<th>명령</th>
+<th>결과</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>환경</td>
+<td><code>uv sync</code></td>
+<td><code>.venv</code> 자동 생성, yt-dlp+PySide6 설치</td>
+</tr>
+<tr>
+<td>한 영상</td>
+<td><code>uv run ycollector URL</code></td>
+<td><code>./downloads/&lt;업로더&gt;/&lt;제목&gt;.mp4</code></td>
+</tr>
+<tr>
+<td>여러 영상</td>
+<td><code>uv run ycollector --from urls.txt</code></td>
+<td>일괄 다운로드</td>
+</tr>
+<tr>
+<td>GUI</td>
+<td><code>uv run ycollector-gui</code></td>
+<td>메인 윈도우</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>본 도구는 <strong>자기 콘텐츠, 공개도메인, CC 라이선스, 또는 명시적 권한이 있는 콘텐츠</strong> 다운로드를 위한 것입니다. 저작권 침해는 사용자 책임입니다.</p>
+</blockquote>
+<hr />
+<h2 id="1">1. 시작하기<a class="headerlink" href="#1" title="Permanent link">¶</a></h2>
+<h3 id="11">1.1 시스템 요구사항<a class="headerlink" href="#11" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>항목</th>
+<th>권장</th>
+<th>최소</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OS</td>
+<td>Windows 11 / macOS 14 / Ubuntu 24.04</td>
+<td>Windows 10 1809+, macOS 12, Linux glibc 2.31+</td>
+</tr>
+<tr>
+<td>Python</td>
+<td>3.13</td>
+<td>3.11</td>
+</tr>
+<tr>
+<td>RAM</td>
+<td>8 GB</td>
+<td>4 GB</td>
+</tr>
+<tr>
+<td>디스크</td>
+<td>다운로드 크기 + 2 GB 여유</td>
+<td>동일</td>
+</tr>
+<tr>
+<td>네트워크</td>
+<td>유선/Wi-Fi 안정 연결</td>
+<td>동일</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12-4">1.2 설치 — 4단계<a class="headerlink" href="#12-4" title="Permanent link">¶</a></h3>
+<h4 id="step-1-python">Step 1. Python 설치<a class="headerlink" href="#step-1-python" title="Permanent link">¶</a></h4>
+<p><strong>Windows (winget)</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">winget</span> <span class="n">install</span> <span class="n">Python</span><span class="p">.</span><span class="n">Python</span><span class="p">.</span><span class="n">3</span><span class="p">.</span><span class="n">13</span>
+</code></pre></div>
+
+<p>또는 https://www.python.org/downloads/ 에서 3.13.x 인스톨러 → 설치 시 <strong>"Add to PATH" 체크</strong>.</p>
+<p>확인:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">python</span> <span class="p">-</span><span class="n">-version</span>
+<span class="c"># Python 3.13.x</span>
+</code></pre></div>
+
+<h4 id="step-2-uv">Step 2. uv 설치 (권장)<a class="headerlink" href="#step-2-uv" title="Permanent link">¶</a></h4>
+<p><code>uv</code>는 Astral의 빠른 Python 패키지 매니저. pip의 ~10×.</p>
+<p><strong>Windows PowerShell</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">ByPass</span> <span class="n">-c</span> <span class="s2">&quot;irm https://astral.sh/uv/install.ps1 | iex&quot;</span>
+</code></pre></div>
+
+<p>또는:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">winget</span> <span class="n">install</span> <span class="n">astral-sh</span><span class="p">.</span><span class="n">uv</span>
+</code></pre></div>
+
+<p>확인:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="p">-</span><span class="n">-version</span>
+<span class="c"># uv 0.9.x</span>
+</code></pre></div>
+
+<h4 id="step-3-ffmpeg">Step 3. FFmpeg 설치<a class="headerlink" href="#step-3-ffmpeg" title="Permanent link">¶</a></h4>
+<p>YouTube는 영상/오디오를 분리(DASH)해 보내므로 병합용 FFmpeg가 필수.</p>
+<p><strong>Windows (winget)</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">winget</span> <span class="n">install</span> <span class="n">Gyan</span><span class="p">.</span><span class="n">FFmpeg</span>
+</code></pre></div>
+
+<p>또는 https://www.gyan.dev/ffmpeg/builds/ 에서 <strong>release essentials</strong> 다운로드 → <code>C:\ffmpeg\</code> 압축 해제 → <code>C:\ffmpeg\bin</code>을 PATH에 추가.</p>
+<p>확인:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">ffmpeg</span> <span class="n">-version</span>
+<span class="c"># ffmpeg version 7.x ...</span>
+</code></pre></div>
+
+<blockquote>
+<p>Phase 1에서 FFmpeg 자동 번들 예정 — 사용자 설치 불필요해질 것.</p>
+</blockquote>
+<h4 id="step-4-ycollector">Step 4. YCollector 설치<a class="headerlink" href="#step-4-ycollector" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">git</span> <span class="n">clone</span> <span class="n">https</span><span class="p">://</span><span class="n">github</span><span class="p">.</span><span class="n">com</span><span class="p">/</span><span class="n">dalyulbam</span><span class="p">/</span><span class="n">YCollector</span><span class="p">.</span><span class="n">git</span>
+<span class="nb">cd </span><span class="n">YCollector</span>
+<span class="n">uv</span> <span class="n">sync</span>
+</code></pre></div>
+
+<p><code>uv sync</code>가 다음을 자동 수행:
+1. <code>.venv/</code> 가상환경 생성
+2. <code>yt-dlp</code>, <code>PySide6</code> 등 의존성 설치
+3. <code>uv.lock</code> 파일 생성 (재현 가능 빌드)</p>
+<p>확인:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">-</span><span class="n">-version</span>
+<span class="c"># ycollector 0.1.0</span>
+</code></pre></div>
+
+<h3 id="13">1.3 첫 다운로드<a class="headerlink" href="#13" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="s2">&quot;https://www.youtube.com/watch?v=dQw4w9WgXcQ&quot;</span>
+</code></pre></div>
+
+<p>성공 화면:</p>
+<div class="codehilite"><pre><span></span><code>yt-dlp 2026.05.07  (ycollector 0.1.0)
+
+[1/1] https://www.youtube.com/watch?v=dQw4w9WgXcQ
+   23.5%   125.3 MB / 533.4 MB  @  12.3 MB/s
+   ...
+   ✓ downloads\Rick Astley\Never Gonna Give You Up [dQw4w9WgXcQ].mp4
+  → downloads\Rick Astley\Never Gonna Give You Up [dQw4w9WgXcQ].mp4
+</code></pre></div>
+
+<p>기본 동작:
+- <strong>포맷</strong>: <code>bv*[height&lt;=1080]+ba/b[height&lt;=1080]</code> (1080p 최고 화질)
+- <strong>컨테이너</strong>: mp4
+- <strong>자막</strong>: ko + en, 영상에 임베드
+- <strong>출력</strong>: <code>./downloads/&lt;업로더&gt;/&lt;제목&gt; [&lt;id&gt;].mp4</code></p>
+<hr />
+<h2 id="2-cli">2. CLI 사용법<a class="headerlink" href="#2-cli" title="Permanent link">¶</a></h2>
+<h3 id="21">2.1 명령 구조<a class="headerlink" href="#21" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>ycollector [옵션] &lt;URL&gt; [&lt;URL&gt; ...]
+ycollector --from &lt;FILE&gt;
+... | ycollector -
+</code></pre></div>
+
+<h3 id="22">2.2 옵션 일람<a class="headerlink" href="#22" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>옵션</th>
+<th>단축</th>
+<th>기본값</th>
+<th>설명</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--output-dir DIR</code></td>
+<td><code>-o</code></td>
+<td><code>./downloads</code></td>
+<td>출력 폴더</td>
+</tr>
+<tr>
+<td><code>--format SPEC</code></td>
+<td><code>-f</code></td>
+<td><code>bv*[height&lt;=1080]+ba/b[height&lt;=1080]</code></td>
+<td>yt-dlp 포맷 셀렉터</td>
+</tr>
+<tr>
+<td><code>--container EXT</code></td>
+<td></td>
+<td><code>mp4</code></td>
+<td><code>mp4</code> / <code>mkv</code> / <code>webm</code></td>
+</tr>
+<tr>
+<td><code>--no-subs</code></td>
+<td></td>
+<td>OFF</td>
+<td>자막 다운로드 / 임베드 스킵</td>
+</tr>
+<tr>
+<td><code>--sub-langs LIST</code></td>
+<td></td>
+<td><code>ko,en</code></td>
+<td>자막 언어 (쉼표 구분)</td>
+</tr>
+<tr>
+<td><code>--cookies-from-browser NAME</code></td>
+<td></td>
+<td>(없음)</td>
+<td><code>chrome</code> / <code>firefox</code> / <code>edge</code> / <code>brave</code></td>
+</tr>
+<tr>
+<td><code>--from FILE</code></td>
+<td></td>
+<td>(없음)</td>
+<td>파일에서 URL 읽기</td>
+</tr>
+<tr>
+<td><code>--version</code></td>
+<td></td>
+<td></td>
+<td>버전 표시</td>
+</tr>
+<tr>
+<td><code>--help</code></td>
+<td><code>-h</code></td>
+<td></td>
+<td>도움말</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23">2.3 실전 예시<a class="headerlink" href="#23" title="Permanent link">¶</a></h3>
+<h4 id="a">A. 한 영상<a class="headerlink" href="#a" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="s2">&quot;https://youtu.be/dQw4w9WgXcQ&quot;</span>
+</code></pre></div>
+
+<h4 id="b">B. 여러 영상 한 번에<a class="headerlink" href="#b" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL1</span> <span class="n">URL2</span> <span class="n">URL3</span>
+</code></pre></div>
+
+<h4 id="c">C. 출력 폴더 변경<a class="headerlink" href="#c" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="n">-o</span> <span class="s2">&quot;D:\Videos\Lectures&quot;</span>
+</code></pre></div>
+
+<h4 id="d-mkv">D. 최고 화질 + mkv<a class="headerlink" href="#d-mkv" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="o">-f</span> <span class="s2">&quot;bv*+ba/b&quot;</span> <span class="p">-</span><span class="n">-container</span> <span class="n">mkv</span>
+</code></pre></div>
+
+<p>→ 4K, 8K, HDR 모두 받음. AV1/VP9 코덱이 섞이면 mkv가 안전.</p>
+<h4 id="e-m4a">E. 오디오만 (m4a)<a class="headerlink" href="#e-m4a" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="o">-f</span> <span class="s2">&quot;bestaudio[ext=m4a]&quot;</span> <span class="p">-</span><span class="n">-no-subs</span>
+</code></pre></div>
+
+<blockquote>
+<p>Phase 1에서 <code>--audio-format mp3 --audio-quality 320K</code> 추가 예정.</p>
+</blockquote>
+<h4 id="f">F. 한국어 자막만<a class="headerlink" href="#f" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-sub-langs</span> <span class="n">ko</span>
+</code></pre></div>
+
+<h4 id="g">G. 비공개 / 멤버십 / 연령제한 영상<a class="headerlink" href="#g" title="Permanent link">¶</a></h4>
+<p>쿠키 임포트 필요. <strong>반드시 해당 브라우저를 완전히 종료한 뒤</strong> 실행:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-cookies-from-browser</span> <span class="n">chrome</span>
+</code></pre></div>
+
+<p>Firefox / Edge / Brave 모두 동일 옵션으로 가능.</p>
+<h4 id="h-url">H. URL 리스트 파일에서<a class="headerlink" href="#h-url" title="Permanent link">¶</a></h4>
+<p><code>urls.txt</code>:</p>
+<div class="codehilite"><pre><span></span><code># 강의 시리즈
+https://www.youtube.com/watch?v=A
+https://www.youtube.com/watch?v=B
+
+# 음악
+https://music.youtube.com/watch?v=C
+</code></pre></div>
+
+<p>실행:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">-</span><span class="n">-from</span> <span class="n">urls</span><span class="p">.</span><span class="n">txt</span>
+</code></pre></div>
+
+<p><code>#</code> 주석과 빈 줄은 무시됩니다.</p>
+<h4 id="i-stdin">I. stdin 파이프 (다른 명령에서)<a class="headerlink" href="#i-stdin" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c"># 파일을 표준입력으로</span>
+<span class="nb">Get-Content</span> <span class="n">urls</span><span class="p">.</span><span class="n">txt</span> <span class="p">|</span> <span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">-</span>
+
+<span class="c"># 클립보드 내용을</span>
+<span class="nb">Get-Clipboard</span> <span class="p">|</span> <span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">-</span>
+
+<span class="c"># yt-dlp 메타에서 추출한 URL을</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">yt-dlp</span> <span class="p">-</span><span class="n">-flat-playlist</span> <span class="n">-j</span> <span class="s2">&quot;PLAYLIST_URL&quot;</span> <span class="p">|</span> <span class="p">`</span>
+    <span class="nb">ConvertFrom-Json</span> <span class="p">|</span> <span class="k">ForEach</span><span class="n">-Object</span> <span class="n">url</span> <span class="p">|</span> <span class="p">`</span>
+    <span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">-</span>
+</code></pre></div>
+
+<h4 id="j-yt-dlp">J. 재생목록 / 채널 (yt-dlp가 자동 펼침)<a class="headerlink" href="#j-yt-dlp" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="s2">&quot;https://www.youtube.com/playlist?list=PL...&quot;</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="s2">&quot;https://www.youtube.com/@SomeChannel&quot;</span>
+</code></pre></div>
+
+<blockquote>
+<p>Phase 2에서 펼침 후 영상 선택 UI 추가 예정.</p>
+</blockquote>
+<h3 id="24">2.4 종료 코드<a class="headerlink" href="#24" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>코드</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>모두 성공</td>
+</tr>
+<tr>
+<td>1</td>
+<td>부분 실패 (일부는 성공)</td>
+</tr>
+<tr>
+<td>2</td>
+<td>모두 실패 또는 URL 없음</td>
+</tr>
+<tr>
+<td>10+</td>
+<td>시스템 에러 (yt-dlp 미설치 등)</td>
+</tr>
+</tbody>
+</table>
+<p>쉘 스크립트에서:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span>
+<span class="k">if</span> <span class="p">(</span><span class="nv">$LASTEXITCODE</span> <span class="o">-eq</span> <span class="n">0</span><span class="p">)</span> <span class="p">{</span> <span class="nb">Write-Host</span> <span class="s2">&quot;성공&quot;</span> <span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<h2 id="3-gui">3. GUI 사용법<a class="headerlink" href="#3-gui" title="Permanent link">¶</a></h2>
+<p>실행:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector-gui</span>
+</code></pre></div>
+
+<h3 id="31-phase-0-day-1">3.1 메인 윈도우 (Phase 0 Day 1)<a class="headerlink" href="#31-phase-0-day-1" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────┐
+│ YCollector v0.1.0                                    [— □ ✕]    │
+├──────────────────────────────────────────────────────────────────┤
+│ URL                                                                │
+│ ┌────────────────────────────────────────────────────────────┐ │
+│ │ URL 붙여넣기 (한 줄에 하나, &#39;#&#39; 주석)                          │ │
+│ │ 예: https://www.youtube.com/watch?v=dQw4w9WgXcQ              │ │
+│ │                                                               │ │
+│ │                                                               │ │
+│ └────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│ 형식: [bv*[height&lt;=1080]+ba/b... ]  폴더: [D:/…/downloads] [폴더…] [지금 다운로드] │
+│                                                                   │
+│ 로그                                                               │
+│ ┌────────────────────────────────────────────────────────────┐ │
+│ │ yt-dlp 2026.05.07  (ycollector 0.1.0)                       │ │
+│ │                                                               │ │
+│ │ [1/2] https://...                                             │ │
+│ │ [download] Destination: downloads/Channel/Title [id].mp4      │ │
+│ │   ✓ downloads/Channel/Title [id].mp4                          │ │
+│ └────────────────────────────────────────────────────────────┘ │
+│ 23.5%   125.3 MB   8.4 MB/s                                      │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<h3 id="32">3.2 사용 흐름<a class="headerlink" href="#32" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>[1] URL 박스에 영상 주소를 붙여넣기 (한 줄에 하나, # 주석 가능)
+            │
+            ▼
+[2] (선택) 형식 / 폴더 변경
+            │
+            ▼
+[3] &quot;지금 다운로드&quot; 클릭
+            │
+            ▼
+[4] 로그 창에 진행 상황, 하단 상태바에 진행률 / 속도
+            │
+            ▼
+[5] 완료 시 ✓ 표시 + 파일 경로
+</code></pre></div>
+
+<h3 id="33">3.3 키보드<a class="headerlink" href="#33" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>키</th>
+<th>동작</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+V</code> (URL 박스 포커스)</td>
+<td>클립보드 붙여넣기</td>
+</tr>
+<tr>
+<td><code>Tab</code></td>
+<td>다음 위젯으로 이동</td>
+</tr>
+<tr>
+<td><code>Enter</code> (버튼 포커스)</td>
+<td>다운로드 시작</td>
+</tr>
+<tr>
+<td><code>Ctrl+Q</code> / <code>Alt+F4</code></td>
+<td>종료</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Phase 1+에서 <code>Ctrl+L</code> (라이브러리 검색), <code>Ctrl+P</code> (프리셋), <code>Ctrl+,</code> (설정) 추가 예정.</p>
+</blockquote>
+<h3 id="34">3.4 출력 폴더 변경<a class="headerlink" href="#34" title="Permanent link">¶</a></h3>
+<p>"폴더…" 버튼 → 시스템 폴더 선택 다이얼로그 → 선택. 다음 다운로드부터 새 폴더에 저장.</p>
+<blockquote>
+<p>변경 사항이 세션 간 보존되지는 않습니다 (Phase 1 SQLite 영속화 예정).</p>
+</blockquote>
+<hr />
+<h2 id="4">4. 상황별 가이드<a class="headerlink" href="#4" title="Permanent link">¶</a></h2>
+<h3 id="41">4.1 강의 / 튜토리얼 시리즈 보관<a class="headerlink" href="#41" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">`</span>
+    <span class="s2">&quot;https://www.youtube.com/playlist?list=PL_lecture_series&quot;</span> <span class="p">`</span>
+    <span class="n">-o</span> <span class="s2">&quot;D:\Lectures&quot;</span> <span class="p">`</span>
+    <span class="p">-</span><span class="n">-sub-langs</span> <span class="n">ko</span><span class="p">,</span><span class="n">en</span>
+</code></pre></div>
+
+<p>→ 재생목록의 모든 영상이 1080p mp4 + ko/en 자막으로 <code>D:\Lectures\&lt;채널&gt;\&lt;재생목록&gt;\</code> 에 저장.</p>
+<h3 id="42">4.2 음악 백업<a class="headerlink" href="#42" title="Permanent link">¶</a></h3>
+<p>현재 (Phase 0):</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">`</span>
+    <span class="o">-f</span> <span class="s2">&quot;bestaudio[ext=m4a]&quot;</span> <span class="p">`</span>
+    <span class="p">-</span><span class="n">-no-subs</span> <span class="p">`</span>
+    <span class="n">-o</span> <span class="s2">&quot;D:\Music\YouTube&quot;</span>
+</code></pre></div>
+
+<p>→ m4a (AAC) 최고 비트레이트로 추출. mp3 변환은 Phase 1에서.</p>
+<h3 id="43">4.3 자기 채널 백업 (비공개 포함)<a class="headerlink" href="#43" title="Permanent link">¶</a></h3>
+<p>Chrome을 완전히 종료한 뒤:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">`</span>
+    <span class="s2">&quot;https://www.youtube.com/@MyChannel&quot;</span> <span class="p">`</span>
+    <span class="p">-</span><span class="n">-cookies-from-browser</span> <span class="n">chrome</span> <span class="p">`</span>
+    <span class="n">-o</span> <span class="s2">&quot;D:\Backup\MyChannel&quot;</span>
+</code></pre></div>
+
+<h3 id="44">4.4 라이브 방송<a class="headerlink" href="#44" title="Permanent link">¶</a></h3>
+<p>현재 (Phase 0): 진행 중인 라이브의 URL을 그대로 넘기면 <strong>지금 시점부터</strong> 다운로드.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="s2">&quot;https://www.youtube.com/watch?v=LIVE_ID&quot;</span>
+</code></pre></div>
+
+<blockquote>
+<p>"처음부터(<code>--live-from-start</code>)" 옵션은 Phase 1에서 일급 시민 인자로 추가 예정. 현재 임시 우회:
+<code>powershell
+uv run yt-dlp --live-from-start --hls-use-mpegts URL</code></p>
+</blockquote>
+<h3 id="45-4k-hdr">4.5 4K HDR 받기<a class="headerlink" href="#45-4k-hdr" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">`</span>
+    <span class="o">-f</span> <span class="s2">&quot;bv*[height&lt;=2160]+ba/b[height&lt;=2160]&quot;</span> <span class="p">`</span>
+    <span class="p">-</span><span class="n">-container</span> <span class="n">mkv</span>
+</code></pre></div>
+
+<p>mp4는 일부 HDR 메타데이터를 못 담을 수 있음. mkv 권장.</p>
+<h3 id="46-id">4.6 정확한 포맷 ID 고르기<a class="headerlink" href="#46-id" title="Permanent link">¶</a></h3>
+<p>먼저 가용 포맷 확인:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">yt-dlp</span> <span class="o">-F</span> <span class="n">URL</span>
+</code></pre></div>
+
+<p>출력 예:</p>
+<div class="codehilite"><pre><span></span><code>ID  EXT   RESOLUTION FPS │   FILESIZE   TBR  PROTO │ VCODEC          VBR  ACODEC      ABR ASR  MORE INFO
+299 mp4   1920x1080  60  │     156.7MiB  4.3M https │ avc1.640033  4321k  audio only       │ ...
+... 등 ...
+</code></pre></div>
+
+<p>원하는 ID로 받기:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="o">-f</span> <span class="n">299</span><span class="p">+</span><span class="n">140</span>
+</code></pre></div>
+
+<hr />
+<h2 id="5">5. 문제 해결<a class="headerlink" href="#5" title="Permanent link">¶</a></h2>
+<h3 id="51-yt-dlp-not-found-in-path">5.1 <code>yt-dlp not found in PATH</code><a class="headerlink" href="#51-yt-dlp-not-found-in-path" title="Permanent link">¶</a></h3>
+<p>원인: 가상환경 활성화 안 됨, 또는 의존성 미설치.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">sync</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="p">-</span><span class="n">-version</span>
+</code></pre></div>
+
+<p><strong>반드시 <code>uv run</code> 접두사</strong> 사용. 직접 <code>ycollector</code>만 치면 글로벌 환경을 찾아 실패.</p>
+<h3 id="52-ffmpeg-not-found">5.2 <code>FFmpeg not found</code> 또는 병합 실패<a class="headerlink" href="#52-ffmpeg-not-found" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="n">ffmpeg</span> <span class="n">-version</span>
+</code></pre></div>
+
+<p>이 실패하면 PATH에 FFmpeg 없음. <strong>§1.2 Step 3</strong> 참고.</p>
+<p>증상 예:</p>
+<div class="codehilite"><pre><span></span><code>ERROR: Postprocessing: ffprobe and ffmpeg not found.
+</code></pre></div>
+
+<h3 id="53-sign-in-to-confirm-youre-not-a-bot">5.3 "Sign in to confirm you're not a bot"<a class="headerlink" href="#53-sign-in-to-confirm-youre-not-a-bot" title="Permanent link">¶</a></h3>
+<p>YouTube의 봇 감지. <strong>plan §6.2 (PoToken)</strong> 의 원인. 대응 우선순위:</p>
+<h4 id="1_1">1순위: 쿠키 임포트 (가장 효과적)<a class="headerlink" href="#1_1" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c"># Chrome 완전 종료 후</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-cookies-from-browser</span> <span class="n">chrome</span>
+</code></pre></div>
+
+<p>Chrome이 잠겨 있으면 (브라우저 종료 안 되어 있으면) 에러. 작업관리자로 모든 <code>chrome.exe</code> 종료 후 재시도.</p>
+<h4 id="2">2순위: 다른 브라우저 시도<a class="headerlink" href="#2" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-cookies-from-browser</span> <span class="n">firefox</span>
+</code></pre></div>
+
+<h4 id="3-yt-dlp">3순위: yt-dlp 갱신<a class="headerlink" href="#3-yt-dlp" title="Permanent link">¶</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">lock</span> <span class="p">-</span><span class="n">-upgrade-package</span> <span class="n">yt-dlp</span>
+<span class="n">uv</span> <span class="n">sync</span>
+</code></pre></div>
+
+<h4 id="4-potoken-provider-phase-2-ui">4순위: PoToken provider (Phase 2에서 가이디드 UI로 추가 예정)<a class="headerlink" href="#4-potoken-provider-phase-2-ui" title="Permanent link">¶</a></h4>
+<p>현재는 yt-dlp 인자 직접 전달 어려움. Phase 2까지 기다리거나 yt-dlp 단독 사용 권장.</p>
+<h3 id="54">5.4 다운로드가 너무 느림<a class="headerlink" href="#54" title="Permanent link">¶</a></h3>
+<p>YouTube가 의도적으로 단일 연결 속도를 떨어뜨리는 경우. 대응:</p>
+<ol>
+<li>yt-dlp 최신 확인 (<code>uv lock --upgrade-package yt-dlp &amp;&amp; uv sync</code>)</li>
+<li>시간대 변경 시도 (피크 시간대 회피)</li>
+<li>인터넷 속도 자체 확인</li>
+</ol>
+<blockquote>
+<p>Phase 1에서 aria2c 다중 연결 옵션이 추가됩니다.</p>
+</blockquote>
+<h3 id="55">5.5 한글 파일명 깨짐<a class="headerlink" href="#55" title="Permanent link">¶</a></h3>
+<p>PowerShell 콘솔 코드페이지:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">chcp</span> <span class="n">65001</span>
+</code></pre></div>
+
+<p>또는 Windows 설정 → 시간 및 언어 → 언어 → 관리용 언어 설정 → <strong>"Beta: Use Unicode UTF-8 for worldwide language support"</strong> 체크 후 재부팅.</p>
+<h3 id="56-4k">5.6 4K가 안 받아짐<a class="headerlink" href="#56-4k" title="Permanent link">¶</a></h3>
+<p>기본 포맷은 <code>height&lt;=1080</code>로 제한. 4K 원하면:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="o">-f</span> <span class="s2">&quot;bv*+ba/b&quot;</span>
+</code></pre></div>
+
+<p>또는 명시적으로:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="o">-f</span> <span class="s2">&quot;bv*[height&lt;=2160]+ba/b[height&lt;=2160]&quot;</span>
+</code></pre></div>
+
+<h3 id="57-gui">5.7 GUI가 안 뜨고 에러<a class="headerlink" href="#57-gui" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">sync</span> <span class="p">-</span><span class="n">-reinstall</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="n">-c</span> <span class="s2">&quot;import PySide6; print(PySide6.__version__)&quot;</span>
+</code></pre></div>
+
+<p>요구사항:
+- Windows 10 1809 이상
+- WebView2 런타임 (보통 자동 설치되어 있음)</p>
+<p>PySide6는 약 80MB. 첫 <code>uv sync</code>에 시간 걸릴 수 있음.</p>
+<h3 id="58-requested-format-is-not-available">5.8 <code>Requested format is not available</code><a class="headerlink" href="#58-requested-format-is-not-available" title="Permanent link">¶</a></h3>
+<p>요청 포맷 조합이 해당 영상에 없음.</p>
+<p>진단:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">yt-dlp</span> <span class="o">-F</span> <span class="n">URL</span>
+</code></pre></div>
+
+<p>위 출력에서 가용 ID를 골라:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="o">-f</span> <span class="n">137</span><span class="p">+</span><span class="n">140</span>
+</code></pre></div>
+
+<blockquote>
+<p>Phase 2에서 자동 fallback (요청 포맷 실패 시 가까운 대안 선택) 추가 예정.</p>
+</blockquote>
+<h3 id="59-ssl">5.9 SSL 인증서 에러<a class="headerlink" href="#59-ssl" title="Permanent link">¶</a></h3>
+<p>회사/학교 네트워크에서 SSL 가로채기가 있는 환경:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">$env:SSL_CERT_FILE</span> <span class="p">=</span> <span class="s2">&quot;C:\path\to\corporate_ca.pem&quot;</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span>
+</code></pre></div>
+
+<p>(영구 설정은 Phase 1 컨피그 파일로)</p>
+<h3 id="510">5.10 디스크 가득 참<a class="headerlink" href="#510" title="Permanent link">¶</a></h3>
+<p>8시간 라이브 4K = 50GB+. 다운로드 전 예상 크기 확인:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">yt-dlp</span> <span class="p">-</span><span class="n">-get-filename</span> <span class="p">-</span><span class="n">-get-format</span> <span class="n">URL</span>
+</code></pre></div>
+
+<blockquote>
+<p>Phase 1+에서 사전 디스크 가드 + 작업 일시정지 자동화 예정.</p>
+</blockquote>
+<hr />
+<h2 id="6-faq">6. 자주 묻는 질문 (FAQ)<a class="headerlink" href="#6-faq" title="Permanent link">¶</a></h2>
+<h3 id="q1">Q1. 무료인가요?<a class="headerlink" href="#q1" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> 네. 광고 없음. 라이선스는 v1.0 정식 배포 전 결정 예정 (plan §13 OQ-8).</p>
+<h3 id="q2">Q2. 어떤 사이트를 지원하나요?<a class="headerlink" href="#q2" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> yt-dlp가 지원하는 <strong>1,800+ 사이트</strong> 모두 (YouTube, Vimeo, Twitch, Bilibili, SoundCloud, Naver TV, Kakao TV 등). 다만 차별화 기능(라이브러리, 전사 등)은 <strong>YouTube에 우선 최적화</strong>됩니다.</p>
+<h3 id="q3">Q3. 모바일에서 쓸 수 있나요?<a class="headerlink" href="#q3" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> 현재는 데스크톱(Windows/macOS/Linux)만. iOS/Android는 <a href="https://newpipe.net">NewPipe</a> 등 기존 솔루션 권장 (plan §1.3 N5).</p>
+<h3 id="q4">Q4. 클라우드 동기화 되나요?<a class="headerlink" href="#q4" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> 아니요. 본 도구는 로컬 우선. NAS/OneDrive 폴더에 출력 디렉토리를 설정하면 OS 동기화로 우회 가능.</p>
+<h3 id="q5-drm-youtube-movies">Q5. DRM 보호 영상(YouTube Movies 구매작 등)을 받을 수 있나요?<a class="headerlink" href="#q5-drm-youtube-movies" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> 아니요. DRM 우회는 명시적 비목표 (plan §1.3 N1). 시도하지 마세요.</p>
+<h3 id="q6">Q6. 저작권 문제는?<a class="headerlink" href="#q6" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> 본 도구는 <strong>자기 콘텐츠, 공개도메인, CC 라이선스, 또는 명시적 권한이 있는 콘텐츠</strong> 다운로드를 위한 것입니다. 저작권 침해는 사용자 책임입니다 (plan §6.10).</p>
+<h3 id="q7">Q7. 채널 자동 동기화는 언제?<a class="headerlink" href="#q7" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> Phase 3 (D5 차별화). "매주 일요일 03:00 채널 새 영상 동기화" 같은 스케줄링.</p>
+<h3 id="q8-transcribe">Q8. 전사(Transcribe)는 언제?<a class="headerlink" href="#q8-transcribe" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> Phase 3 (D6 차별화). 로컬 <code>faster-whisper</code> 통합. 한국어 영상도 정확한 자막 생성. plan §6.12 / §10.5 D6.</p>
+<h3 id="q9">Q9. 데이터 / 쿠키가 어디에 저장되나요?<a class="headerlink" href="#q9" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> 현재 (Phase 0):
+- 다운로드 파일: <code>./downloads/</code> 또는 <code>-o</code> 지정 폴더
+- 쿠키: <code>--cookies-from-browser</code>는 임시 추출 후 즉시 폐기 (저장 X)</p>
+<p>향후 (Phase 1+):
+- Windows: <code>%APPDATA%\YCollector\</code>
+- macOS: <code>~/Library/Application Support/YCollector/</code>
+- Linux: <code>~/.local/share/ycollector/</code></p>
+<p>라이브러리 DB는 SQLite 단일 파일. 쿠키는 OS 자격증명 저장소.</p>
+<h3 id="q10-yt-dlp">Q10. yt-dlp를 직접 쓰는 것과 뭐가 다른가요?<a class="headerlink" href="#q10-yt-dlp" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> YCollector는 yt-dlp를 코어로 쓰는 GUI/CLI 래퍼. 단순 한 영상은 yt-dlp 직접이 더 간결. YCollector의 가치:</p>
+<table>
+<thead>
+<tr>
+<th>기능</th>
+<th>yt-dlp 직접</th>
+<th>YCollector</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>한 줄 다운로드</td>
+<td>✓ (이미 간결)</td>
+<td>≈</td>
+</tr>
+<tr>
+<td>큐 / 동시 / 일시정지</td>
+<td>shell 스크립트</td>
+<td>Phase 1 GUI</td>
+</tr>
+<tr>
+<td>라이브러리 + 검색</td>
+<td>(없음)</td>
+<td>D1 (Phase 2)</td>
+</tr>
+<tr>
+<td>프리셋 + 채널별 오버라이드</td>
+<td>dotfiles</td>
+<td>D2 (Phase 1+)</td>
+</tr>
+<tr>
+<td>가이디드 PoToken/쿠키</td>
+<td>문서 grep</td>
+<td>D3 (Phase 2)</td>
+</tr>
+<tr>
+<td>클립보드+브라우저 확장</td>
+<td>(없음)</td>
+<td>D4 (Phase 2/3)</td>
+</tr>
+<tr>
+<td>채널 자동 동기화</td>
+<td>cron</td>
+<td>D5 (Phase 3)</td>
+</tr>
+<tr>
+<td>로컬 Whisper 전사 통합</td>
+<td>(없음)</td>
+<td>D6 (Phase 3)</td>
+</tr>
+</tbody>
+</table>
+<p>순수 한 줄 명령은 yt-dlp가 충분. YCollector는 <strong>장기 사용 + 라이브러리 관리</strong> 에 가치.</p>
+<h3 id="q11-macos-linux">Q11. macOS / Linux에서도 되나요?<a class="headerlink" href="#q11-macos-linux" title="Permanent link">¶</a></h3>
+<p><strong>A.</strong> 코드상으로는 지원. Phase 0에서는 Windows에 우선 최적화. Phase 2+에서 macOS notarization / Linux 패키징 정식 지원.</p>
+<h3 id="q12">Q12. 업데이트는 어떻게?<a class="headerlink" href="#q12" title="Permanent link">¶</a></h3>
+<p><strong>Phase 0</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="nb">cd </span><span class="n">YCollector</span>
+<span class="n">git</span> <span class="n">pull</span>
+<span class="n">uv</span> <span class="n">sync</span>
+</code></pre></div>
+
+<p><strong>Phase 4+</strong>: GUI 내 자동 업데이트 알림 + 한 번 클릭 설치.</p>
+<hr />
+<h2 id="7-roadmap">7. 향후 기능 (Roadmap 요약)<a class="headerlink" href="#7-roadmap" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>일정 (목표)</th>
+<th>주요 기능</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>0</strong></td>
+<td>진행 중</td>
+<td>CLI + 최소 GUI, 단일/일괄 URL, 기본 포맷/자막/쿠키</td>
+</tr>
+<tr>
+<td><strong>1</strong></td>
+<td>4~6주</td>
+<td>큐, 영속화 (SQLite), 자가 갱신, mp3 추출, aria2 다중 연결, 자동 fallback, 진행률 정밀화</td>
+</tr>
+<tr>
+<td><strong>2</strong></td>
+<td>4~6주</td>
+<td><strong>D1</strong> 라이브러리 + 자막 검색, <strong>D2</strong> 프리셋 + 채널 오버라이드, <strong>D3</strong> 가이디드 PoToken/쿠키, 재생목록 선택 UI</td>
+</tr>
+<tr>
+<td><strong>3</strong></td>
+<td>4~6주</td>
+<td>라이브 처음부터, <strong>D4</strong> 클립보드 + 브라우저 확장, <strong>D5</strong> 채널 스케줄, <strong>D6</strong> Whisper 전사</td>
+</tr>
+<tr>
+<td><strong>4</strong></td>
+<td>3~4주</td>
+<td>i18n (ko/en/ja), 자동 업데이트, 코드 사이닝, 다크모드, 접근성</td>
+</tr>
+<tr>
+<td><strong>5</strong></td>
+<td>지속</td>
+<td>정식 배포 (인스톨러, CI 카나리, 텔레메트리 옵트인)</td>
+</tr>
+</tbody>
+</table>
+<p>자세한 일정 / 기능 분해: <a href="../plan/youtube_downloader_plan_260508.html#8-구현-로드맵">plan §8 구현 로드맵</a>.</p>
+<hr />
+<h2 id="8-6-d1d6">8. 차별화 6가지 (D1~D6 — 미래 가치)<a class="headerlink" href="#8-6-d1d6" title="Permanent link">¶</a></h2>
+<p>YCollector가 다른 OSS yt-dlp 래퍼와 다른 점. <strong>현재 Phase 0에는 없고</strong>, 로드맵에 따라 추가됩니다.</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>이름</th>
+<th>모티프</th>
+<th>Phase</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>D1</strong></td>
+<td>라이브러리 + 태그 + 자막 검색</td>
+<td>Stacher (closed-source 대안)</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>D2</strong></td>
+<td>"Smart Mode" 프리셋 + 채널 오버라이드</td>
+<td>4K Video Downloader</td>
+<td>1~2</td>
+</tr>
+<tr>
+<td><strong>D3</strong></td>
+<td>가이디드 PoToken / 쿠키 워크플로우</td>
+<td>(시장 빈틈)</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>D4</strong></td>
+<td>클립보드 감시 + 브라우저 확장</td>
+<td>ByClick + Parabolic 결합</td>
+<td>2~3</td>
+</tr>
+<tr>
+<td><strong>D5</strong></td>
+<td>채널별 스케줄 아카이빙</td>
+<td>Tartube를 모던 UI로</td>
+<td>3</td>
+</tr>
+<tr>
+<td><strong>D6</strong></td>
+<td>로컬 Whisper 전사</td>
+<td>(시장 빈틈)</td>
+<td>3</td>
+</tr>
+</tbody>
+</table>
+<p>상세: <a href="../plan/youtube_downloader_plan_260508.html#105-차별화-전략-differentiation-strategy">plan §10.5 차별화 전략</a>.</p>
+<hr />
+<h2 id="9">9. 도움 받기 / 기여<a class="headerlink" href="#9" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>버그 / 기능 요청</strong>: https://github.com/dalyulbam/YCollector/issues</li>
+<li><strong>소스 코드</strong>: https://github.com/dalyulbam/YCollector</li>
+<li><strong>설계 문서 인덱스</strong>: <a href="../index.html"><code>docs/index.html</code></a></li>
+<li><strong>plan 전체</strong>: <a href="../plan/youtube_downloader_plan_260508.html"><code>docs/plan/youtube_downloader_plan_260508.md</code></a></li>
+<li><strong>경쟁/모티프 조사</strong>: <a href="../motif/youtube_downloader_motif_260508.html"><code>docs/motif/youtube_downloader_motif_260508.md</code></a></li>
+</ul>
+<p>이슈 제출 시 포함해주시면 도움 됩니다:
+- OS 버전 + Python 버전 (<code>python --version</code>)
+- yt-dlp 버전 (<code>uv run yt-dlp --version</code>)
+- YCollector 버전 (<code>uv run ycollector --version</code>)
+- 실패 명령 전문
+- 에러 메시지 / 스택 트레이스</p>
+<hr />
+<p><strong>(끝)</strong></p>
+  </main>
+</div>
+
+<div class="footer">YCollector · 2026-05-08 · 자동 생성 (docs/_build_html.py)</div>
+
+</body>
+</html>

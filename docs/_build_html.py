@@ -22,7 +22,7 @@ PAGES = [
         "src": DOCS / "plan" / "youtube_downloader_plan_260508.md",
         "out": DOCS / "plan" / "youtube_downloader_plan_260508.html",
         "title": "YCollector — YouTube 다운로더 설계 계획",
-        "subtitle": "Plan v1.1 · 2026-05-08",
+        "subtitle": "Plan v1.2 · 2026-05-08",
         "tag": "PLAN",
         "color": "#4f46e5",
     },
@@ -33,6 +33,14 @@ PAGES = [
         "subtitle": "Motif Reference · 2026-05-08",
         "tag": "MOTIF",
         "color": "#0d9488",
+    },
+    {
+        "src": DOCS / "howToUse" / "user_manual_260513.md",
+        "out": DOCS / "howToUse" / "user_manual_260513.html",
+        "title": "YCollector — 사용설명서",
+        "subtitle": "User Manual v1.0 · 2026-05-13 · Phase 0 기준",
+        "tag": "USE",
+        "color": "#ea580c",
     },
 ]
 
@@ -418,7 +426,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     <a href="../index.html">Index</a>
     <a href="../plan/youtube_downloader_plan_260508.html"{plan_active}>Plan</a>
     <a href="../motif/youtube_downloader_motif_260508.html"{motif_active}>Motif</a>
-    <a href="../plan/youtube_downloader_plan_260508.md">Source .md</a>
+    <a href="../howToUse/user_manual_260513.html"{howto_active}>사용설명서</a>
   </nav>
 </header>
 
@@ -535,6 +543,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 }}
 .card-plan {{ --card-accent: #4f46e5; }}
 .card-motif {{ --card-accent: #0d9488; }}
+.card-howto {{ --card-accent: #ea580c; }}
 
 .section {{ margin-bottom: 36px; }}
 .section h2 {{ font-size: 1.4rem; margin: 0 0 16px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }}
@@ -572,6 +581,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     <a href="index.html" class="active">Index</a>
     <a href="plan/youtube_downloader_plan_260508.html">Plan</a>
     <a href="motif/youtube_downloader_motif_260508.html">Motif</a>
+    <a href="howToUse/user_manual_260513.html">사용설명서</a>
   </nav>
 </header>
 
@@ -584,7 +594,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
       YouTube 영상을 손쉽게 받을 수 있는 데스크톱 프로그램.
       <strong>yt-dlp</strong>를 코어 엔진으로, <strong>PySide6</strong>를 v1 UI로.
     </p>
-    <div class="meta">2026-05-10 · plan v1.2 · motif r1</div>
+    <div class="meta">2026-05-13 · plan v1.2 · motif r1 · 사용설명서 v1.0</div>
   </section>
 
   <section class="section">
@@ -601,6 +611,12 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         <h2>경쟁 / 모티프 조사</h2>
         <p class="desc">20+개 프로젝트 분석 (Parabolic, Stacher, Tartube, OVD, Persepolis, Seal, Cobalt, NewPipe 등). 차용할 혁신 10가지 + 피해야 할 안티패턴 10가지.</p>
         <div class="meta">~580 줄 · 10 섹션 + 부록 2</div>
+      </a>
+      <a href="howToUse/user_manual_260513.html" class="card card-howto">
+        <span class="tag">사용설명서 · v1.0</span>
+        <h2>How to Use</h2>
+        <p class="desc">설치(4단계), CLI/GUI 사용법, 상황별 가이드 6가지, 문제 해결 10가지, FAQ 12개, 로드맵 요약. Phase 0 사용자 대상.</p>
+        <div class="meta">2026-05-13 · 9 섹션</div>
       </a>
     </div>
   </section>
@@ -691,6 +707,18 @@ def _patch_toc_links(toc_html: str) -> str:
     return re.sub(r'^<div class="toc">|</div>$', "", toc_html.strip())
 
 
+_MD_LINK_RE = re.compile(
+    r'(href=")(?!https?://|mailto:|#)([^"#]+?)\.md(#[^"]*)?(")'
+)
+
+
+def _rewrite_md_to_html_links(body: str) -> str:
+    """Rewrite intra-repo *.md links to *.html so HTML readers stay in HTML."""
+    def _sub(m: re.Match[str]) -> str:
+        return f"{m.group(1)}{m.group(2)}.html{m.group(3) or ''}{m.group(4)}"
+    return _MD_LINK_RE.sub(_sub, body)
+
+
 def build_page(page: dict) -> None:
     text = page["src"].read_text(encoding="utf-8")
 
@@ -711,10 +739,12 @@ def build_page(page: dict) -> None:
     )
 
     body = md.convert(text)
+    body = _rewrite_md_to_html_links(body)
     toc = _patch_toc_links(md.toc)
 
     is_plan = "plan" in page["out"].name
     is_motif = "motif" in page["out"].name
+    is_howto = "user_manual" in page["out"].name or "howto" in page["out"].name.lower()
 
     html = PAGE_TEMPLATE.format(
         title=page["title"],
@@ -726,6 +756,7 @@ def build_page(page: dict) -> None:
         toc=toc,
         plan_active=' class="active"' if is_plan else "",
         motif_active=' class="active"' if is_motif else "",
+        howto_active=' class="active"' if is_howto else "",
     )
 
     page["out"].write_text(html, encoding="utf-8")

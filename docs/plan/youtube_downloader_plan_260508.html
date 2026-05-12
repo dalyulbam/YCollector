@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YCollector — YouTube 다운로더 설계 계획</title>
-<meta name="description" content="Plan v1.1 · 2026-05-08">
+<meta name="description" content="Plan v1.2 · 2026-05-08">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -372,7 +372,7 @@ body {
     <a href="../index.html">Index</a>
     <a href="../plan/youtube_downloader_plan_260508.html" class="active">Plan</a>
     <a href="../motif/youtube_downloader_motif_260508.html">Motif</a>
-    <a href="../plan/youtube_downloader_plan_260508.md">Source .md</a>
+    <a href="../howToUse/user_manual_260513.html">사용설명서</a>
   </nav>
 </header>
 
@@ -517,7 +517,7 @@ body {
     <div class="page-header">
       <span class="tag">PLAN</span>
       <h1>YCollector — YouTube 다운로더 설계 계획</h1>
-      <div class="subtitle">Plan v1.1 · 2026-05-08</div>
+      <div class="subtitle">Plan v1.2 · 2026-05-08</div>
     </div>
     <h1 id="ycollector-youtube">YCollector — YouTube 다운로더 설계 계획<a class="headerlink" href="#ycollector-youtube" title="Permanent link">¶</a></h1>
 <ul>
@@ -526,7 +526,7 @@ body {
 <li><strong>상태</strong>: Draft (active)</li>
 <li><strong>저자</strong>: 초기 설계 초안</li>
 <li><strong>저장소</strong>: <code>D:\26y\YCollector</code> (git: <code>main</code>)</li>
-<li><strong>연관 문서</strong>: <a href="../motif/youtube_downloader_motif_260508.md"><code>../motif/youtube_downloader_motif_260508.md</code></a> — 경쟁 / 모티프 조사 (Parabolic, Stacher, Tartube, OVD, Seal, Cobalt 등 분석)</li>
+<li><strong>연관 문서</strong>: <a href="../motif/youtube_downloader_motif_260508.html"><code>../motif/youtube_downloader_motif_260508.md</code></a> — 경쟁 / 모티프 조사 (Parabolic, Stacher, Tartube, OVD, Seal, Cobalt 등 분석)</li>
 </ul>
 <blockquote>
 <p><strong>v1.2 변경 요약</strong>: <code>§3.1.7~8</code> (입력 모드, Transcribe FR), <code>§4.4</code> 하이브리드 IPC(subprocess + Python API), <code>§6.12</code> Transcribe 기술 분석, <code>§10.5 D2/D5</code> typed 컨피그 명시 + <code>D6</code> Transcribe 차별화 추가, <code>§11.5</code> 입출력 워크플로우 (CLI/GUI), 새 부록 C (컨피그 트리 ↔ ydl_opts 매핑).</p>
@@ -548,7 +548,7 @@ body {
 <h3 id="11-why">1.1 목적 (Why)<a class="headerlink" href="#11-why" title="Permanent link">¶</a></h3>
 <ul>
 <li>일반 사용자가 <strong>로컬에 영상을 보존</strong>하고 싶을 때(예: 오프라인 시청, 강의 보관, 개인 백업), 명령행에 익숙하지 않은 사람도 쓸 수 있는 GUI 도구가 필요하다.</li>
-<li>시장에는 도구가 많지만 각각 빈틈이 있다 (자세한 분석은 <a href="../motif/youtube_downloader_motif_260508.md">motif 문서</a> 참고):</li>
+<li>시장에는 도구가 많지만 각각 빈틈이 있다 (자세한 분석은 <a href="../motif/youtube_downloader_motif_260508.html">motif 문서</a> 참고):</li>
 <li><strong>Parabolic</strong> (NickvisionApps, OSS, ★5.4k) — 모던 네이티브 UI(.NET NativeAOT)이지만 라이브러리/태그/스케줄링 부재, 크래시 이슈 빈발.</li>
 <li><strong>Stacher</strong> — 라이브러리/노트/태그/자막 검색 등 가장 풍부한 기능이지만 <strong>폐쇄 소스</strong>이며 Patreon 라이선스.</li>
 <li><strong>Tartube</strong> (★2.9k) — 스케줄링 / Missing Videos 감지 등 야심찬 기능이지만 <strong>GTK3 UI가 노쇠</strong>하고 진입장벽 높음.</li>
@@ -1981,7 +1981,7 @@ $ ycollector URL --dry-run
 <li><strong>gallery-dl</strong>: https://github.com/mikf/gallery-dl — JSON 컨피그 트리, namespace 추출기. D2/D5 모티프.</li>
 <li><strong>rclone</strong>: https://rclone.org/ — <code>~/.config/rclone/rclone.conf</code>의 multi-remote 패턴 참고.</li>
 </ul>
-<h3 id="motif">경쟁 / 모티프 (자세한 분석은 <a href="../motif/youtube_downloader_motif_260508.md">motif 문서</a>)<a class="headerlink" href="#motif" title="Permanent link">¶</a></h3>
+<h3 id="motif">경쟁 / 모티프 (자세한 분석은 <a href="../motif/youtube_downloader_motif_260508.html">motif 문서</a>)<a class="headerlink" href="#motif" title="Permanent link">¶</a></h3>
 <ul>
 <li><strong>Parabolic</strong> (NickvisionApps): https://github.com/NickvisionApps/Parabolic — 모던 OSS 벤치마크 (.NET NativeAOT, libadwaita+WinUI3).</li>
 <li><strong>Open Video Downloader</strong> (jely2002): https://github.com/jely2002/youtube-dl-gui — Tauri+Vue 검증 사례.</li>
