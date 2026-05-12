@@ -1,0 +1,580 @@
+# YCollector — 경쟁 / 모티프 조사
+
+- **문서 버전**: 1.0
+- **작성일**: 2026-05-08 (YYMMDD: 260508)
+- **상태**: Reference (지속 갱신)
+- **연관 문서**: [`../plan/youtube_downloader_plan_260508.md`](../plan/youtube_downloader_plan_260508.md)
+
+---
+
+## 0. 요약 (Executive Summary)
+
+YCollector 설계를 정식화하기 전에, **GitHub 및 기타 코드 저장소에 공개된 YouTube 다운로더들**과 일부 상용 도구를 광범위하게 조사했다. 본 문서는 (a) 각 프로젝트의 기능적/디자인적 장단점, (b) 시장에 공통적으로 드러나는 패턴과 안티패턴, (c) YCollector가 차별화할 수 있는 빈틈을 정리한다.
+
+**핵심 결론 5가지**:
+
+1. **추출(extract) 엔진을 직접 만들지 마라.** 그렇게 한 거의 모든 프로젝트(NewPipeExtractor, Lux, Cobalt)는 yt-dlp보다 YouTube 변경 대응이 며칠~수주 늦다. **yt-dlp를 subprocess로 호출하는 얇은 래퍼**가 사실상 표준이다(Parabolic, Open Video Downloader, Stacher, Tartube, Seal, ytdlp-interface, Persepolis 모두 이 모델).
+2. **Tauri+Vue 스택은 이미 검증되었다.** Open Video Downloader(jely2002, ★8.2k)가 정확히 이 조합으로 v3.2까지 운영 중. **PySide6는 yt-dlp 내부 API를 직접 import할 수 있다는 우위가 있다** — 풍부한 에러 처리가 가능. 두 옵션 모두 유효하지만 v1은 PySide6가 합리적이다.
+3. **시장에 비어 있는 가장 큰 빈틈**: (a) **Stacher 수준의 라이브러리/태깅/자막 텍스트 검색을 오픈소스로**, (b) **4K Video Downloader의 "Smart Mode" 같은 프리셋을 잘 만든 OSS는 없다**, (c) **PoToken/쿠키 가이디드 워크플로우가 모든 GUI에서 부재**.
+4. **유저가 가장 많이 불평하는 5가지** 안티패턴: 오래된 yt-dlp 번들, 봇 감지 시 스택 트레이스만 출력, 포맷 사용 불가 시 fallback 없음, 멀티 클릭 추가 워크플로우, 설정 비저장.
+5. **PoToken은 2024-2025년에 본격화되었고, 2025년 11월부터 yt-dlp의 일부 YouTube 클라이언트는 외부 JS 런타임(Deno)을 요구한다**. 이는 YCollector가 처음부터 고려해야 할 의존성이다.
+
+---
+
+## 1. 조사 범위 / 방법
+
+### 1.1 범위
+- **오픈소스 GitHub 프로젝트** (1차 — 사용자 명시 요청)
+- 일부 **상용 도구** (UX 비교용)
+- 활성 기준: 최근 24개월 내 의미있는 릴리스가 있는 것에 한정. 그 이전은 부록의 "stale" 표로 분리.
+
+### 1.2 평가 항목
+- **기능**: 지원 사이트 수, 라이브/플레이리스트/자막/메타/다중 연결 등.
+- **디자인 / UX**: 입력 흐름, 포맷 선택, 진행 표시, 큐 관리, 에러 메시지.
+- **YouTube 변경 대응**: 자가 업데이트 메커니즘, 회귀 시간.
+- **아키텍처**: 백엔드 엔진(자체/yt-dlp), UI 프레임워크, 배포 방식.
+
+### 1.3 출처
+- GitHub 저장소 README / 릴리스 / 이슈 트래커
+- Reddit (r/DataHoarder, r/youtubedl, r/software)
+- 공식 사이트, 블로그 리뷰 (BrightCoding, dvdfab, tool-hunt 등)
+- yt-dlp wiki (PO Token Guide 등)
+
+---
+
+## 2. CLI / 라이브러리 백엔드 (엔진층)
+
+이 프로젝트들은 GUI를 자체 제공하지는 않지만, 거의 모든 다운로더 GUI의 동력원이다. 아키텍처 이해의 출발점.
+
+### 2.1 yt-dlp ★ 사실상의 표준
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/yt-dlp/yt-dlp |
+| 라이선스 | Unlicense (퍼블릭 도메인) |
+| 최근 릴리스 | 2026.03.17 (월간 stable + nightly + master 채널) |
+| 스택 | Python 3.10+, 모듈식 `InfoExtractor`, postprocessor 파이프라인 |
+| 플랫폼 | Win/Mac/Linux/BSD; PyPI, 단일 바이너리, Homebrew |
+
+**기능 강점**:
+- 1,800+ 사이트 지원
+- 3채널 릴리스(stable/nightly/master) — 다운스트림 앱이 핀하거나 head를 따를 수 있게 함
+- 플러그인 시스템(extractors, postprocessors)
+- 브라우저 임퍼소네이션, 쿠키 임포트, HLS/DASH 프래그먼트
+- 자가 업데이트(체크섬 검증)
+- SponsorBlock 통합 내장
+
+**약점**:
+- 순수 CLI — `--help` 가 수백 줄
+- 사용자용 에러 메시지가 매우 기술적
+- 2025년 말 Python 최저 요구를 3.10으로 올려 일부 다운스트림 패키저 깨짐
+
+**YouTube 변경 대응**: **압도적으로 우수**. nightly 픽스가 보통 24-72시간 내 머지. 2024년 도입된 PO Token 시스템에 대응하기 위해, 2025년 11월부터 일부 YouTube 클라이언트는 **외부 JS 런타임(Deno)을 요구**([yt-dlp wiki, PO Token Guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide)).
+
+> **YCollector 함의**: 이게 백엔드. 다른 선택지는 사실상 없다.
+
+### 2.2 youtube-dl
+
+| URL | https://github.com/ytdl-org/youtube-dl |
+|---|---|
+| 상태 | yt-dlp에 의해 사실상 대체됨. 산발적 커밋만 있음. |
+
+> 신규 도구 백엔드로는 불가. 일부 GUI(yt-dlg, oleksis/youtube-dl-gui)가 이름은 youtube-dl이지만 실제로는 yt-dlp를 호출.
+
+### 2.3 pytube / pytubefix
+
+| 항목 | 내용 |
+|---|---|
+| pytube URL | https://github.com/pytube/pytube |
+| pytubefix URL | https://github.com/JuanBindez/pytubefix |
+| 상태 | pytube는 유지보수 위기(메인 11.0.1, 2021.08); pytubefix는 활발한 커뮤니티 포크 |
+
+**API 단순성** 면에서는 강점: `YouTube(url).streams.get_highest_resolution().download()`. 하지만 YouTube 변경 대응은 yt-dlp보다 항상 늦다. pytubefix만 "subprocess 없는 순수 Python이 꼭 필요한" 경우 고려.
+
+### 2.4 Lux (iawia002/lux)
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/iawia002/lux |
+| 라이선스 | MIT |
+| 스택 | Go (~85%) + JS 글루; ~30 MB 단일 바이너리 |
+
+**기능 강점**:
+- 다중 스레드 세그먼트 다운로드 (`-n`)
+- JSON 출력
+- **중국 시장 사이트(Bilibili, Youku, iQiyi, Douyin, 샤오홍슈) 지원이 yt-dlp보다 강함**
+
+**약점**: 사이트 추출기 50개 vs yt-dlp 1800개; YouTube 추출기 깨짐 빈도 높음([issue #1425](https://github.com/iawia002/lux/issues/1425)).
+
+> **YCollector 함의**: 중국 플랫폼/속도가 핵심 사용자에게는 *fallback 엔진*으로 가치 있음. 메인 엔진은 아님.
+
+### 2.5 streamlink
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/streamlink/streamlink |
+| 라이선스 | BSD-2-Clause |
+| 최근 | 8.4.0 (2026-05-06) |
+
+**핵심**: 스트림을 디스크가 아닌 **외부 플레이어(VLC/mpv)로 파이프**. 라이브 시청에 특화. YouTube 보호 영상은 yt-dlp에 위임.
+
+> **YCollector 함의**: 사용 케이스는 다르지만, **엄격한 플러그인 컨트랙트 모델**이 우리의 플러그인 SDK 설계 참조점.
+
+### 2.6 gallery-dl
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/mikf/gallery-dl |
+| 최근 | v1.32.1 (2026-05-03), 매우 활발 |
+
+이미지 갤러리 중심이지만 **JSON 컨피그 기반 디자인**(`gallery-dl.conf`)이 yt-dlp의 플래그 수프보다 훨씬 잘 확장됨.
+
+> **YCollector 함의**: 우리도 비슷한 JSON/TOML 컨피그 레이어를 앱 위에 두는 게 좋다.
+
+---
+
+## 3. 데스크톱 GUI (오픈소스)
+
+### 3.1 Parabolic ★ 현 시점 OSS GUI 1순위 벤치마크
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/NickvisionApps/Parabolic |
+| 라이선스 | MIT |
+| ★ | ~5,400 |
+| 최근 | 2026.4.1 (2026-05-01); 153회 릴리스 |
+| 스택 | **C# / .NET 10, NativeAOT 컴파일** |
+| UI | **GTK4+libadwaita (Linux), WinUI 3 (Win), macOS 지원, 브라우저 확장(Chrome/Firefox)** |
+| 플랫폼 | Win/Mac/Linux + 브라우저 확장 |
+
+**기능 강점**:
+- **플랫폼별 네이티브 UI** (Electron/Tauri 타협 없음)
+- **브라우저 확장이 데스크톱 앱으로 URL을 푸시** — 똑똑한 크로스 프로세스 브리지
+- 다중 포맷 프리셋(MP4/WebM/MP3/Opus/FLAC/WAV)
+- SponsorBlock, 자막/메타 임베드
+- Weblate 활발한 번역 파이프라인
+
+**디자인 강점**: GNOME 빌드는 카테고리 통틀어 가장 폴리시드한 libadwaita 앱. 동시 다운로드 UI 깔끔.
+
+**약점 (이슈 트래커 기준)**:
+- 실행/다운로드 탭 진입 시 크래시 빈발 ([#778](https://github.com/NickvisionApps/Parabolic/issues/778))
+- aria2c 설정이 세션 간 비저장
+- YouTube 변경 후 "Requested format is not available" 재발
+- 멀티 클릭 "링크 추가" 흐름 단축 요청 다수
+
+**YouTube 대응**: 릴리스마다 yt-dlp 바이너리 동봉. 큰 변경 후 1-2주 내 출시. 하지만 옛 버전 사용자는 갇힘.
+
+> **YCollector 함의**: 가장 직접적인 벤치마크. **격차**는 라이브러리/태깅/구체적 진단 메시지에서 만들 수 있음.
+
+### 3.2 Stacher (closed-source)
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://stacher.io |
+| 라이선스 | **Closed-source 프리미엄**; Patreon 라이선스 |
+| 가격 | 무료 + Premium ~$5-7/월; 3 디바이스 캡 |
+| 스택 | Electron 계열로 추정. yt-dlp 래핑. |
+| 플랫폼 | Win/Mac (Linux 부수적) |
+
+**기능 / 디자인 강점**:
+- **스프레드시트 같은 라이브러리 뷰** — 노트, 태그, 챕터/메타가 보이는 자체 플레이어
+- **자막 텍스트 인덱싱 / 검색** — 자막 본문으로 미디어 검색. **본 조사 통틀어 가장 독창적인 기능.**
+- 트림/크롭/GIF 추출, 후처리 포맷 변환
+- 테마 지원
+
+**약점**:
+- 폐쇄 소스 → r/DataHoarder에서 회의적
+- Patreon 락인이 일회성 결제 선호자에게 거부감
+- 무료 티어 제한 큼
+
+**YouTube 대응**: 1인 개발자. yt-dlp 업데이트는 Stacher 릴리스에 묶여 보통 며칠 내 반영.
+
+> **YCollector 함의**: **"라이브러리 + 태그 + 자막 검색" 컨셉을 OSS로 구현하면, 이 도구의 모든 사용자가 유력 마이그레이션 후보.** 가장 큰 차별화 지렛대.
+
+### 3.3 Tartube / Tartube-NG
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/axcore/tartube (NG: axcore/tartube-ng) |
+| 라이선스 | LGPL-2.1 |
+| ★ | ~2.9k |
+| 최근 | v2.5.197 (2026-01-20), dev v2.5.210 (2026-03-30) |
+| 스택 | Python 3 + **GTK 3** (구식). yt-dlp 래핑. |
+| 플랫폼 | Win 64bit, Linux, BSD, macOS (Intel + Apple Silicon) |
+
+**기능 강점** (이 카테고리에서 가장 야심찬 기능 세트):
+- **DB 기반 라이브러리** + 중첩 폴더, 시스템 폴더("All Videos", "Bookmarks", "Favourite", "Livestreams", "Missing Videos", "New", "Recent", "Waiting")
+- **라이브스트림 감지 + 시간 기반 스케줄링**
+- 다중 사이트(YouTube/Twitch/Odysee) 중복 감지
+- JSON/CSV/text 일괄 임포트-익스포트
+- 채널별 다운로드 프로파일
+- SponsorBlock, 클립 추출, 시간 슬라이스 제거
+
+**약점**:
+- GTK 3 UI가 Parabolic의 libadwaita 옆에서 노쇠
+- 정보 밀도가 너무 높아 신규 사용자 위협적
+- 2GB+ FFmpeg 자동 다운로드 같은 깜짝 이벤트 ([Linux Mint Forums](https://forums.linuxmint.com/viewtopic.php?t=341355))
+- Windows 셋업 마찰
+
+> **YCollector 함의**: 기능 세트는 가장 많지만 **UI는 "유튜브 채널을 아카이빙하는 사람" 타깃**으로 일반 사용자에게 진입장벽. 우리는 **같은 기능을 모던 UI로** 만들 수 있다.
+
+### 3.4 Open Video Downloader (jely2002/youtube-dl-gui)
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/jely2002/youtube-dl-gui |
+| 라이선스 | AGPL-3.0 |
+| ★ | 8.2k, 605 forks |
+| 최근 | v3.2.0 (2026-03-30) |
+| 스택 | **Rust + Tauri + Vue 3 + TypeScript** |
+| 플랫폼 | Win, macOS (Intel + Apple Silicon), Linux (deb/rpm/generic) |
+
+**기능 강점**:
+- 앱 + yt-dlp 바이너리 양쪽 자동 업데이트
+- 쿠키 + basic auth, 출력 템플릿
+- 스마트 큐, light/dark 테마
+- 시스템 알림
+
+**디자인 강점**: 단일 작은 인스톨러(Tauri ~20-30MB vs Electron ~150MB), 반응성 좋은 UI.
+
+**약점**:
+- 긴 플레이리스트의 메타 페치 지연(개선 중)
+- i18n 갭
+- **UI가 기능적이지만 차별화 지점이 없음**
+
+**YouTube 대응**: yt-dlp 자동 업데이트. 최근 봇 감지 에러 처리 개선.
+
+> **YCollector 함의**: **Tauri+Vue 스택이 실 운영에서 작동함을 증명**한 직접적 선례. 솔직한 질문은 "이 도구가 못하는 걸 우리가 뭘 할 수 있나?"
+
+### 3.5 yt-dlg (oleksis/youtube-dl-gui)
+
+| URL | https://github.com/yt-dlg/yt-dlg |
+|---|---|
+| 최근 | **1.8.5 (2023-02-24)** — 의존성 범프만, ~3년 stale |
+
+> 제외. 참조 가치 낮음.
+
+### 3.6 ytdlp-interface (ErrorFlynn)
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/ErrorFlynn/ytdlp-interface |
+| 라이선스 | MIT |
+| 최근 | v2.19.0 (활발) |
+| 스택 | **C++ + Nana GUI** |
+| 플랫폼 | Windows only (32/64/Win7 빌드 분리) |
+
+**강점**: 이 카테고리 최저 자원 footprint, "압축 풀어 실행" 포터블.
+
+**약점**: Windows만; UI가 2008년식; 컨트리뷰터 기반 좁음.
+
+> **YCollector 함의**: **Electron 없이도 풍부한 yt-dlp GUI가 가능함을 증명**하는 산 증거. UX 품질은 Parabolic보다 낮음.
+
+### 3.7 Persepolis Download Manager
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/persepolisdm/persepolis |
+| 라이선스 | GPL-3.0 |
+| ★ | 7.3k |
+| 최근 | 5.2.0 (2025-07-14) |
+| 스택 | Python + Qt (PyQt5 / PySide6 / Qt6); Meson; yt-dlp + aria2 래핑 |
+
+**강점**: **다중 세그먼트 다운로드 (최대 64 연결)**, 스케줄링, 큐, 브라우저 통합. YouTube는 일반 다운로드 매니저의 한 기능.
+
+**약점**: YouTube 워크플로우가 부속처럼 느껴짐; Qt 스킨 플랫폼 일관성 약간 ↓; 플레이리스트 일괄 아카이빙 미최적.
+
+> **YCollector 함의**: **세그먼트 다운로드 모델**과 **"비디오도 이해하는 일반 다운로드 매니저"** 각도 차용 가치.
+
+### 3.8 Video Downloader (Unrud)
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/Unrud/video-downloader |
+| 라이선스 | GPL-3.0 |
+| ★ | 1.1k |
+| 최근 | v0.12.31 (2026-03-29); 원저자 아카이브, 포크에서 유지보수 |
+| 스택 | Python + GTK4 + libadwaita; Meson |
+| 플랫폼 | Linux 주, Phosh(Linux 폰)도 |
+
+**디자인 강점**: 본 카테고리 통틀어 **가장 깔끔하고 "한 가지를 잘 하는"** UI. GNOME HIG 모범.
+
+**약점**: 기능 적음(라이브러리 X, 스케줄링 X); 162개 오픈 이슈; Fedora 환경 403 재발; 오디오 비트레이트 선택은 최상위 미해결 요청.
+
+> **YCollector 함의**: **소규모 UI 디자인의 마스터클래스**. 첫 릴리스를 과하게 빌드하지 말라는 교훈.
+
+---
+
+## 4. 모바일 (아키텍처적 관련성)
+
+### 4.1 NewPipe + NewPipeExtractor
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/TeamNewPipe/NewPipe (extractor: TeamNewPipe/NewPipeExtractor) |
+| 라이선스 | GPL-3.0 |
+| 최근 | NewPipe v0.28.6 (2026-05-01) |
+| 스택 | Java 76% + Kotlin 21% (Android 네이티브) |
+
+**기능 강점**:
+- **자체 Java 추출기 라이브러리** (yt-dlp 미사용) — `StreamingService`/`LinkHandler`/`Downloader` 인터페이스 기반
+- Google 계정 없이 구독 모델
+- 백그라운드 오디오, PiP, 4K, Kodi 통합
+
+**약점**: YouTube가 웹 마크업 바꾸면 수 주 단위로 깨짐. 자체 추출이라 회복이 yt-dlp보다 항상 느림.
+
+> **YCollector 함의**: `StreamingService` 인터페이스 컨트랙트는 **플러그인 SDK 모범 사례**로 읽을 가치 있음. 추출 자체는 절대 자체 구현 금지(이게 그 증거).
+
+### 4.2 LibreTube
+
+| URL | https://github.com/libre-tube/LibreTube |
+|---|---|
+| 스택 | Kotlin + Jetpack Compose |
+
+**핵심**: 원래는 Piped 백엔드 프록시. 최근 **"Full Local Mode"** 추가. 프록시 모델의 검증.
+
+### 4.3 Tubular (NewPipe 포크)
+
+| URL | https://github.com/polymorphicshade/Tubular |
+|---|---|
+
+**차별화**: SponsorBlock + ReturnYouTubeDislike + 계정 사인인 (NewPipe가 거부한 기능들).
+
+> **YCollector 함의**: 사용자가 **단호한 포크/옵션을 원함**. SponsorBlock 토글은 잘 보이는 곳에 둘 것.
+
+### 4.4 Seal (JunkFood02) ★ 디자인 모델
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/JunkFood02/Seal |
+| 라이선스 | GPL-3.0 |
+| 스택 | **순수 Kotlin + Jetpack Compose**, 단일 액티비티, Material Design 3 dynamic color; youtubedl-android 통해 yt-dlp 래핑 |
+| 플랫폼 | Android only |
+
+**기능 / 디자인 강점**:
+- **Material You 테마** — 본 조사 통틀어 시각적으로 가장 잘 다듬어진 yt-dlp 프론트엔드
+- 오디오에 메타+썸네일 임베드 (mutagen)
+- 플레이리스트 일괄
+- aria2c 외부 다운로더
+- **커스텀 yt-dlp 명령 템플릿** — 파워유저 기능
+- 자막 임베드
+
+**약점**: Android 전용; 일부 다크모드 색상 묽음; 포맷 선택은 여전히 yt-dlp 기본 지식 필요.
+
+> **YCollector 함의**: **본 조사 통틀어 비주얼 디자인을 가장 잘 한 프로젝트.** 차용:
+> 1. **명령 템플릿** 컨셉 (no-code 기본 ↔ 파워유저 커스텀 다리)
+> 2. **썸네일 우선 카드** 레이아웃
+> 3. **"설정 다이얼로그 벽이 없는"** 미감
+
+---
+
+## 5. 웹 / 서비스
+
+### 5.1 Cobalt (imputnet)
+
+| 항목 | 내용 |
+|---|---|
+| URL | https://github.com/imputnet/cobalt |
+| 라이선스 | AGPL-3.0 |
+| 최근 | v10.x 활발; 10.3에서 병렬 인스턴스, YouTube 오디오 언어 픽커 |
+| 스택 | **Svelte 프론트 (40%) + JS/TS 백엔드**; monorepo (api/web/packages) |
+
+**기능 / 디자인 강점**:
+- **Zero-cache 프록시** — 파일 절대 저장 X, 미디어 직통 프록시. 급진적 프라이버시
+- **단일 큰 paste 필드, 버튼 하나, 파일** — 트래킹/광고/페이월 0
+- 다중 인스턴스 로드밸런싱(10.3, 첫 요청 처리 ~14× 빠름)
+- YouTube 오디오 트랙 **언어 픽커**, 다중 서비스(YouTube/TikTok/Insta/X/Reddit/Vimeo/SoundCloud/VK)
+
+**디자인 강점**: 이 분야 **최고의 미니멀 디자인**. "링크 붙여넣고 파일 받기"에 군더더기 0. 설정은 progressive disclosure이지 거대한 탭 다이얼로그가 아니다.
+
+**약점**:
+- 2025년 한 동안 YouTube 차단(레이트 리밋) — [cobalt status, 2025-08](https://status.cobalt.tools/issues/)
+- 셀프 호스터도 같은 403 / empty tunnel 에러 ([issue #1475](https://github.com/imputnet/cobalt/issues/1475))
+- 셀프 호스트 문서를 한때 의도적으로 제거 (퍼블릭 재호스팅 억제)
+- **자체 YouTube 로직 → yt-dlp보다 회복이 더 느림.** 메인 인스턴스가 수일 다운된 적 있음.
+
+> **YCollector 함의**: 웹 서비스 모델은 우리가 못 따라함(데스크톱 앱). 하지만 **UI 미니멀리즘, 언어 픽커, 진행형 노출 설정**은 직접 차용 가능.
+
+---
+
+## 6. 상용 (UX 참조)
+
+### 6.1 4K Video Downloader / Plus
+
+| URL | https://www.4kdownload.com |
+|---|---|
+| 상태 | 원본은 **2026-02-01 단종**, "Plus"가 후속작 |
+| 가격 | $15/yr Lite ~ $25 Personal lifetime ~ $65 Pro |
+
+**디자인 강점**:
+- **"Smart Mode"** — 한 번 선택, 이후 paste만으로 동작. **카테고리 통틀어 단일 최고의 UX 아이디어.**
+- **인앱 브라우저** — 인증 콘텐츠 처리 OSS보다 우수
+- 50+ 언어 자막 추출
+
+**약점**: 무료 티어 일일 제한 큼; Microsoft Store 평점 3.7/5; 업그레이드 강요감.
+
+### 6.2 VideoProc Converter
+
+**강점**: **하드웨어 가속**(GPU) 트랜스코딩, 4K/8K 변환 ~47× 빠름; 다운로더+에디터+레코더+컨버터 통합.
+
+**디자인 강점**: 명확한 최상위 모드 픽커 (Download/Convert/Record/Edit) — "기능 수프"보다 나은 정보 아키텍처.
+
+**약점**: 만능 칼 같은 느낌; 다운로더는 4개 기둥 중 하나일 뿐.
+
+### 6.3 Allavsoft
+
+다소 구식 UI; 일괄 다운로드, 일시정지/재개, 다운로드 후 자동 종료. 평이.
+
+### 6.4 ByClick Downloader
+
+**핵심 차별화**: **클립보드 감시 → 자동 프롬프트** — "본 채널/영상 받으시겠어요?" 카테고리에서 가장 똑똑한 copy-paste 워크플로우.
+
+**약점**: 에디터 없음; 가격 다이얼로그 공격적.
+
+---
+
+## 7. 종합 분석 (Lessons Learned)
+
+### 7.1 공통 아키텍처 패턴
+
+1. **`yt-dlp` subprocess 위에 얇은 GUI** — Parabolic, Open Video Downloader, ytdlp-interface, Stacher, Video Downloader, Tartube, Seal, Persepolis, dsymbol/yt-dlp-gui 등 압도적 다수. 예외(NewPipeExtractor, Lux, Cobalt)는 모두 YouTube 변경 대응이 더 느림. → **자체 추출기 만들지 말 것.**
+2. **yt-dlp 바이너리 동봉 + 자가 업데이트** — Parabolic, OVD, Stacher 모두 검증된 yt-dlp를 묶고 조용히 갱신. "yt-dlp가 너무 오래됐다"만큼 사용자를 화나게 하는 건 없음.
+3. **Aria2 옵션 통합** — Persepolis, Seal, Parabolic 모두 다중 연결 토글 노출.
+4. **플랫폼별 네이티브 UI vs 크로스플랫폼 프레임워크** — Parabolic은 플랫폼별 네이티브(libadwaita on Linux, WinUI 3 on Win)로 가장 폴리시드; OVD는 Tauri+Vue로 가장 크로스플랫폼. 둘 다 유효. Electron / Qt는 중간.
+5. **DB / 라이브러리 + 폴더 계층** — Tartube, Stacher Premium만 진지하게 함. 대부분은 "과거 다운로드 리스트"에서 멈춤.
+
+### 7.2 공통 UX 패턴
+
+| 관심사 | 일반 패턴 | 최고 사례 |
+|---|---|---|
+| URL 입력 | 큰 paste 필드 + 클립보드 자동 감지 | Cobalt(필드 1개+버튼 1개), ByClick(복사 시 자동 프롬프트) |
+| 포맷 선택 | URL 페치 후 해상도/코덱 드롭다운 + "기본 프리셋" 토글 | 4K Downloader Smart Mode |
+| 진행 표시 | 행별 진행바 + 글로벌 throughput + 상태 아이콘 | Parabolic, OVD |
+| 큐 관리 | 일시정지/재개/순서 변경/삭제 + 동시 cap | Persepolis(풍부), Tartube(스케줄), OVD(스마트 큐) |
+| 에러 처리 | 인라인 에러 + "Logs 보기" + clipboard 복사 | 대부분 빠짐. Stacher 로그 뷰어 가장 깔끔 |
+| 설정 | 탭/섹션 다이얼로그 | Cobalt의 인라인 progressive disclosure가 다이얼로그보다 우월 |
+
+### 7.3 차용할 만한 혁신 (출처 명시)
+
+1. **자막 텍스트 인덱싱 + 검색** (Stacher) — 다른 곳에 없음. 아카이비스트 킬러 기능.
+2. **라이브러리/노트/태그 모델** (Stacher Premium, Tartube 일부) — "다운로더"를 "개인 미디어 라이브러리"로 격상.
+3. **데스크톱 앱으로 URL 푸시하는 브라우저 확장** (Parabolic) — 앱 포커스 전환 빈도 ↓.
+4. **"Missing Videos" 감지** (Tartube) — YouTube 측 삭제를 추적, 미러에서 재다운로드. 아카이브 차별화.
+5. **사용자 노출 yt-dlp 명령 템플릿 / 프로필** (Seal) — no-code 기본과 `--`-flag 파워유저 다리.
+6. **Smart Mode / 일회성 포맷 프리셋** (4K Video Downloader) — paste만으로 선호 설정 적용된 파일.
+7. **YouTube 다중 언어 영상의 오디오 트랙 언어 픽커** (Cobalt 10.3) — YouTube가 더빙 트랙을 늘리고 있어 점차 중요.
+8. **3채널(stable/nightly/master) 엔진 옵트인** (yt-dlp 자체) — 고급 사용자가 GUI 재빌드 없이 bleeding-edge yt-dlp 옵트인.
+9. **단일 바이너리 배포** (Lux의 Go 바이너리, ytdlp-interface의 포터블 C++) — Python/.NET 런타임 무관, 30MB `.exe` "그냥 작동".
+10. **클립보드 감시 + 자동 프롬프트** (ByClick) — "이거 받고 싶다"의 최저 마찰 경로.
+
+### 7.4 피해야 할 안티패턴 (인용 출처 포함)
+
+1. **번들 yt-dlp가 오래됨.** "Some GUI tools lag behind yt-dlp's latest updates, causing format or resolution errors even if the CLI version works" (BrightCoding 2025 라운드업). → **앱 시작 시 + "Update yt-dlp" 버튼.**
+2. **실행/탭 진입 시 크래시.** Parabolic [#778](https://github.com/NickvisionApps/Parabolic/issues/778). → 적극적 크래시 리포팅 + 커스텀 플러그인/프로파일 비활성 safe-mode 부팅.
+3. **포맷 선택 실패 ("Requested format is not available").** Parabolic 이슈에 재발. → 요청 포맷 실패 시 **자동 fallback**, non-blocking 알림.
+4. **FFmpeg 의존성 깜짝 이벤트.** Tartube 사용자 2GB+ FFmpeg 다운로드에 충격 ([Linux Mint Forums](https://forums.linuxmint.com/viewtopic.php?t=341355)). → 사전 감지 + 크기 경고 + 명시 동의 + 작은 정적 빌드 옵션.
+5. **"Sign in to confirm you're not a bot" 막다른 길.** [yt-dlp #14543](https://github.com/yt-dlp/yt-dlp/issues/14543), OVD 최근 픽스. → 쿠키-from-browser와 (장기) PO-token 플러그인의 가이디드 UI.
+6. **세션 간 비저장 설정.** Parabolic aria2c 케이스. → 변경 즉시 저장.
+7. **멀티 클릭 "링크 추가".** Parabolic 이슈에 반복 요청. → paste → 분석 → 시작, 한 클릭. 설정은 on-demand.
+8. **본질이 OSS 도구 래퍼인데 폐쇄 소스.** Stacher가 r/DataHoarder에서 받는 비판. YCollector의 OSS 자체가 무료 차별화.
+9. **403/연결 에러 + 진단 가이드 0.** 거의 모든 GUI 트래커에 재발(Video Downloader Fedora 41, Parabolic 크래시, ClipGrab 단말 실패). → 인라인 "다음 시도" — yt-dlp 갱신, 쿠키 사용, 플레이어 클라이언트 변경 등.
+10. **Windows 무거운 런타임.** Electron 기반 보편이지만 비대; ytdlp-interface는 수 MB UI도 가능함을 증명. → Tauri면 ~25MB, PySide6면 PyInstaller 슬림.
+
+### 7.5 YCollector 차별화 기회 (시장 빈틈)
+
+OSS에 비어 있는 것들 중 YCollector가 채울 수 있는 것:
+
+- **Stacher 라이브러리 + 태깅 + 자막 검색의 OSS 대안.** OSS에 없음. 이것만 있어도 r/DataHoarder의 모든 Patreon 의심론자가 마이그레이션 후보.
+- **잘 만든 "Smart Mode" 프리셋.** 4K VD 패턴이 OSS에 거의 없음. 이름 있는 프리셋 + 채널별 오버라이드 + Seal식 명령 템플릿이면 Parabolic, OVD를 편의성에서 압도.
+- **First-class 클립보드 감시 + 브라우저 확장 브리지.** Parabolic은 확장만, ByClick은 클립보드만 — 둘을 명시 동의 UX와 결합한 곳 없음.
+- **PO-token / 쿠키 가이디드 워크플로우.** 현재 전 영역에서 문서+플래그 고통. 이걸 GUI로 1차 시민화하면 즉시 차별화.
+- **Tartube의 채널별 스케줄 아카이빙을 모던 UI로.** Tartube 컨셉 좋음, GTK3 UI가 발목. PySide6 / Tauri 재빌드면 아카이브 파워유저 흡수.
+- **streamlink 모델의 플러그인 SDK.** 3rd party가 후처리 포스트프로세서를 출시할 수 있게 — "NAS 자동 업로드", "Whisper로 트랜스크립트", "Notion에 쓰기". 본 리스트의 어떤 GUI도 진짜 플러그인 SDK 없음.
+- **카테고리 평균보다 우수한 i18n.** 대부분 OSS는 영어 + Weblate로 몇 개. Cobalt, Parabolic만 투자. 나머지는 비투자.
+- **정확한 라이브 진행률.** 다수 GUI가 fragmented HLS/DASH로 인해 부정확한 ETA/크기 표시. 프래그먼트 인지 진행률은 작지만 가시적인 승부수.
+- **Linux 폰 형태팩터.** Unrud의 Video Downloader만 phosh 스케일링 타깃. 틈새지만 libadwaita/Qt 6를 잘 고르면 저비용.
+
+---
+
+## 8. YCollector 계획에 미치는 영향 (plan 변경 요약)
+
+본 모티프 조사 결과, plan 문서(`./docs/plan/youtube_downloader_plan_260508.md`)에 다음 업데이트가 필요하다 (실제 갱신은 plan 문서에 반영 완료):
+
+| Plan 섹션 | 변경 사항 |
+|---|---|
+| §1.1 Why | 구체적 경쟁 컨텍스트 추가 — Stacher/Parabolic/Tartube/OVD 위치 명시 |
+| §4 Tech Stack | PySide6 우선 결정 강화. OVD가 Tauri+Vue를 검증, Parabolic이 .NET NativeAOT 대안 입증. |
+| §6.2 PoToken | **Deno JS 런타임 의존성**(2025-11~) 명시. PO Token Provider는 옵션이 아닌 실질적 요구로 재분류. |
+| §7.1 yt-dlp 전략 | yt-dlp의 **3채널 모델**(stable/nightly/master) 채택. 사용자 옵트인 가능. |
+| §10 위험 | R10(브라우저 확장 vs 보안 표면), R11(폐쇄 경쟁자가 OSS 모방) 추가 |
+| §12.5 (NEW) 차별화 전략 | 시장 빈틈 5가지 명시 + 우선순위 |
+| §13 Open Questions | OQ-1 (UI 프레임워크), OQ-3 (PoToken provider) 답변 강화 |
+| §14 References | 본 motif 문서 + 주요 경쟁 프로젝트 URL |
+
+---
+
+## 9. 부록 A — 활성도 부족 / 제외 항목
+
+| 프로젝트 | 사유 |
+|---|---|
+| ClipGrab | Windows 마지막 의미있는 갱신 2024-11; 2025 초 봇 감지로 깨짐; 회복 신호 없음 ([dvdfab](https://www.dvdfab.cn/downloader/clipgrab.htm), [tool-hunt](https://tool-hunt.com/en/clipgrab-review-2025-alternatives/)) |
+| youtube-dl | yt-dlp에 대체. 산발 커밋만. |
+| pytube | 유지보수 위기. pytubefix가 권장 포크. |
+| yt-dlg (oleksis) | 2023-02 마지막 — 약 3년 stale. |
+| Lux (iawia002) | 경계선 — 최근 이슈 트리아지 있으나 릴리스 케이던스 둔화. fallback 옵션으로만 검토. |
+| 4K Video Downloader (원본) | 2026-02-01 공식 단종 — Plus 후속만 현행. |
+
+---
+
+## 10. 부록 B — 출처 (Sources)
+
+### CLI / 라이브러리
+- yt-dlp: https://github.com/yt-dlp/yt-dlp
+- yt-dlp PO Token Guide: https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide
+- yt-dlp #14543: https://github.com/yt-dlp/yt-dlp/issues/14543
+- youtube-dl: https://en.wikipedia.org/wiki/Youtube-dl
+- pytube: https://github.com/pytube/pytube
+- pytubefix: https://github.com/JuanBindez/pytubefix
+- Lux: https://github.com/iawia002/lux
+- streamlink: https://github.com/streamlink/streamlink
+- gallery-dl: https://github.com/mikf/gallery-dl
+
+### 오픈소스 GUI
+- Parabolic: https://github.com/NickvisionApps/Parabolic
+- Parabolic #778: https://github.com/NickvisionApps/Parabolic/issues/778
+- Open Video Downloader: https://github.com/jely2002/youtube-dl-gui
+- yt-dlg: https://github.com/yt-dlg/yt-dlg
+- ytdlp-interface: https://github.com/ErrorFlynn/ytdlp-interface
+- Tartube: https://github.com/axcore/tartube
+- Tartube #163: https://github.com/axcore/tartube/issues/163
+- Persepolis: https://github.com/persepolisdm/persepolis
+- Video Downloader (Unrud): https://github.com/Unrud/video-downloader
+- Stacher: https://stacher.io / https://www.patreon.com/cw/stacher
+
+### 모바일
+- NewPipe: https://github.com/TeamNewPipe/NewPipe
+- NewPipeExtractor: https://github.com/TeamNewPipe/NewPipeExtractor
+- LibreTube: https://github.com/libre-tube/LibreTube
+- Tubular: https://github.com/polymorphicshade/Tubular
+- Seal: https://github.com/JunkFood02/Seal
+
+### 웹 / 서비스
+- Cobalt: https://github.com/imputnet/cobalt
+- Cobalt #1475: https://github.com/imputnet/cobalt/issues/1475
+- Cobalt status: https://status.cobalt.tools/issues/
+
+### 상용
+- 4K Video Downloader: https://www.4kdownload.com
+- VideoProc: https://www.videoproc.com
+
+### 커뮤니티 / 리뷰
+- Reddit/community: https://www.notelm.ai/blog/youtube-downloader-reddit-picks
+- Linux Mint Forums (Tartube FFmpeg): https://forums.linuxmint.com/viewtopic.php?t=341355
+- Linux Mint Forums (Video Downloader): https://forums.linuxmint.com/viewtopic.php?t=442814
+- BrightCoding GUI 라운드업 2025: https://www.blog.brightcoding.dev/2025/12/06/the-ultimate-guide-to-gui-front-ends-for-youtube-dl-yt-dlp-download-videos-like-a-pro-2025-edition/
+- ClipGrab 리뷰: https://www.dvdfab.cn/downloader/clipgrab.htm
+- ClipGrab 대안: https://tool-hunt.com/en/clipgrab-review-2025-alternatives/
+
+---
+
+**(끝)**

@@ -1,0 +1,2338 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — YouTube 다운로더 설계 계획</title>
+<meta name="description" content="Plan v1.1 · 2026-05-08">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #4f46e5; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic',
+        sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* ---------- Topbar ---------- */
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 24px;
+}
+.topbar .brand {
+    font-weight: 700;
+    color: var(--fg);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.05rem;
+}
+.topbar .brand .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+}
+.topbar nav {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    align-items: center;
+}
+.topbar nav a {
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+    text-decoration: none;
+    font-size: 0.92rem;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+}
+.topbar nav a:hover { background: var(--accent-soft); color: var(--accent); }
+.topbar nav a.active { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- Layout ---------- */
+.layout {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr);
+    gap: 36px;
+}
+
+/* ---------- TOC Sidebar ---------- */
+.toc {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+    max-height: calc(100vh - 110px);
+    overflow-y: auto;
+    padding: 18px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    font-size: 0.88rem;
+}
+.toc h3 {
+    margin: 0 0 10px;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-soft);
+    font-weight: 600;
+}
+.toc ul { list-style: none; padding-left: 12px; margin: 4px 0; }
+.toc > ul { padding-left: 0; }
+.toc li { margin: 2px 0; }
+.toc a {
+    display: block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: var(--fg-muted);
+    text-decoration: none;
+    line-height: 1.3;
+    transition: background 0.12s, color 0.12s;
+}
+.toc a:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- Main content ---------- */
+.content {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 40px 56px 56px;
+    min-width: 0;
+}
+
+.page-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+    margin-bottom: 28px;
+}
+.page-header .tag {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 3px 10px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+.page-header h1 {
+    margin: 6px 0 4px;
+    font-size: 2.05rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+}
+.page-header .subtitle {
+    color: var(--fg-muted);
+    font-size: 0.95rem;
+}
+
+/* ---------- Typography ---------- */
+.content h1 { font-size: 1.95rem; margin: 36px 0 12px; line-height: 1.25; }
+.content h2 {
+    font-size: 1.55rem;
+    margin: 44px 0 14px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    line-height: 1.3;
+}
+.content h3 { font-size: 1.22rem; margin: 28px 0 10px; }
+.content h4 { font-size: 1.05rem; margin: 22px 0 8px; }
+.content h5 { font-size: 0.95rem; margin: 18px 0 6px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.content p { margin: 0 0 14px; }
+.content ul, .content ol { margin: 0 0 16px; padding-left: 26px; }
+.content li { margin: 4px 0; }
+.content li > ul, .content li > ol { margin: 4px 0; }
+
+.content a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 30%, transparent); text-underline-offset: 3px; }
+.content a:hover { text-decoration-color: var(--accent); }
+
+.content strong { color: var(--fg); font-weight: 700; }
+.content em { color: var(--fg); }
+
+.content hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 36px 0;
+}
+
+/* ---------- Header anchors ---------- */
+.content h1, .content h2, .content h3, .content h4 {
+    scroll-margin-top: 76px;
+    position: relative;
+}
+.headerlink {
+    color: var(--fg-soft);
+    text-decoration: none;
+    margin-left: 8px;
+    opacity: 0;
+    font-weight: 400;
+    transition: opacity 0.15s;
+}
+.content h1:hover .headerlink,
+.content h2:hover .headerlink,
+.content h3:hover .headerlink,
+.content h4:hover .headerlink { opacity: 1; }
+
+/* ---------- Tables ---------- */
+.content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0 20px;
+    font-size: 0.93rem;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+.content th {
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    font-size: 0.88rem;
+}
+.content td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    vertical-align: top;
+}
+.content tr:last-child td { border-bottom: none; }
+.content tr:hover td { background: var(--bg-soft); }
+
+/* ---------- Code ---------- */
+.content code {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Consolas, 'Liberation Mono', monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+}
+.content pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 16px 18px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    overflow-x: auto;
+    margin: 14px 0 20px;
+    line-height: 1.55;
+    font-size: 0.88rem;
+}
+.content pre code {
+    background: transparent;
+    padding: 0;
+    border: 0;
+    font-size: inherit;
+}
+
+/* ---------- Blockquote ---------- */
+.content blockquote {
+    margin: 16px 0;
+    padding: 12px 18px;
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--fg);
+}
+.content blockquote p:last-child { margin-bottom: 0; }
+
+/* ---------- Pygments syntax highlighting ---------- */
+.codehilite { background: var(--code-bg); }
+.codehilite .hll { background-color: #ffffcc; }
+.codehilite .c, .codehilite .ch, .codehilite .cm, .codehilite .c1, .codehilite .cs { color: #6a737d; font-style: italic; }
+.codehilite .err { color: #b31d28; }
+.codehilite .k, .codehilite .kc, .codehilite .kd, .codehilite .kn, .codehilite .kp, .codehilite .kr, .codehilite .kt { color: #d73a49; font-weight: 600; }
+.codehilite .o { color: #d73a49; }
+.codehilite .nb { color: #005cc5; }
+.codehilite .nf { color: #6f42c1; }
+.codehilite .s, .codehilite .s1, .codehilite .s2, .codehilite .sb, .codehilite .sc, .codehilite .sd { color: #032f62; }
+.codehilite .m, .codehilite .mi, .codehilite .mf { color: #005cc5; }
+.codehilite .ow { color: #d73a49; }
+.codehilite .nt { color: #22863a; }
+@media (prefers-color-scheme: dark) {
+    .codehilite .c, .codehilite .ch, .codehilite .cm, .codehilite .c1 { color: #6b7280; }
+    .codehilite .k, .codehilite .kt { color: #ff7b72; }
+    .codehilite .nb { color: #79c0ff; }
+    .codehilite .nf { color: #d2a8ff; }
+    .codehilite .s, .codehilite .s1, .codehilite .s2 { color: #a5d6ff; }
+    .codehilite .m, .codehilite .mi, .codehilite .mf { color: #79c0ff; }
+    .codehilite .ow { color: #ff7b72; }
+    .codehilite .nt { color: #7ee787; }
+}
+
+/* ---------- Footer ---------- */
+.footer {
+    text-align: center;
+    color: var(--fg-soft);
+    font-size: 0.85rem;
+    padding: 32px 0 12px;
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 920px) {
+    .layout { grid-template-columns: 1fr; padding: 16px; gap: 16px; }
+    .toc { position: static; max-height: none; }
+    .content { padding: 24px 18px 32px; }
+    .content h1 { font-size: 1.55rem; }
+    .content h2 { font-size: 1.3rem; }
+    .topbar { padding: 0 16px; gap: 12px; }
+    .topbar nav a { padding: 6px 8px; font-size: 0.86rem; }
+}
+
+/* ---------- Print ---------- */
+@media print {
+    .topbar, .toc { display: none; }
+    .layout { grid-template-columns: 1fr; padding: 0; }
+    .content { box-shadow: none; border: 0; padding: 0; }
+    body { background: white; }
+}
+
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a href="../index.html" class="brand"><span class="dot"></span>YCollector docs</a>
+  <nav>
+    <a href="../index.html">Index</a>
+    <a href="../plan/youtube_downloader_plan_260508.html" class="active">Plan</a>
+    <a href="../motif/youtube_downloader_motif_260508.html">Motif</a>
+    <a href="../plan/youtube_downloader_plan_260508.md">Source .md</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="toc">
+    <h3>목차</h3>
+    
+<ul>
+<li><a href="#0-tldr">0. TL;DR (요약)</a></li>
+<li><a href="#1">1. 프로젝트 개요</a><ul>
+<li><a href="#11-why">1.1 목적 (Why)</a></li>
+<li><a href="#12-goals">1.2 목표 (Goals)</a></li>
+<li><a href="#13-non-goals">1.3 비목표 (Non-Goals)</a></li>
+<li><a href="#14-success-metrics">1.4 성공 지표 (Success Metrics)</a></li>
+</ul>
+</li>
+<li><a href="#2">2. 사용자 페르소나 &amp; 시나리오</a><ul>
+<li><a href="#21">2.1 페르소나</a></li>
+<li><a href="#22">2.2 핵심 사용자 스토리</a></li>
+</ul>
+</li>
+<li><a href="#3">3. 요구사항</a><ul>
+<li><a href="#31-fr">3.1 기능 요구사항 (FR)</a><ul>
+<li><a href="#311">3.1.1 다운로드</a></li>
+<li><a href="#312">3.1.2 라이브 / 특수 콘텐츠</a></li>
+<li><a href="#313">3.1.3 큐 / 작업 관리</a></li>
+<li><a href="#314">3.1.4 파일 / 저장</a></li>
+<li><a href="#315">3.1.5 설정 / 인증</a></li>
+<li><a href="#316">3.1.6 업데이트</a></li>
+<li><a href="#317-115">3.1.7 입력 모드 (자세한 워크플로우는 §11.5)</a></li>
+<li><a href="#318-transcribe-phase-3-612-105-d6">3.1.8 전사 (Transcribe) — Phase 3, 자세한 기술 분석은 §6.12, 차별화는 §10.5 D6</a></li>
+</ul>
+</li>
+<li><a href="#32-nfr">3.2 비기능 요구사항 (NFR)</a></li>
+</ul>
+</li>
+<li><a href="#4">4. 기술 스택 결정</a><ul>
+<li><a href="#41-core">4.1 다운로드 엔진 (Core)</a></li>
+<li><a href="#42-ui">4.2 UI / 셸 프레임워크</a></li>
+<li><a href="#43">4.3 보조 도구 / 의존성</a></li>
+<li><a href="#44-ipc-subprocess-python-api">4.4 IPC / 통합 방식 — 하이브리드 (subprocess + Python API)</a></li>
+</ul>
+</li>
+<li><a href="#5">5. 아키텍처</a><ul>
+<li><a href="#51">5.1 컴포넌트 다이어그램</a></li>
+<li><a href="#52">5.2 계층 분해</a></li>
+<li><a href="#53-job-fsm">5.3 작업 상태머신 (Job FSM)</a></li>
+</ul>
+</li>
+<li><a href="#6-deep-dive">6. 핵심 도전과제 — Deep Dive</a><ul>
+<li><a href="#61-youtube-player-js-signature-n-sig">6.1 YouTube 클라이언트의 동적 변화 (Player JS / Signature / n-sig)</a></li>
+<li><a href="#62-sign-in-to-confirm-youre-not-a-bot-potoken">6.2 봇 감지 / "Sign in to confirm you're not a bot" / PoToken</a></li>
+<li><a href="#63-premium">6.3 접근 권한 — 비공개 / 멤버십 / 연령제한 / 지역제한 / Premium</a></li>
+<li><a href="#64-premiere">6.4 라이브 스트림 / Premiere</a></li>
+<li><a href="#65">6.5 영상 길이 / 대용량</a></li>
+<li><a href="#66">6.6 포맷 / 코덱 / 컨테이너</a></li>
+<li><a href="#67">6.7 속도 / 쓰로틀링 / 다중 연결</a></li>
+<li><a href="#68">6.8 자막 / 다국어</a></li>
+<li><a href="#69">6.9 메타데이터 / 챕터 / 댓글</a></li>
+<li><a href="#610">6.10 법적 / 윤리적 이슈</a></li>
+<li><a href="#611-windows">6.11 플랫폼 특이사항 (Windows)</a></li>
+<li><a href="#612-transcribe">6.12 전사(Transcribe) — 음성 → 텍스트</a></li>
+</ul>
+</li>
+<li><a href="#7-youtube">7. YouTube 변경에 대한 적응 전략</a><ul>
+<li><a href="#71-yt-dlp">7.1 의존성 전략 — yt-dlp 우선</a></li>
+<li><a href="#72-self-update">7.2 자가-업데이트 (Self-Update) 메커니즘</a></li>
+<li><a href="#73-error-classifier">7.3 에러 분류기 (Error Classifier)</a></li>
+<li><a href="#74-canary">7.4 카나리(Canary) 모니터링</a></li>
+<li><a href="#75">7.5 사용자 텔레메트리 (옵트인)</a></li>
+<li><a href="#76-long-term">7.6 다중 백엔드 (Long-term)</a></li>
+</ul>
+</li>
+<li><a href="#8">8. 구현 로드맵</a><ul>
+<li><a href="#phase-0-12">Phase 0 — 프로토타입 (1~2주)</a></li>
+<li><a href="#phase-1-gui-mvp-34">Phase 1 — GUI MVP (3~4주)</a></li>
+<li><a href="#phase-2-46">Phase 2 — 핵심 기능 (4~6주)</a></li>
+<li><a href="#phase-3-46">Phase 3 — 고급 (4~6주)</a></li>
+<li><a href="#phase-4-ux-34">Phase 4 — 인증 / UX (3~4주)</a></li>
+<li><a href="#phase-5">Phase 5 — 배포 / 유지보수 (지속)</a></li>
+<li><a href="#phase-6-optional">Phase 6 — 미래 (Optional)</a></li>
+</ul>
+</li>
+<li><a href="#9">9. 테스트 전략</a><ul>
+<li><a href="#91">9.1 단위 테스트</a></li>
+<li><a href="#92-ci">9.2 통합 테스트 (CI 매일)</a></li>
+<li><a href="#93">9.3 회귀 테스트</a></li>
+<li><a href="#94">9.4 수동 테스트 체크리스트</a></li>
+</ul>
+</li>
+<li><a href="#10-risk-register">10. 위험 평가 (Risk Register)</a></li>
+<li><a href="#105-differentiation-strategy">10.5 차별화 전략 (Differentiation Strategy)</a><ul>
+<li><a href="#d1-vs-stacher">D1. 라이브러리 + 태그 + 자막 텍스트 검색 (vs Stacher)</a></li>
+<li><a href="#d2-smart-mode-vs-4k-video-downloader">D2. "Smart Mode" 프리셋 (vs 4K Video Downloader)</a></li>
+<li><a href="#d3-potoken">D3. 가이디드 PoToken / 쿠키 워크플로우</a></li>
+<li><a href="#d4-vs-byclick-parabolic">D4. 클립보드 감시 + 브라우저 확장 (vs ByClick + Parabolic)</a></li>
+<li><a href="#d5-vs-tartube-ui">D5. 채널별 스케줄 아카이빙 (vs Tartube, 모던 UI)</a></li>
+<li><a href="#d6-whisper-local-transcription">D6. 로컬 Whisper 전사 (Local Transcription) — 신규</a></li>
+<li><a href="#_1">비차별화 (의도적 회피)</a></li>
+<li><a href="#vs">차별화의 수단 vs 목적</a></li>
+</ul>
+</li>
+<li><a href="#11">11. 운영 / 배포</a><ul>
+<li><a href="#111">11.1 빌드 / 패키징</a></li>
+<li><a href="#112">11.2 릴리스 채널</a></li>
+<li><a href="#113">11.3 자동 업데이트</a></li>
+<li><a href="#114">11.4 텔레메트리 / 에러 리포팅 (옵트인)</a></li>
+</ul>
+</li>
+<li><a href="#115-ux">11.5 입력 / 출력 워크플로우 (UX)</a><ul>
+<li><a href="#1151-cli">11.5.1 CLI 워크플로우</a></li>
+<li><a href="#1152-gui-pyside6">11.5.2 GUI 워크플로우 (PySide6)</a></li>
+<li><a href="#1153">11.5.3 출력 위치 / 파일 명명</a></li>
+</ul>
+</li>
+<li><a href="#12">12. 디렉토리 / 코드 레이아웃 (제안)</a></li>
+<li><a href="#13-open-questions">13. 열린 질문 (Open Questions)</a></li>
+<li><a href="#14">14. 참고</a><ul>
+<li><a href="#_2">핵심 의존성</a></li>
+<li><a href="#d6">전사 (D6)</a></li>
+<li><a href="#_3">컨피그 디자인 영감</a></li>
+<li><a href="#motif">경쟁 / 모티프 (자세한 분석은 motif 문서)</a></li>
+</ul>
+</li>
+<li><a href="#15-a-yt-dlp">15. 부록 A — 핵심 yt-dlp 인자 치트시트</a></li>
+<li><a href="#16-b-stdout">16. 부록 B — 진행률 stdout 파싱 (예시)</a></li>
+<li><a href="#17-c-ydl_opts">17. 부록 C — 컨피그 트리 ↔ ydl_opts 매핑</a><ul>
+<li><a href="#171">17.1 다운로드 / 포맷</a></li>
+<li><a href="#172">17.2 자막 / 메타 / 임베드</a></li>
+<li><a href="#173">17.3 인증 / 네트워크</a></li>
+<li><a href="#174">17.4 라이브 / 다운로드 동작</a></li>
+<li><a href="#175-d6-whisper-d2-pp">17.5 후처리 (D6 Whisper, D2 사용자 PP)</a></li>
+<li><a href="#176-gallery-dl">17.6 머지 시맨틱 (gallery-dl 영감)</a></li>
+<li><a href="#177">17.7 검증</a></li>
+</ul>
+</li>
+</ul>
+
+  </aside>
+
+  <main class="content">
+    <div class="page-header">
+      <span class="tag">PLAN</span>
+      <h1>YCollector — YouTube 다운로더 설계 계획</h1>
+      <div class="subtitle">Plan v1.1 · 2026-05-08</div>
+    </div>
+    <h1 id="ycollector-youtube">YCollector — YouTube 다운로더 설계 계획<a class="headerlink" href="#ycollector-youtube" title="Permanent link">¶</a></h1>
+<ul>
+<li><strong>문서 버전</strong>: 1.2 (입력 UX + Transcribe + 컨피그 트리 반영, 2026-05-10)</li>
+<li><strong>작성일</strong>: 2026-05-08 (YYMMDD: 260508), 최종 갱신 2026-05-10</li>
+<li><strong>상태</strong>: Draft (active)</li>
+<li><strong>저자</strong>: 초기 설계 초안</li>
+<li><strong>저장소</strong>: <code>D:\26y\YCollector</code> (git: <code>main</code>)</li>
+<li><strong>연관 문서</strong>: <a href="../motif/youtube_downloader_motif_260508.md"><code>../motif/youtube_downloader_motif_260508.md</code></a> — 경쟁 / 모티프 조사 (Parabolic, Stacher, Tartube, OVD, Seal, Cobalt 등 분석)</li>
+</ul>
+<blockquote>
+<p><strong>v1.2 변경 요약</strong>: <code>§3.1.7~8</code> (입력 모드, Transcribe FR), <code>§4.4</code> 하이브리드 IPC(subprocess + Python API), <code>§6.12</code> Transcribe 기술 분석, <code>§10.5 D2/D5</code> typed 컨피그 명시 + <code>D6</code> Transcribe 차별화 추가, <code>§11.5</code> 입출력 워크플로우 (CLI/GUI), 새 부록 C (컨피그 트리 ↔ ydl_opts 매핑).</p>
+<p><strong>v1.1</strong>: motif 조사로 <code>§1.1</code>, <code>§4.1</code>, <code>§4.2</code>, <code>§6.2</code>, <code>§7.1</code>, <code>§10</code>, <code>§13</code>, <code>§14</code> 업데이트 + 새 <code>§10.5 차별화 전략</code> 추가.</p>
+</blockquote>
+<hr />
+<h2 id="0-tldr">0. TL;DR (요약)<a class="headerlink" href="#0-tldr" title="Permanent link">¶</a></h2>
+<p>YouTube 영상을 손쉽게 다운로드하기 위한 데스크톱 프로그램(YCollector)을 만든다.</p>
+<p>핵심 설계 원칙은 다음과 같다.</p>
+<ol>
+<li><strong>추출(extract)/디시퍼링(deciphering) 로직을 직접 구현하지 않는다.</strong> 이 영역은 YouTube가 가장 자주, 가장 공격적으로 바꾸는 부분이며, 단독으로 따라가는 것은 비현실적이다. 우리는 <strong><code>yt-dlp</code></strong> 를 코어 다운로드 엔진으로 채택하고, 그 위에 <strong>사용자 경험(UX), 큐 관리, 인증, 자동 업데이트, 회복(recovery)</strong> 계층을 얹는다.</li>
+<li><strong>원치 않는 결합을 피한다.</strong> 코어 엔진(yt-dlp)을 별도 프로세스로 격리하고, 우리는 표준화된 인터페이스(JSON, stdout 라인 프로토콜)로 통신한다. 이렇게 하면 yt-dlp 업데이트가 우리 앱을 깨뜨리지 않고, 필요하면 다른 엔진(gallery-dl, custom backend)으로 갈아끼울 수 있다.</li>
+<li><strong>YouTube의 변경에 자동으로 적응한다.</strong> 앱은 시작 시점과 다운로드 실패 시점에 yt-dlp를 자가-갱신하고, 핵심 회귀를 잡기 위한 카나리(canary) 테스트를 CI에서 매일 돌린다.</li>
+<li><strong>법적/윤리적 가드레일.</strong> 애초에 다운로드 가능한 콘텐츠(자기 영상, 공개도메인, CC, 본인 권한 보유 콘텐츠)에 초점을 두고, 사용자에게 책임 고지를 명확히 한다.</li>
+</ol>
+<p>본 문서는 위 결정의 근거, 아키텍처, 위험요소, 대응 전략, 구현 로드맵을 다룬다.</p>
+<hr />
+<h2 id="1">1. 프로젝트 개요<a class="headerlink" href="#1" title="Permanent link">¶</a></h2>
+<h3 id="11-why">1.1 목적 (Why)<a class="headerlink" href="#11-why" title="Permanent link">¶</a></h3>
+<ul>
+<li>일반 사용자가 <strong>로컬에 영상을 보존</strong>하고 싶을 때(예: 오프라인 시청, 강의 보관, 개인 백업), 명령행에 익숙하지 않은 사람도 쓸 수 있는 GUI 도구가 필요하다.</li>
+<li>시장에는 도구가 많지만 각각 빈틈이 있다 (자세한 분석은 <a href="../motif/youtube_downloader_motif_260508.md">motif 문서</a> 참고):</li>
+<li><strong>Parabolic</strong> (NickvisionApps, OSS, ★5.4k) — 모던 네이티브 UI(.NET NativeAOT)이지만 라이브러리/태그/스케줄링 부재, 크래시 이슈 빈발.</li>
+<li><strong>Stacher</strong> — 라이브러리/노트/태그/자막 검색 등 가장 풍부한 기능이지만 <strong>폐쇄 소스</strong>이며 Patreon 라이선스.</li>
+<li><strong>Tartube</strong> (★2.9k) — 스케줄링 / Missing Videos 감지 등 야심찬 기능이지만 <strong>GTK3 UI가 노쇠</strong>하고 진입장벽 높음.</li>
+<li><strong>Open Video Downloader</strong> (jely2002, ★8.2k) — Tauri+Vue로 작은 바이너리 검증, 그러나 <strong>차별화 포인트가 부족</strong>.</li>
+<li><strong>4K Video Downloader Plus</strong> — 상용. "Smart Mode" 등 UX 우수하지만 자유도 낮고 무료 티어 제한.</li>
+<li><strong>ClipGrab</strong> — 2024-11 마지막 의미있는 업데이트, 사실상 stale.</li>
+<li>YCollector의 포지셔닝: <strong>Stacher 수준의 라이브러리 + Parabolic 수준의 모던 UI를, 오픈소스로</strong> 제공한다. Windows first-class. 자세한 차별화 전략은 §10.5 참고.</li>
+</ul>
+<h3 id="12-goals">1.2 목표 (Goals)<a class="headerlink" href="#12-goals" title="Permanent link">¶</a></h3>
+<ul>
+<li>G1. 단일 URL을 붙여 넣으면 화질/포맷을 골라 받을 수 있다.</li>
+<li>G2. 재생목록(Playlist), 채널(Channel), 검색결과 일괄 다운로드를 지원한다.</li>
+<li>G3. 라이브/예정 방송/Premiere/DVR 종료된 라이브에 대해 합리적인 동작을 제공한다.</li>
+<li>G4. 자막, 썸네일, 챕터, 메타데이터(작성자, 업로드 일자, 설명, 태그)를 함께 저장한다.</li>
+<li>G5. <strong>yt-dlp 자동 업데이트</strong> 및 회귀 시 사용자에게 명확한 안내.</li>
+<li>G6. 로컬 단일-바이너리 형태(또는 단일 인스톨러)로 배포한다.</li>
+</ul>
+<h3 id="13-non-goals">1.3 비목표 (Non-Goals)<a class="headerlink" href="#13-non-goals" title="Permanent link">¶</a></h3>
+<ul>
+<li>N1. <strong>DRM 보호 콘텐츠(YouTube Movies 구매, 일부 Music 구독 콘텐츠) 우회</strong>. 명시적으로 지원하지 않는다.</li>
+<li>N2. <strong>봇팜/대량 스크래핑 시나리오</strong>. 이 도구는 개인 사용을 가정한다.</li>
+<li>N3. <strong>저작권 침해 적극 조장</strong>. 우리는 다운로드 전 사용자에게 책임 고지를 표시하고, 명백한 저작권 보호 콘텐츠에 대해서는 기본적으로 경고한다.</li>
+<li>N4. 자체 추출기(extractor)의 처음부터 작성. yt-dlp를 신뢰하고 그 위에 빌드한다.</li>
+<li>N5. 모바일 앱(iOS/Android). 데스크톱 first.</li>
+</ul>
+<h3 id="14-success-metrics">1.4 성공 지표 (Success Metrics)<a class="headerlink" href="#14-success-metrics" title="Permanent link">¶</a></h3>
+<ul>
+<li>M1. 일반 공개 YouTube 영상에 대해 <strong>다운로드 성공률 ≥ 99%</strong> (CI 기준).</li>
+<li>M2. YouTube 측 변경 후 <strong>24시간 이내 자동 복구</strong>(yt-dlp 업데이트로 흡수).</li>
+<li>M3. 첫 사용자가 5분 안에 첫 영상을 받을 수 있다.</li>
+<li>M4. 1080p mp4 한 편 다운로드: 인터넷 대역폭의 <strong>70% 이상 활용</strong>.</li>
+</ul>
+<hr />
+<h2 id="2">2. 사용자 페르소나 &amp; 시나리오<a class="headerlink" href="#2" title="Permanent link">¶</a></h2>
+<h3 id="21">2.1 페르소나<a class="headerlink" href="#21" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>페르소나</th>
+<th>설명</th>
+<th>핵심 니즈</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A. 학습자 (Lecture Learner)</strong></td>
+<td>강의/튜토리얼을 오프라인 시청</td>
+<td>재생목록 일괄, 자막 동시 다운로드, 챕터 보존</td>
+</tr>
+<tr>
+<td><strong>B. 크리에이터 (My-Backup)</strong></td>
+<td>자기 채널의 백업</td>
+<td>메타데이터/원본 화질 보존, 정렬된 폴더 구조</td>
+</tr>
+<tr>
+<td><strong>C. 라이브 시청자 (Live Watcher)</strong></td>
+<td>라이브 종료 후 보관</td>
+<td>DVR 라이브 다운로드, 진행 중 라이브의 처음부터 받기</td>
+</tr>
+<tr>
+<td><strong>D. 음악 청취자 (Audio Ripper)</strong></td>
+<td>음원/팟캐스트만 추출</td>
+<td>최고 비트레이트 오디오 추출, 챕터 → 분할</td>
+</tr>
+<tr>
+<td><strong>E. 아카이비스트 (Archivist)</strong></td>
+<td>채널 통째로 보존</td>
+<td>채널 일괄, 메타/자막 포함, 중복 스킵</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 핵심 사용자 스토리<a class="headerlink" href="#22" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>US-1</strong>: 사용자는 URL을 입력창에 붙여넣고 "다운로드" 한 번으로 기본 옵션(1080p mp4 + 자막)을 받을 수 있다.</li>
+<li><strong>US-2</strong>: 사용자는 화질/코덱/오디오만/포맷(mp4, webm, mkv, mp3)을 선택할 수 있다.</li>
+<li><strong>US-3</strong>: 사용자는 재생목록 URL을 넣고 일부 영상만 체크해서 받을 수 있다.</li>
+<li><strong>US-4</strong>: 사용자는 다운로드 큐에 여러 영상을 추가하고, 동시 다운로드 수를 조정할 수 있다.</li>
+<li><strong>US-5</strong>: 사용자는 다운로드 실패 시 명확한 에러 메시지와 권장 조치(예: yt-dlp 업데이트, 쿠키 갱신)를 본다.</li>
+<li><strong>US-6</strong>: 사용자는 자기 계정의 비공개/멤버십 영상을 받기 위해 쿠키 또는 OAuth로 로그인할 수 있다.</li>
+<li><strong>US-7</strong>: 사용자는 진행 중인 라이브 방송을 "처음부터" 다운로드할 수 있다.</li>
+<li><strong>US-8</strong>: 앱이 자동으로 백그라운드에서 yt-dlp를 갱신하고, 사용자에게는 알림만 표시한다.</li>
+</ul>
+<hr />
+<h2 id="3">3. 요구사항<a class="headerlink" href="#3" title="Permanent link">¶</a></h2>
+<h3 id="31-fr">3.1 기능 요구사항 (FR)<a class="headerlink" href="#31-fr" title="Permanent link">¶</a></h3>
+<h4 id="311">3.1.1 다운로드<a class="headerlink" href="#311" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-1. 단일 영상 URL → 다운로드.</li>
+<li>FR-2. 재생목록/채널 URL → 멤버 영상 나열 + 선택적 다운로드.</li>
+<li>FR-3. 화질 선택: 144p ~ 8K (가용한 경우), <code>best</code>, <code>bestvideo+bestaudio</code>, 사용자 정의 포맷 코드.</li>
+<li>FR-4. 컨테이너 선택: mp4, mkv, webm.</li>
+<li>FR-5. 오디오 전용: m4a, opus, mp3(트랜스코딩), flac(가능 시).</li>
+<li>FR-6. 자막: 모든 사용 가능 언어 / 선택 언어, 자동 생성 자막 포함 옵션.</li>
+<li>FR-7. 썸네일 다운로드 + 메타 임베딩(<code>-embed-thumbnail</code>).</li>
+<li>FR-8. 챕터 임베딩, 메타데이터(설명, 업로더, 일자) 임베딩.</li>
+</ul>
+<h4 id="312">3.1.2 라이브 / 특수 콘텐츠<a class="headerlink" href="#312" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-9. 진행 중인 라이브 방송: 현재부터 / <strong>처음부터(<code>--live-from-start</code>)</strong>.</li>
+<li>FR-10. 종료된 라이브의 DVR 다운로드.</li>
+<li>FR-11. Premiere(첫 공개): 시작 시간 대기 후 자동 다운로드.</li>
+<li>FR-12. 멤버십/연령제한 영상: 쿠키 또는 OAuth.</li>
+</ul>
+<h4 id="313">3.1.3 큐 / 작업 관리<a class="headerlink" href="#313" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-13. 동시 다운로드 수 설정 (1~8, 기본 2).</li>
+<li>FR-14. 일시정지 / 재개 / 취소.</li>
+<li>FR-15. 실패 시 자동 재시도 (지수 백오프).</li>
+<li>FR-16. 진행률 / 속도 / ETA 실시간 표시.</li>
+<li>FR-17. 다운로드 이력(history) 저장 및 검색.</li>
+</ul>
+<h4 id="314">3.1.4 파일 / 저장<a class="headerlink" href="#314" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-18. 출력 템플릿 사용자 정의: <code>%(uploader)s/%(playlist)s/%(title)s [%(id)s].%(ext)s</code> 등.</li>
+<li>FR-19. 중복 영상 감지 (영상 ID 기준) → 스킵 / 갱신.</li>
+<li>FR-20. 파일명 위생화(Windows 금지 문자, 길이 제한).</li>
+</ul>
+<h4 id="315">3.1.5 설정 / 인증<a class="headerlink" href="#315" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-21. 브라우저(Chrome, Edge, Firefox, Brave)에서 쿠키 임포트 (<code>--cookies-from-browser</code>).</li>
+<li>FR-22. 쿠키 파일 직접 임포트 (Netscape format).</li>
+<li>FR-23. 프록시 / VPN 지원.</li>
+<li>FR-24. 다국어 UI (최소: ko, en, ja).</li>
+</ul>
+<h4 id="316">3.1.6 업데이트<a class="headerlink" href="#316" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-25. 앱 시작 시 yt-dlp 버전 체크.</li>
+<li>FR-26. 자가-업데이트(앱 자체) 또는 인스톨러 안내.</li>
+<li>FR-27. 핫픽스 채널(stable / nightly).</li>
+</ul>
+<h4 id="317-115">3.1.7 입력 모드 (자세한 워크플로우는 §11.5)<a class="headerlink" href="#317-115" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-28. <strong>단일 URL 붙여넣기</strong> — 큰 paste 필드, Enter 또는 버튼 클릭.</li>
+<li>FR-29. <strong>다중 URL 일괄 입력</strong> — 한 줄에 하나, 빈 줄/주석(<code>#</code>) 허용. 폼 또는 multi-line textarea.</li>
+<li>FR-30. <strong>파일 임포트</strong> — <code>.txt</code> (URL 한 줄에 하나), <code>.csv</code> (URL 컬럼), <code>.json</code>/<code>.m3u</code> (선택), 드래그 앤 드롭.</li>
+<li>FR-31. <strong>클립보드 감시</strong> (옵트인) — YouTube/지원 도메인 URL 복사 시 시스템 알림 → 한 번 클릭으로 큐 추가 (D4의 일부).</li>
+<li>FR-32. <strong>CLI 인자</strong> — <code>ycollector URL1 URL2 ...</code> 또는 <code>ycollector --from urls.txt</code>.</li>
+<li>FR-33. <strong>CLI stdin</strong> — <code>cat urls.txt | ycollector</code> 또는 <code>ycollector -</code> (UNIX-style).</li>
+<li>FR-34. <strong>재생목록 / 채널 URL 펼치기</strong> — 페치 후 영상 리스트 보여주고 사용자가 선택.</li>
+<li>FR-35. <strong>브라우저 확장 푸시</strong> (Phase 3, D4) — 페이지에서 한 번 클릭으로 데스크톱 앱으로 URL 전송.</li>
+</ul>
+<h4 id="318-transcribe-phase-3-612-105-d6">3.1.8 전사 (Transcribe) — Phase 3, 자세한 기술 분석은 §6.12, 차별화는 §10.5 D6<a class="headerlink" href="#318-transcribe-phase-3-612-105-d6" title="Permanent link">¶</a></h4>
+<ul>
+<li>FR-36. <strong>자동 자막 우선 사용</strong> — yt-dlp가 가져온 사람 자막 / 자동 생성 자막이 있으면 그것을 사용.</li>
+<li>FR-37. <strong>로컬 Whisper 전사 (옵트인)</strong> — 자막이 없거나 사용자가 명시적으로 요청하면 <code>faster-whisper</code>로 로컬 전사.</li>
+<li>FR-38. <strong>모델 선택</strong> — tiny / base / small / medium / large-v3. 모델은 첫 사용 시 옵트인 다운로드.</li>
+<li>FR-39. <strong>언어 자동 감지</strong> + 사용자 강제 지정.</li>
+<li>FR-40. <strong>GPU 가속</strong> (CUDA/Metal/Vulkan via faster-whisper, 가능하면 자동 감지).</li>
+<li>FR-41. <strong>출력 포맷</strong>: <code>.srt</code> (기본), <code>.vtt</code>, <code>.txt</code> (단순 본문), <code>.json</code> (단어 단위 타임스탬프).</li>
+<li>FR-42. <strong>임베드 옵션</strong> — 비디오 컨테이너에 자막 트랙으로 임베드.</li>
+<li>FR-43. <strong>라이브러리 통합</strong> — 전사 본문을 SQLite FTS5 인덱스에 저장 → D1 (자막 검색)이 사람 자막 없는 영상까지 커버.</li>
+<li>FR-44. <strong>클라우드 API 옵션</strong> (선택) — OpenAI / AssemblyAI / Google STT. 기본 비활성, 명시 동의.</li>
+</ul>
+<h3 id="32-nfr">3.2 비기능 요구사항 (NFR)<a class="headerlink" href="#32-nfr" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>카테고리</th>
+<th>요구사항</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>성능</strong></td>
+<td>1080p 동영상 다운로드 시 인터넷 대역폭의 70% 이상 활용. 동시 4개 다운로드 시 UI 60fps 유지.</td>
+</tr>
+<tr>
+<td><strong>안정성</strong></td>
+<td>네트워크 단절/재연결 후 자동 재개. 디스크 가득 참 등 시스템 에러를 사용자에게 명확히 표시.</td>
+</tr>
+<tr>
+<td><strong>호환성</strong></td>
+<td>Windows 10/11 (1차), macOS 12+ (2차), Linux x86_64 (3차).</td>
+</tr>
+<tr>
+<td><strong>보안</strong></td>
+<td>코드 사이닝(Windows Authenticode, macOS Notarization). 자동 업데이트 시 서명 검증.</td>
+</tr>
+<tr>
+<td><strong>프라이버시</strong></td>
+<td>텔레메트리는 기본 OFF, 옵트인. 쿠키/토큰은 OS 자격증명 저장소 또는 로컬 암호화.</td>
+</tr>
+<tr>
+<td><strong>접근성</strong></td>
+<td>키보드 내비게이션, 스크린리더 호환(WCAG 2.1 AA 목표).</td>
+</tr>
+<tr>
+<td><strong>로컬라이제이션</strong></td>
+<td>UTF-8 파일명, 한글/일본어/이모지 안전 처리.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4">4. 기술 스택 결정<a class="headerlink" href="#4" title="Permanent link">¶</a></h2>
+<h3 id="41-core">4.1 다운로드 엔진 (Core)<a class="headerlink" href="#41-core" title="Permanent link">¶</a></h3>
+<p>후보:</p>
+<table>
+<thead>
+<tr>
+<th>엔진</th>
+<th>장점</th>
+<th>단점</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>yt-dlp</strong></td>
+<td>가장 활발한 유지보수, 1800+ 사이트, PoToken 등 최신 우회 지원, <strong>3채널 릴리스</strong>(stable/nightly/master)</td>
+<td>Python 3.10+ 런타임 필요. 일부 YouTube 클라이언트는 외부 Deno JS 런타임 요구(2025-11~)</td>
+</tr>
+<tr>
+<td><code>youtube-dl</code></td>
+<td>(구) 안정적</td>
+<td>yt-dlp에 사실상 대체됨. 신규 도구에는 부적합.</td>
+</tr>
+<tr>
+<td>pytube / pytubefix</td>
+<td>API 단순, 의존성 없음</td>
+<td>YouTube 변경 대응 항상 yt-dlp보다 늦음. pytube 본체는 유지보수 위기.</td>
+</tr>
+<tr>
+<td>Lux (Go)</td>
+<td>단일 바이너리, 중국 사이트(Bilibili 등) 강함</td>
+<td>YouTube 추출기 깨짐 빈도 ↑, 사이트 ~50개 vs yt-dlp 1800+</td>
+</tr>
+<tr>
+<td>직접 구현</td>
+<td>의존성 없음</td>
+<td>YouTube player JS가 자주 바뀌어 비현실적. NewPipeExtractor도 자체 구현으로 회복이 항상 늦음.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>선택: <code>yt-dlp</code></strong> (subprocess). 함께 단일 바이너리로 동봉하거나 사용자 환경의 Python/시스템 yt-dlp를 활용한다.</p>
+<p><strong>근거</strong> (motif 조사 §7.1): 본 조사 통틀어 GUI 다운로더의 압도적 다수(Parabolic, Open Video Downloader, ytdlp-interface, Stacher, Video Downloader, Tartube, Seal, Persepolis 등)가 yt-dlp subprocess 모델을 사용. 자체 추출기를 채택한 모든 프로젝트(NewPipeExtractor, Lux, Cobalt)는 YouTube 변경 대응이 며칠~수주 늦음.</p>
+<p><strong>미래 fallback</strong> (Phase 6): <code>IExtractorBackend</code> 추상화로 Lux(중국 플랫폼) 또는 streamlink(라이브) 어댑터 추가 가능하도록 인터페이스 분리.</p>
+<h3 id="42-ui">4.2 UI / 셸 프레임워크<a class="headerlink" href="#42-ui" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>프레임워크</th>
+<th>장점</th>
+<th>단점</th>
+<th>검증된 경쟁자</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Qt (PySide6)</strong></td>
+<td>yt-dlp 내부 API 직접 import 가능(풍부한 에러 처리), Python 단일 스택, Persepolis가 운영 입증</td>
+<td>라이선스(LGPL), 디자인 자유도</td>
+<td>Persepolis (★7.3k)</td>
+</tr>
+<tr>
+<td>Tauri (Rust + Web)</td>
+<td>작은 바이너리(~25MB), 보안, 빠른 시작</td>
+<td>Rust 빌드 환경, WebView 차이</td>
+<td>Open Video Downloader (★8.2k)</td>
+</tr>
+<tr>
+<td>.NET + 플랫폼별 네이티브</td>
+<td>최고 폴리시(libadwaita + WinUI3), Parabolic 입증</td>
+<td>C#/.NET, 플랫폼별 코드 분기</td>
+<td>Parabolic (★5.4k)</td>
+</tr>
+<tr>
+<td>Electron</td>
+<td>어느 환경에서도 동일하게 동작</td>
+<td>큰 바이너리(150MB+), 메모리 사용</td>
+<td>Stacher (closed)</td>
+</tr>
+<tr>
+<td>C++ + Nana</td>
+<td>최저 footprint(수 MB)</td>
+<td>디자인 자유도 ↓, Windows only</td>
+<td>ytdlp-interface</td>
+</tr>
+<tr>
+<td>Flutter Desktop</td>
+<td>깔끔한 디자인, 단일 코드</td>
+<td>데스크톱 성숙도 ↓, 검증 사례 없음</td>
+<td>(없음)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>v1 잠정 결정: PySide6</strong>. 근거:</p>
+<ol>
+<li><strong>yt-dlp가 Python으로 작성</strong> → subprocess뿐 아니라 모듈로 import 가능. 풍부한 에러 객체 접근, 메타 추출 시 직렬화 비용 절약.</li>
+<li><strong>개발 속도</strong> — Python 단일 스택, 빠른 반복.</li>
+<li><strong>검증된 경쟁자(Persepolis)가 동일 스택</strong>으로 ★7.3k 운영 중.</li>
+<li><strong>PyInstaller / Nuitka로 단일 바이너리</strong>, Inno Setup / NSIS로 인스톨러 표준 패키징.</li>
+</ol>
+<p><strong>Phase 1+ 평가 트리거</strong>: PySide6에서 (a) 바이너리 100MB+, (b) 시작 지연 &gt; 2초, (c) 디자인 한계 명확 — 이 중 둘 이상이면 Tauri로 마이그레이션 검토. OVD가 Tauri+Vue 모델을 운영 검증해 둔 길이 있어 위험은 낮다.</p>
+<p><strong>비채택 사유</strong>:
+- <strong>Tauri</strong>: 좋은 옵션이지만 yt-dlp와의 결합도가 낮아 IPC 비용이 추가됨. 우리 팀에 Rust 경험이 부족할 가능성(재평가 가능).
+- <strong>.NET (Parabolic 모델)</strong>: 결과물은 가장 우수하나 플랫폼별 UI 코드를 따로 유지해야 함 → v1 비용 과다.
+- <strong>Electron</strong>: Stacher의 부풀린 footprint에 대한 사용자 불만 다수. 기각.
+- <strong>Flutter Desktop</strong>: 검증된 yt-dlp 다운로더 사례가 없음. 리스크 회피.</p>
+<h3 id="43">4.3 보조 도구 / 의존성<a class="headerlink" href="#43" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>FFmpeg</strong>: 비디오/오디오 병합(DASH 분리 포맷), 컨테이너 변환, 트랜스코딩(필요 시), HLS muxing. 필수.</li>
+<li><strong>aria2</strong>: 다중 연결 다운로드(선택). yt-dlp의 <code>--downloader aria2c</code>.</li>
+<li><strong>mkvtoolnix</strong> (선택): mkv 컨테이너 조작.</li>
+</ul>
+<h3 id="44-ipc-subprocess-python-api">4.4 IPC / 통합 방식 — 하이브리드 (subprocess + Python API)<a class="headerlink" href="#44-ipc-subprocess-python-api" title="Permanent link">¶</a></h3>
+<p>yt-dlp를 임베딩(Python 모듈 import)할지, 별도 프로세스(subprocess)로 호출할지. <strong>두 모드를 작업 종류에 따라 사용</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>작업</th>
+<th>모드</th>
+<th>이유</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>메타데이터 조회</strong> (<code>extract_info</code>, 화면에 영상 정보 표시)</td>
+<td><strong>Python API</strong> (in-process)</td>
+<td>풍부한 dict 반환, JSON 직렬화 비용 0, 풍부한 에러 객체</td>
+</tr>
+<tr>
+<td><strong>실제 다운로드 + 후처리</strong></td>
+<td><strong>subprocess</strong></td>
+<td>프로세스 격리(yt-dlp 충돌이 우리 앱을 안 죽임), yt-dlp 바이너리 핫스왑 가능</td>
+</tr>
+<tr>
+<td><strong>진행률 / 로그</strong></td>
+<td>subprocess + stdout JSON (<code>--progress-template "json:%(progress)j" --newline</code>)</td>
+<td>격리 유지하면서 머신리더블 progress</td>
+</tr>
+<tr>
+<td><strong>사용자 정의 후처리</strong> (D5 플러그인)</td>
+<td>Python API + <code>PostProcessor</code> 서브클래스</td>
+<td>yt-dlp의 PP 시스템 활용</td>
+</tr>
+</tbody>
+</table>
+<p><strong>구현 메모</strong>:
+- 코어 엔진은 두 백엔드를 동일한 <code>IDownloadEngine</code> 인터페이스 뒤에 두고, 호출자가 모드를 모르도록 추상화.
+- subprocess 모드는 자체 컨피그 트리(TOML) → <code>ydl_opts</code> dict → <code>opts_to_cli()</code> 직렬화 → <code>yt-dlp</code> 호출. 즉 항상 dict가 1차 진실이고 CLI는 출력 포맷.
+- yt-dlp 자가 갱신 시: subprocess 모드는 바이너리 교체만; in-process 모드는 모듈 reload 또는 다음 앱 재시작에서 적용. → in-process는 갱신 빈도 낮은 메타 조회에만 사용해 마찰 ↓.</p>
+<p><strong>컨피그 트리 ↔ ydl_opts 매핑</strong>: 부록 C 참고.</p>
+<hr />
+<h2 id="5">5. 아키텍처<a class="headerlink" href="#5" title="Permanent link">¶</a></h2>
+<h3 id="51">5.1 컴포넌트 다이어그램<a class="headerlink" href="#51" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>+--------------------------------------------------------------+
+|                          YCollector                           |
+|                                                              |
+|   +-------------+   +----------------+   +----------------+  |
+|   |   UI Shell  |&lt;-&gt;|  Core Service  |&lt;-&gt;|  Update Mgr    |  |
+|   | (React/Tauri|   |  (Rust/Python) |   |  (yt-dlp/app)  |  |
+|   |  or PySide) |   |                |   +----------------+  |
+|   +-------------+   |                |                       |
+|                     |   +---------+  |   +----------------+  |
+|                     |   | Queue   |  |&lt;-&gt;|  Auth Vault    |  |
+|                     |   | Manager |  |   |  (cookies)     |  |
+|                     |   +---------+  |   +----------------+  |
+|                     |       |        |                       |
+|                     |       v        |   +----------------+  |
+|                     |   +---------+  |&lt;-&gt;|  Settings DB   |  |
+|                     |   | Worker  |  |   |  (sqlite)      |  |
+|                     |   |  Pool   |  |   +----------------+  |
+|                     +---|---|---|---+                        |
+|                         v   v   v                            |
+|                   +---------------+                          |
+|                   | yt-dlp procs  | --&gt; [HTTP] --&gt; YouTube   |
+|                   | (subprocess)  |                          |
+|                   +-------+-------+                          |
+|                           |                                  |
+|                           v                                  |
+|                   +---------------+                          |
+|                   | FFmpeg (mux,  |                          |
+|                   | transcode)    |                          |
+|                   +---------------+                          |
++--------------------------------------------------------------+
+</code></pre></div>
+
+<h3 id="52">5.2 계층 분해<a class="headerlink" href="#52" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>UI Shell</strong>: 화면 레이아웃, 입력 검증, 상태 표시. 비즈니스 로직 없음.</li>
+<li><strong>Core Service</strong>: 큐 매니저, 워커 풀, 작업 상태머신, 에러 분류, 재시도 정책.</li>
+<li><strong>Engine Adapter</strong>: yt-dlp 호출, stdout 파싱, 진행률 정규화. 향후 다른 엔진으로 교체 가능한 인터페이스.</li>
+<li><strong>Auth Vault</strong>: OS 자격증명 저장소(Windows Credential Manager, macOS Keychain, libsecret) 또는 AES-GCM 암호화 로컬 파일.</li>
+<li><strong>Update Manager</strong>: yt-dlp 자가-업데이트(<code>yt-dlp -U</code> 또는 별도 채널), 앱 자체 업데이트.</li>
+<li><strong>Settings DB</strong>: SQLite. 다운로드 이력, 큐, 사용자 설정.</li>
+</ol>
+<h3 id="53-job-fsm">5.3 작업 상태머신 (Job FSM)<a class="headerlink" href="#53-job-fsm" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>   QUEUED → PREFLIGHT(메타조회) → DOWNLOADING → POSTPROCESS(병합/메타임베딩) → DONE
+              |        |                |               |
+              v        v                v               v
+            FAILED  FAILED           FAILED          FAILED
+              |
+              v
+        RETRY (max N) → ABANDONED
+</code></pre></div>
+
+<p>각 실패 상태에서 <strong>에러 분류기</strong>가 다음을 판단한다.</p>
+<ul>
+<li><strong>Retriable</strong>: 네트워크/타임아웃 → 자동 재시도(지수 백오프).</li>
+<li><strong>Stale-extractor</strong>: yt-dlp 시그니처/추출기 오류 → 자동 yt-dlp 업데이트 시도 후 재시도.</li>
+<li><strong>Auth-required</strong>: 로그인/쿠키 필요 → UI에서 사용자에게 안내.</li>
+<li><strong>Geo-blocked</strong>: 지역 제한 → 프록시 사용 안내.</li>
+<li><strong>Hard fail</strong>: 영상 삭제, 비공개 → 사용자에게 단순 표시.</li>
+</ul>
+<hr />
+<h2 id="6-deep-dive">6. 핵심 도전과제 — Deep Dive<a class="headerlink" href="#6-deep-dive" title="Permanent link">¶</a></h2>
+<blockquote>
+<p>이 절은 본 계획의 핵심이다. YouTube를 다루는 모든 도구는 아래 문제의 어떤 조합에 부딪힌다.</p>
+</blockquote>
+<h3 id="61-youtube-player-js-signature-n-sig">6.1 YouTube 클라이언트의 동적 변화 (Player JS / Signature / n-sig)<a class="headerlink" href="#61-youtube-player-js-signature-n-sig" title="Permanent link">¶</a></h3>
+<p><strong>문제</strong>:
+- YouTube의 비디오 URL은 서명(signature)되며, 재생을 위해서는 player.js의 함수로 <code>s</code> 또는 <code>sig</code>를 디시퍼해야 한다. 또한 <code>n</code> 파라미터(쓰로틀링 토큰)가 있다.
+- player.js는 자주 변경되며, 의도적으로 난독화되어 정적 분석으로 따라잡기 어렵다.
+- 우리가 직접 디시퍼링을 구현하면, 며칠~몇 주 단위로 깨질 수 있다.</p>
+<p><strong>대응</strong>:
+- <strong>yt-dlp에 위임.</strong> yt-dlp는 player JS를 동적으로 가져와서 함수를 추출하고 시그니처를 풀어준다. 이는 매우 활발하게 유지보수되며 PR 머지 → 릴리스가 빈번하다.
+- 우리는 yt-dlp 버전을 <strong>1주일 이상 묵히지 않는다</strong>. 자동 업데이트 + nightly 채널 옵션.</p>
+<h3 id="62-sign-in-to-confirm-youre-not-a-bot-potoken">6.2 봇 감지 / "Sign in to confirm you're not a bot" / PoToken<a class="headerlink" href="#62-sign-in-to-confirm-youre-not-a-bot-potoken" title="Permanent link">¶</a></h3>
+<p><strong>배경</strong>:
+- 2024년 후반부터 YouTube는 익명 클라이언트에 대해 <strong>PoToken(Proof of Origin Token)</strong> 또는 <strong>GVS(Google Visitor Session) PoToken</strong>을 요구하기 시작했다. 이게 없으면 일부 화질이 차단되거나, 다운로드 자체가 거부되거나, "로그인하여 사용자가 봇이 아닌지 확인" 메시지가 뜬다.
+- PoToken은 BotGuard 챌린지를 푸는 클라이언트 측 코드로 생성된다 — 즉, 헤드리스 브라우저 또는 웹뷰에서 실행되어야 한다.
+- <strong>2025-11 업데이트</strong> (<a href="https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide">yt-dlp PO Token Guide</a>): YouTube의 강화로 yt-dlp의 일부 클라이언트(특히 <code>web</code> 계열)는 이제 <strong>외부 JS 런타임(Deno)을 요구</strong>한다. 즉, YCollector는 Deno 또는 동등한 런타임을 옵션 의존성으로 다루어야 익명 다운로드가 안정적으로 작동한다.</p>
+<p><strong>대응 옵션</strong>(우선순위 순):</p>
+<ol>
+<li><strong>쿠키 + 로그인된 세션 사용</strong>(가장 권장): 사용자가 자신의 브라우저에서 로그인한 쿠키를 임포트하면, 대부분의 봇 감지를 우회한다. UX: "Chrome에서 로그인된 상태로 임포트" 한 번 클릭.</li>
+<li><strong>PoToken provider 통합</strong>: yt-dlp는 PoToken을 외부에서 주입받는 메커니즘이 있다. 별도 헬퍼 프로그램(예: <code>bgutil-ytdlp-pot-provider</code>, 또는 자체 헤드리스 Chromium)으로 PoToken을 발급한다. 별도 프로세스로 격리해 우리 앱의 보안 표면을 키우지 않는다.</li>
+<li><strong>클라이언트 위장</strong>: yt-dlp의 <code>--extractor-args "youtube:player_client=android,web,ios,tv_embedded"</code> 등으로 다른 클라이언트로 시도. 종종 어느 한 클라이언트는 PoToken 없이도 통과.</li>
+<li><strong>속도 조절</strong>: 짧은 시간 내 다수 요청은 봇 감지를 유발한다. 큐의 동시 실행을 사용자 설정과 무관하게 <strong>요청 간 인터벌</strong>을 강제(예: 동일 호스트당 분당 N회).</li>
+</ol>
+<p><strong>우리 앱의 정책</strong>:
+- 기본 다운로드는 <strong>익명 우선</strong> + <strong>로그인된 쿠키 권장 안내</strong>.
+- 봇 감지 에러가 감지되면 UI에서 <strong>가이디드 워크플로우</strong> 표시: (1) "쿠키 임포트 (브라우저 선택)", (2) "PoToken provider 활성화" (자동 Deno 감지/다운로드), (3) "클라이언트 위장 토글". 진단 메시지 + 다음 시도 명시.
+- <strong>PoToken provider는 v1에서 옵션, Phase 2~3에서 first-class 통합으로 격상</strong> (motif §7.5: 가이디드 PoToken/쿠키 워크플로우는 시장 빈틈 중 최우선 차별화 기회).
+- Deno 런타임은 사용자가 옵트인할 때만 다운로드(~30MB 추가). 시스템에 설치된 Deno 자동 감지.</p>
+<h3 id="63-premium">6.3 접근 권한 — 비공개 / 멤버십 / 연령제한 / 지역제한 / Premium<a class="headerlink" href="#63-premium" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>콘텐츠 유형</th>
+<th>다운로드 가능성</th>
+<th>필요한 것</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>공개 영상</td>
+<td>O (대부분)</td>
+<td>(없음)</td>
+</tr>
+<tr>
+<td>일부 차단(Limited)</td>
+<td>O</td>
+<td>클라이언트 위장</td>
+</tr>
+<tr>
+<td>연령제한 (Age-restricted)</td>
+<td>△</td>
+<td>로그인 쿠키 또는 OAuth</td>
+</tr>
+<tr>
+<td>비공개 (Private)</td>
+<td>O (소유자/공유받은 자)</td>
+<td>본인 계정 쿠키</td>
+</tr>
+<tr>
+<td>일부 공개 (Unlisted)</td>
+<td>O (URL 알면)</td>
+<td>링크</td>
+</tr>
+<tr>
+<td>멤버십 전용</td>
+<td>O (가입자)</td>
+<td>멤버 계정 쿠키</td>
+</tr>
+<tr>
+<td>지역제한 (Geo-blocked)</td>
+<td>△</td>
+<td>해당 지역 IP / 프록시</td>
+</tr>
+<tr>
+<td>YouTube Music Premium</td>
+<td>△</td>
+<td>Premium 구독 쿠키 (오디오 품질 ↑)</td>
+</tr>
+<tr>
+<td>YouTube Movies 구매</td>
+<td>X</td>
+<td>시도하지 않는다 (DRM, 비목표)</td>
+</tr>
+<tr>
+<td>Live (private/멤버)</td>
+<td>△</td>
+<td>멤버 쿠키 + DVR 켜진 경우</td>
+</tr>
+</tbody>
+</table>
+<p><strong>구현 메모</strong>:
+- <code>--cookies-from-browser</code> 가 가장 신뢰성이 높다. 단, <strong>브라우저가 닫혀 있어야</strong> 한다(Chrome은 쿠키 DB를 잠근다). UI에서 이 점을 안내.
+- OAuth는 Google 정책상 불안정(YouTube API 인증으로 다운로드 자체를 인증하는 것은 별개 문제). 쿠키 우선.</p>
+<h3 id="64-premiere">6.4 라이브 스트림 / Premiere<a class="headerlink" href="#64-premiere" title="Permanent link">¶</a></h3>
+<p><strong>라이브의 종류</strong>:
+- (a) <strong>현재 진행 중</strong>(LIVE NOW): HLS 매니페스트 기반.
+- (b) <strong>종료된 라이브 — DVR 있음</strong>: 라이브 종료 후 일정 시간 동안 처음부터 끝까지 받을 수 있음.
+- (c) <strong>종료된 라이브 — DVR 없음</strong>: 처리되지 않은 경우 일부만 또는 안 됨. 채널/콘텐츠 처리에 따라 VOD로 전환됨.
+- (d) <strong>Premiere(첫 공개)</strong>: 정해진 시간에 공개되는 사전 업로드 영상.</p>
+<p><strong>도전과제</strong>:
+- HLS의 청크는 일정 시간 후 만료. <strong>실시간 추적 다운로드</strong> 필요.
+- <code>--live-from-start</code> 사용 시 처음부터 따라잡기 위해 빠른 다운로드가 필요. 라이브 종료까지 진행되어야 한다.
+- 길이가 사전에 알려지지 않음(스트리머가 끄기 전까지). 디스크 공간 모니터링 필요.
+- 끊김 / 재연결 처리.</p>
+<p><strong>대응</strong>:
+- yt-dlp의 <code>--live-from-start --hls-use-mpegts</code> 조합 채택.
+- UI에서 라이브 영상을 감지하면 다음 옵션을 제시:
+  - 지금부터 받기 (저용량, 즉시)
+  - 처음부터 받기 (시간/용량 큼, 체크박스로 경고)
+  - 종료 후 자동 다운로드 (Premiere의 경우)
+- 디스크 공간 가드: 사용자 설정값 미만이면 자동 일시정지.</p>
+<h3 id="65">6.5 영상 길이 / 대용량<a class="headerlink" href="#65" title="Permanent link">¶</a></h3>
+<p><strong>시나리오</strong>:
+- 8시간 라이브 → 4K 화질 시 50GB+
+- 4K HDR → 비트레이트 50Mbps, 1시간 ≈ 22GB
+- 고비트레이트 게임 라이브 → 100GB+</p>
+<p><strong>대응</strong>:
+- <strong>스트리밍 다운로드</strong>: 메모리에 전체 보관 X, 디스크에 직접 청크 단위로.
+- <strong>재개 가능성</strong>: yt-dlp는 partial 파일(<code>.part</code>) 지원, 실패 시 이어받기.
+- <strong>세그먼트 기반(HLS/DASH)</strong>: 각 세그먼트를 독립적으로 다운로드, 실패한 세그먼트만 재시도.
+- <strong>디스크 모니터링</strong>: 시작 전 예상 크기 표시(메타 조회로 알 수 있는 경우), 부족 시 경고.
+- <strong>분할 다운로드 옵션</strong>: 매우 긴 영상(&gt;4시간)은 챕터/시간단위 분할 다운로드 옵션 제공(yt-dlp <code>--download-sections "*0:00-1:00:00"</code>).</p>
+<h3 id="66">6.6 포맷 / 코덱 / 컨테이너<a class="headerlink" href="#66" title="Permanent link">¶</a></h3>
+<p><strong>현실</strong>:
+- YouTube는 <strong>DASH</strong> 또는 <strong>HLS</strong> 매니페스트로 비디오와 오디오를 <strong>분리</strong>해 제공. 즉 한 파일을 받는 게 아니라 V/A를 따로 받아서 <strong>muxing</strong> 한다.
+- 비디오 코덱: <strong>H.264 (AVC)</strong>, <strong>VP9</strong>, <strong>AV1</strong> 혼재. AV1은 최신, 효율 좋지만 디코딩 부담 ↑.
+- 오디오 코덱: <strong>AAC (m4a)</strong>, <strong>Opus (webm)</strong>.
+- 컨테이너 호환성:
+  - mp4: H.264 + AAC 가장 안전. AV1+Opus는 mkv 권장.
+  - webm: VP9/AV1 + Opus.
+  - mkv: 모든 조합 허용, 일부 플레이어/장치 호환성 ↓.</p>
+<p><strong>대응</strong>:
+- 기본 포맷: <strong>mp4 (H.264 + AAC)</strong> — 호환성 우선.
+- 사용자 옵션:
+  - "최고 화질" → AV1+Opus (mkv 자동 선택)
+  - "Apple 친화" → H.264+AAC (mp4)
+  - "오디오만" → m4a 또는 mp3(트랜스코딩)
+- FFmpeg 필수 의존성으로 번들. 사용자가 별도 설치하지 않아도 되도록.</p>
+<h3 id="67">6.7 속도 / 쓰로틀링 / 다중 연결<a class="headerlink" href="#67" title="Permanent link">¶</a></h3>
+<p><strong>문제</strong>:
+- YouTube가 <strong>n-sig 토큰</strong> 검증을 통해 의도적으로 단일 연결 속도를 떨어뜨리는 경우가 있다(과거 사례). 
+- 다중 연결로 받으면 평균 속도를 끌어올릴 수 있지만, 봇 감지의 트리거.</p>
+<p><strong>대응</strong>:
+- 기본은 단일 연결. yt-dlp의 n-sig 디시퍼에 의존.
+- 고급 옵션: <code>aria2c</code> 다운로더로 전환 + 동시 연결 수(<code>-x 4</code>) 조정.
+- 동시 영상 다운로드 수는 <strong>2</strong> 기본, 최대 4 권장 (그 이상은 봇 감지).</p>
+<h3 id="68">6.8 자막 / 다국어<a class="headerlink" href="#68" title="Permanent link">¶</a></h3>
+<p><strong>현실</strong>:
+- 자막 종류: 사람이 단 자막(quality ↑), 자동 생성 자막(YT auto-translate, quality 낮음).
+- 포맷: 원본은 <code>vtt</code> 또는 <code>srv1/2/3</code> (XML), 변환해 SRT로 저장 가능.
+- 자동 번역(translated) 자막은 별도 요청 — 종종 막힘.</p>
+<p><strong>대응</strong>:
+- 사용자 옵션:
+  - 사람 자막만 / 자동 생성 포함 / 모두
+  - 언어 다중 선택 (ko, en, ja, zh, ...).
+  - 임베드(mkv subtitle track) vs 별도 .srt 파일.
+- yt-dlp 인자: <code>--write-subs --write-auto-subs --sub-langs "ko,en,ja"</code>.</p>
+<h3 id="69">6.9 메타데이터 / 챕터 / 댓글<a class="headerlink" href="#69" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>메타데이터</strong>: 제목, 업로더, 일자, 설명, 태그, 카테고리, 영상 ID. mp4/mkv tag 임베딩(<code>--embed-metadata</code>).</li>
+<li><strong>챕터</strong>: 영상 챕터를 mkv chapter 또는 mp4 metadata에 임베딩(<code>--embed-chapters</code>).</li>
+<li><strong>썸네일</strong>: <code>--embed-thumbnail</code> (mp4/mkv).</li>
+<li><strong>댓글</strong>: yt-dlp <code>--write-comments</code>. 인기 영상은 수십만 개 → 매우 큼. 옵트인.</li>
+<li><strong>info.json</strong>: 모든 메타를 사이드카 JSON으로 저장(<code>--write-info-json</code>). 아카이비스트 필수.</li>
+</ul>
+<h3 id="610">6.10 법적 / 윤리적 이슈<a class="headerlink" href="#610" title="Permanent link">¶</a></h3>
+<p><strong>관련 법규</strong> (각국 다름, 우리는 일반적 가이드라인만 제공):
+- YouTube <strong>Terms of Service</strong>: 다운로드는 일반적으로 금지(예외: YouTube가 다운로드 버튼을 명시적으로 제공한 경우 — Premium 다운로드는 YouTube 앱 내에서만 가능).
+- 한국 <strong>저작권법</strong>: 사적 이용을 위한 복제는 일정 범위에서 허용되지만, 스트리밍 차단 회피는 별개 문제일 수 있음.
+- 미국 <strong>DMCA</strong>: DRM 우회 금지. (우리는 DRM 미지원이므로 비교적 안전.)
+- EU <strong>DSM 지침</strong>: 사용자 생성 콘텐츠 측면.</p>
+<p><strong>우리의 정책</strong>:
+- 첫 실행 시 <strong>명시적 책임 고지(EULA)</strong>: "본 도구는 자기 콘텐츠, 공개도메인, CC 라이선스, 또는 명시적 권한이 있는 콘텐츠 다운로드를 위한 것입니다. 저작권 침해는 사용자 책임입니다."
+- <strong>저작권 콘텐츠 검출(약한 신호)</strong>: 영상 제목/설명에 "Vevo", "Topic" (자동 생성 음악 채널), "© Sony" 등이 있을 때 추가 경고. 강제는 하지 않음.
+- <strong>우리는 우회 도구를 광고하지 않는다</strong>: README/스토어에서 "사적 백업, 학습, 콘텐츠 크리에이터를 위한 도구"로 포지셔닝.
+- 분석/텔레메트리에서 <strong>URL 자체는 절대 수집하지 않는다</strong>.</p>
+<h3 id="611-windows">6.11 플랫폼 특이사항 (Windows)<a class="headerlink" href="#611-windows" title="Permanent link">¶</a></h3>
+<ul>
+<li>파일명: <code>&lt;&gt;:"/\|?*</code> 금지 + 예약어(CON, PRN 등) 회피 → 위생화 함수 필수.</li>
+<li>경로 길이 260자 제한 → <code>\\?\</code> 접두사 사용 또는 사용자 설정 최대 길이.</li>
+<li>한글/이모지 파일명 → UTF-8 + NTFS 확장 영역. 콘솔 출력은 <code>chcp 65001</code> 또는 직접 콘솔 API.</li>
+<li>AV/Defender 오탐: yt-dlp 내장 PyInstaller 바이너리는 종종 PUA로 잡힘. 코드 사이닝 필수, EV 인증서 권장.</li>
+</ul>
+<h3 id="612-transcribe">6.12 전사(Transcribe) — 음성 → 텍스트<a class="headerlink" href="#612-transcribe" title="Permanent link">¶</a></h3>
+<p><strong>왜 필요한가</strong>:
+- D1 (라이브러리 + 자막 검색)이 사람 자막 / 자동 생성 자막이 있는 영상에서만 동작하면 시장 빈틈을 절반만 채움. <strong>로컬 전사로 모든 영상에 자막을 만들면 D1이 라이브러리 전체에 적용됨</strong> — Stacher가 못 하는 부분.
+- 강의/세미나/팟캐스트 사용자에게는 <strong>전사 자체가 일급 기능</strong> (검색용이 아니라 읽기/노트 정리용).</p>
+<p><strong>엔진 후보</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>엔진</th>
+<th>라이선스</th>
+<th>속도</th>
+<th>품질</th>
+<th>모델 크기</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>faster-whisper</code></strong></td>
+<td>MIT (CTranslate2 기반)</td>
+<td>매우 빠름 (openai-whisper의 ~4×)</td>
+<td>동일</td>
+<td>tiny 39MB ~ large-v3 1.5GB</td>
+</tr>
+<tr>
+<td><code>openai-whisper</code></td>
+<td>MIT</td>
+<td>표준</td>
+<td>표준</td>
+<td>동일</td>
+</tr>
+<tr>
+<td><code>whisper.cpp</code></td>
+<td>MIT</td>
+<td>C++ 단일 바이너리, GGML 양자화</td>
+<td>약간 ↓</td>
+<td>양자화 모델 39MB ~ 1.1GB</td>
+</tr>
+<tr>
+<td><code>WhisperX</code></td>
+<td>BSD-4</td>
+<td>단어 단위 정밀 타임스탬프</td>
+<td>우수</td>
+<td>+ 추가 정렬 모델</td>
+</tr>
+<tr>
+<td>OpenAI API</td>
+<td>상용</td>
+<td>클라우드</td>
+<td>우수</td>
+<td>0 (API)</td>
+</tr>
+<tr>
+<td>Google STT / AssemblyAI</td>
+<td>상용</td>
+<td>클라우드</td>
+<td>우수 (특히 한국어)</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+<p><strong>권장: <code>faster-whisper</code></strong> (1차) + 옵션으로 <code>whisper.cpp</code> (저사양 사용자) + 옵션으로 클라우드 API (속도/품질 우선 사용자).</p>
+<p><strong>모델 크기 가이드</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>모델</th>
+<th>한국어 품질</th>
+<th>영어 품질</th>
+<th>RAM</th>
+<th>CPU 1시간 영상 처리 시간 (대략)</th>
+<th>GPU(CUDA) 처리 시간</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tiny</td>
+<td>낮음</td>
+<td>보통</td>
+<td>&lt;1GB</td>
+<td>~10분</td>
+<td>~1분</td>
+</tr>
+<tr>
+<td>base</td>
+<td>보통</td>
+<td>좋음</td>
+<td>~1GB</td>
+<td>~20분</td>
+<td>~2분</td>
+</tr>
+<tr>
+<td>small</td>
+<td>좋음</td>
+<td>매우 좋음</td>
+<td>~2GB</td>
+<td>~40분</td>
+<td>~4분</td>
+</tr>
+<tr>
+<td><strong>medium</strong></td>
+<td><strong>매우 좋음</strong></td>
+<td><strong>우수</strong></td>
+<td>~5GB</td>
+<td>~60분 (실시간)</td>
+<td>~6분</td>
+</tr>
+<tr>
+<td>large-v3</td>
+<td>우수</td>
+<td>우수</td>
+<td>~10GB</td>
+<td>~90~120분</td>
+<td>~12분</td>
+</tr>
+</tbody>
+</table>
+<p>→ 한국어 사용자 기본은 <strong>medium</strong>, 정확도 우선 사용자는 large-v3.</p>
+<p><strong>도전과제</strong>:</p>
+<ol>
+<li><strong>모델 다운로드 / 캐시</strong>: 250MB~1.5GB. 인스톨러에 번들하지 않고 첫 사용 시 다운로드(<code>~/.cache/ycollector/whisper/</code>). 사용자 동의 필수.</li>
+<li><strong>GPU 감지</strong>: NVIDIA(CUDA) / Apple Silicon(Metal/MPS) / AMD(ROCm/Vulkan). faster-whisper는 CTranslate2를 통해 CUDA + Metal 자동 감지. 시스템에 없으면 CPU fallback (느리지만 동작).</li>
+<li><strong>메모리 압박</strong>: large 모델은 RAM 10GB. 시스템 RAM 8GB 이하 사용자에게는 medium 또는 small 권장 (자동 감지).</li>
+<li><strong>긴 영상</strong>: 8시간 라이브의 전사는 medium CPU에서 8시간 걸림. 진행률 표시 + 백그라운드 처리 + 일시정지 필수.</li>
+<li><strong>VAD (Voice Activity Detection)</strong> 필요: 침묵 구간을 건너뛰면 5-10× 빨라짐. faster-whisper는 Silero VAD 통합 옵션.</li>
+<li><strong>단어 단위 타임스탬프</strong>: WhisperX 또는 faster-whisper의 <code>word_timestamps=True</code>. D1 검색에서 "이 단어가 영상의 02:34에 나옴" 점프에 활용.</li>
+<li><strong>다국어 / 코드 스위칭</strong>: 한국어 영상에 영어 단어 섞임 등. 자동 감지 + <code>language=None</code> (auto) 모드.</li>
+<li><strong>품질 검증</strong>: 전사 결과 신뢰도(<code>avg_logprob</code>, <code>no_speech_prob</code>)를 메타와 함께 저장. UI에서 신뢰도 낮은 구간 표시.</li>
+</ol>
+<p><strong>대응 / 통합</strong>:</p>
+<ul>
+<li><strong>파이프라인 위치</strong>: 다운로드 → (병합/메타 임베드) → <strong>전사(옵션)</strong> → 라이브러리 인덱싱.</li>
+<li><strong>yt-dlp PostProcessor 서브클래스</strong>로 구현해 PP 파이프라인에 자연스럽게 끼움 (자세한 구현은 D6 참고).</li>
+<li><strong>별도 큐</strong>: 다운로드 큐와 전사 큐를 분리 (전사는 GPU/CPU 자원 다툼이 다른 양상). 사용자 설정으로 동시 1개 (CPU 점유) 또는 N개 (GPU 멀티 스트림).</li>
+<li><strong>"빠른 사람 자막 우선"</strong> 정책: 사람이 단 자막이 있으면 그걸 그대로 사용, 자동 생성 자막만 있고 품질 낮다고 판단되면 옵션으로 재전사 제안.</li>
+</ul>
+<p><strong>저장 형식</strong>:
+- <code>.srt</code> 사이드카 (표준)
+- 라이브러리 DB의 <code>subtitles_fts</code> 가상 테이블에 본문 + 단어 타임스탬프 인덱싱 (SQLite FTS5)
+- 옵션: <code>.json</code> (단어 단위 메타) — D1의 정밀 점프 기능에 사용
+- 옵션: 비디오 컨테이너에 자막 트랙 임베드 (mkv 권장)</p>
+<p><strong>라이선스 / 모델 출처</strong>:
+- Whisper 모델은 OpenAI MIT 라이선스 → 상업/비상업 모두 OK.
+- faster-whisper는 CTranslate2 기반, MIT.
+- 모델 다운로드는 Hugging Face mirror에서 (<code>Systran/faster-whisper-medium</code> 등).</p>
+<hr />
+<h2 id="7-youtube">7. YouTube 변경에 대한 적응 전략<a class="headerlink" href="#7-youtube" title="Permanent link">¶</a></h2>
+<blockquote>
+<p>이 절은 본 도구가 <strong>장기적으로 살아남는 핵심</strong>이다.</p>
+</blockquote>
+<h3 id="71-yt-dlp">7.1 의존성 전략 — yt-dlp 우선<a class="headerlink" href="#71-yt-dlp" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>yt-dlp는 매일 ~ 며칠 단위로 릴리스된다</strong>. 우리는 이를 <strong>흡수</strong>해야 한다.</li>
+<li>yt-dlp 자체가 <strong>3채널</strong> 릴리스를 제공: <code>stable</code>(월간), <code>nightly</code>(자동/일간), <code>master</code>(매 커밋). 우리는 이 모델을 그대로 사용자에게 노출한다.</li>
+<li>채널 매핑 정책:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>YCollector 채널</th>
+<th>번들 yt-dlp 채널</th>
+<th>사용자</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>stable</strong></td>
+<td>yt-dlp <code>stable</code>, 24시간 내 반영</td>
+<td>일반 사용자 (기본값)</td>
+</tr>
+<tr>
+<td><strong>beta</strong></td>
+<td>yt-dlp <code>nightly</code></td>
+<td>YouTube 변경 직후 빠른 회복을 원하는 사용자</td>
+</tr>
+<tr>
+<td><strong>dev / canary</strong></td>
+<td>yt-dlp <code>master</code></td>
+<td>메인테이너, 디버깅 목적</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>사용자 환경에 시스템 yt-dlp가 있으면 자동 감지 + "시스템 yt-dlp 사용" 옵션 제공 (고급 사용자 친화적).</li>
+</ul>
+<h3 id="72-self-update">7.2 자가-업데이트 (Self-Update) 메커니즘<a class="headerlink" href="#72-self-update" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>[App Start]
+     │
+     v
+[yt-dlp 버전 체크 (last_check &lt; 24h ?)]
+     │
+     ├── 최신 → 진행
+     │
+     └── 구버전 → [백그라운드 다운로드 → 다음 작업부터 적용]
+
+[다운로드 작업 실패]
+     │
+     v
+[에러 분류기]
+     │
+     ├── Stale-extractor 신호 (e.g., &quot;unable to extract&quot;, &quot;could not find sig function&quot;)
+     │       │
+     │       v
+     │  [yt-dlp 강제 업데이트 → 같은 작업 1회 재시도]
+     │
+     ├── Bot detection 신호
+     │       │
+     │       v
+     │  [쿠키 임포트 안내 UI]
+     │
+     └── 그 외 → 표준 재시도 정책
+</code></pre></div>
+
+<p><strong>구현 메모</strong>:
+- yt-dlp의 자가-업데이트(<code>yt-dlp -U</code>)는 PyInstaller 단일파일에서는 작동 어려움. 우리는 <strong>별도 채널</strong>로 yt-dlp 단일파일을 다운로드한다(GitHub releases).
+- 서명 검증(GPG/SHA256) 후 원자적 교체.</p>
+<h3 id="73-error-classifier">7.3 에러 분류기 (Error Classifier)<a class="headerlink" href="#73-error-classifier" title="Permanent link">¶</a></h3>
+<p>yt-dlp의 stderr를 정규식 또는 토큰 매칭으로 분류:</p>
+<table>
+<thead>
+<tr>
+<th>신호</th>
+<th>분류</th>
+<th>자동 조치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Sign in to confirm you're not a bot</code></td>
+<td>bot-detect</td>
+<td>쿠키 안내</td>
+</tr>
+<tr>
+<td><code>Video unavailable</code></td>
+<td>hard-fail</td>
+<td>사용자에게 표시</td>
+</tr>
+<tr>
+<td><code>This video is private</code></td>
+<td>auth-required</td>
+<td>쿠키 안내</td>
+</tr>
+<tr>
+<td><code>members-only content</code></td>
+<td>membership</td>
+<td>쿠키 안내</td>
+</tr>
+<tr>
+<td><code>is age restricted</code></td>
+<td>age-gate</td>
+<td>쿠키 안내</td>
+</tr>
+<tr>
+<td><code>unable to extract</code> / <code>n-sig</code> / <code>signature</code></td>
+<td>stale-extractor</td>
+<td>yt-dlp 업데이트 → 재시도</td>
+</tr>
+<tr>
+<td><code>HTTP Error 429</code></td>
+<td>rate-limit</td>
+<td>백오프 + 쿨다운</td>
+</tr>
+<tr>
+<td><code>HTTP Error 403</code></td>
+<td>geo / blocked</td>
+<td>프록시 안내</td>
+</tr>
+<tr>
+<td><code>Connection reset</code> / 타임아웃</td>
+<td>network</td>
+<td>자동 재시도</td>
+</tr>
+<tr>
+<td><code>disk full</code> / <code>IOError 28</code></td>
+<td>disk</td>
+<td>일시정지 + 알림</td>
+</tr>
+</tbody>
+</table>
+<h3 id="74-canary">7.4 카나리(Canary) 모니터링<a class="headerlink" href="#74-canary" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>CI 매일 실행 (GitHub Actions, free tier 가능)</strong>:</li>
+<li>정해진 7~10개 영상 세트(공개 라이선스, 다양한 케이스) 다운로드.</li>
+<li>라이브, 짧은 영상, 긴 영상, 재생목록, 자막, 연령제한(만 있다면), AV1, VP9, HDR, Music, 챕터.</li>
+<li>실패 → GitHub Issue 자동 생성 + 알림 → 메인테이너 개입.</li>
+<li>일별 성공률 대시보드.</li>
+</ul>
+<h3 id="75">7.5 사용자 텔레메트리 (옵트인)<a class="headerlink" href="#75" title="Permanent link">¶</a></h3>
+<ul>
+<li>익명, <strong>URL 미수집</strong>.</li>
+<li>수집 항목: 에러 코드 토큰, yt-dlp 버전, 앱 버전, OS, 발생 시각.</li>
+<li>회귀 빠르게 감지 → 다음 yt-dlp 핫픽스 PR을 follow up.</li>
+</ul>
+<h3 id="76-long-term">7.6 다중 백엔드 (Long-term)<a class="headerlink" href="#76-long-term" title="Permanent link">¶</a></h3>
+<ul>
+<li>1년 후 yt-dlp가 어떤 이유로 더 이상 동작하지 않을 가능성에 대비.</li>
+<li>추출기 어댑터를 인터페이스화: <code>IExtractorBackend</code> 추상화 → yt-dlp / yt-dlp(nightly) / streamlink / custom.</li>
+<li>Phase 6 항목.</li>
+</ul>
+<hr />
+<h2 id="8">8. 구현 로드맵<a class="headerlink" href="#8" title="Permanent link">¶</a></h2>
+<h3 id="phase-0-12">Phase 0 — 프로토타입 (1~2주)<a class="headerlink" href="#phase-0-12" title="Permanent link">¶</a></h3>
+<ul>
+<li>[ ] <code>yt-dlp</code> 설치 검증, FFmpeg 번들 검증</li>
+<li>[ ] CLI 래퍼: URL → 다운로드 (mp4 1080p 기본)</li>
+<li>[ ] stdout 진행률 파싱 (정규식)</li>
+<li>[ ] 에러 분류기 v0</li>
+<li>[ ] <strong>출력</strong>: <code>python ycollector.py &lt;URL&gt;</code> 동작</li>
+</ul>
+<h3 id="phase-1-gui-mvp-34">Phase 1 — GUI MVP (3~4주)<a class="headerlink" href="#phase-1-gui-mvp-34" title="Permanent link">¶</a></h3>
+<ul>
+<li>[ ] PySide6 또는 Tauri 결정 (스파이크 1주)</li>
+<li>[ ] 메인 윈도우: URL 입력, 다운로드 버튼, 큐 리스트</li>
+<li>[ ] 진행률, 속도, ETA 표시</li>
+<li>[ ] 출력 폴더 선택</li>
+<li>[ ] 화질/포맷 드롭다운</li>
+<li>[ ] 단일 인스톨러 (Inno Setup or NSIS)</li>
+</ul>
+<h3 id="phase-2-46">Phase 2 — 핵심 기능 (4~6주)<a class="headerlink" href="#phase-2-46" title="Permanent link">¶</a></h3>
+<ul>
+<li>[ ] 재생목록 / 채널 다운로드 + 영상 선택 UI</li>
+<li>[ ] 쿠키 임포트 (브라우저 선택)</li>
+<li>[ ] 자막 / 썸네일 / 메타데이터 임베드</li>
+<li>[ ] 큐 영속화 (sqlite), 일시정지/재개/취소</li>
+<li>[ ] 동시 다운로드 수 설정</li>
+<li>[ ] 출력 템플릿 사용자화</li>
+</ul>
+<h3 id="phase-3-46">Phase 3 — 고급 (4~6주)<a class="headerlink" href="#phase-3-46" title="Permanent link">¶</a></h3>
+<ul>
+<li>[ ] 라이브 / Premiere 처리 (--live-from-start)</li>
+<li>[ ] 챕터 분할, 시간 구간 다운로드</li>
+<li>[ ] 다중 연결(aria2 통합) 옵션</li>
+<li>[ ] 자가-업데이트 (yt-dlp &amp; 앱)</li>
+<li>[ ] 에러 분류기 v2 + 자동 복구</li>
+</ul>
+<h3 id="phase-4-ux-34">Phase 4 — 인증 / UX (3~4주)<a class="headerlink" href="#phase-4-ux-34" title="Permanent link">¶</a></h3>
+<ul>
+<li>[ ] PoToken provider 통합 (옵션)</li>
+<li>[ ] OAuth (실험적)</li>
+<li>[ ] 다국어 UI (ko/en/ja)</li>
+<li>[ ] 접근성(키보드, 스크린리더)</li>
+<li>[ ] 다크모드</li>
+</ul>
+<h3 id="phase-5">Phase 5 — 배포 / 유지보수 (지속)<a class="headerlink" href="#phase-5" title="Permanent link">¶</a></h3>
+<ul>
+<li>[ ] 코드 사이닝 (Windows, macOS notarization)</li>
+<li>[ ] 자동 릴리스 파이프라인 (GitHub Actions)</li>
+<li>[ ] CI 카나리 매일 실행</li>
+<li>[ ] 텔레메트리(옵트인) 백엔드</li>
+<li>[ ] 사용자 가이드, FAQ</li>
+</ul>
+<h3 id="phase-6-optional">Phase 6 — 미래 (Optional)<a class="headerlink" href="#phase-6-optional" title="Permanent link">¶</a></h3>
+<ul>
+<li>[ ] 다중 백엔드 추상화</li>
+<li>[ ] 모바일 백업 컴패니언 (선택)</li>
+<li>[ ] 클라우드 동기화 (선택)</li>
+<li>[ ] 플러그인 시스템 (사용자 후처리 스크립트)</li>
+</ul>
+<hr />
+<h2 id="9">9. 테스트 전략<a class="headerlink" href="#9" title="Permanent link">¶</a></h2>
+<h3 id="91">9.1 단위 테스트<a class="headerlink" href="#91" title="Permanent link">¶</a></h3>
+<ul>
+<li>에러 분류기 (synthetic stderr 입력 → 분류)</li>
+<li>진행률 파서</li>
+<li>파일명 위생화</li>
+<li>출력 템플릿 렌더링</li>
+</ul>
+<h3 id="92-ci">9.2 통합 테스트 (CI 매일)<a class="headerlink" href="#92-ci" title="Permanent link">¶</a></h3>
+<ul>
+<li>"카나리 코퍼스": 다양한 케이스를 대표하는 7~10개 영상.</li>
+<li>모든 빌드에서 실행 + 매일 nightly job.</li>
+<li>결과: 성공률, 평균 속도, 평균 시작 지연.</li>
+</ul>
+<h3 id="93">9.3 회귀 테스트<a class="headerlink" href="#93" title="Permanent link">¶</a></h3>
+<ul>
+<li>기존에 동작하던 영상이 깨졌는가? Watch list.</li>
+<li>yt-dlp 업데이트 직후 자동 재실행.</li>
+</ul>
+<h3 id="94">9.4 수동 테스트 체크리스트<a class="headerlink" href="#94" title="Permanent link">¶</a></h3>
+<ul>
+<li>라이브 진행 중 다운로드 시작/중단/재개</li>
+<li>4K HDR 다운로드, 오디오 싱크 확인</li>
+<li>한글/이모지 제목 → 파일명/메타 확인</li>
+<li>쿠키 만료 시 에러 흐름</li>
+<li>디스크 가득 참 시 동작</li>
+<li>인터넷 끊김 후 복귀</li>
+</ul>
+<hr />
+<h2 id="10-risk-register">10. 위험 평가 (Risk Register)<a class="headerlink" href="#10-risk-register" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>위험</th>
+<th>영향</th>
+<th>가능성</th>
+<th>대응</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>R1</td>
+<td>YouTube의 봇 감지 강화로 익명 다운로드 차단</td>
+<td>高</td>
+<td>中</td>
+<td>쿠키 + PoToken 통합</td>
+</tr>
+<tr>
+<td>R2</td>
+<td>yt-dlp 프로젝트 중단</td>
+<td>致命</td>
+<td>低</td>
+<td>다중 백엔드 추상화(Phase 6)</td>
+</tr>
+<tr>
+<td>R3</td>
+<td>법적 압박 (DMCA, 한국 저작권 협회)</td>
+<td>高</td>
+<td>低~中</td>
+<td>명확한 면책, 자기 콘텐츠 포지셔닝</td>
+</tr>
+<tr>
+<td>R4</td>
+<td>Windows Defender 오탐</td>
+<td>中</td>
+<td>高</td>
+<td>코드 사이닝(EV 권장), Microsoft에 화이트리스트 신청</td>
+</tr>
+<tr>
+<td>R5</td>
+<td>사용자가 자기 쿠키 잘못 노출</td>
+<td>中</td>
+<td>中</td>
+<td>OS 자격증명 저장소, 명확한 안내</td>
+</tr>
+<tr>
+<td>R6</td>
+<td>4K/8K 다운로드 시 디스크 가득 → 시스템 영향</td>
+<td>中</td>
+<td>中</td>
+<td>사전 디스크 가드 + 작업 일시정지</td>
+</tr>
+<tr>
+<td>R7</td>
+<td>YouTube가 PoToken 의무화 강화 → 헤드리스 브라우저 통합 필요</td>
+<td>高</td>
+<td>中</td>
+<td>Phase 3+ PoToken provider 통합</td>
+</tr>
+<tr>
+<td>R8</td>
+<td>다국어 / 한글 메타데이터 손실</td>
+<td>低</td>
+<td>中</td>
+<td>UTF-8 강제, 임베딩 검증 테스트</td>
+</tr>
+<tr>
+<td>R9</td>
+<td>의존 라이브러리(FFmpeg) 라이선스 문제</td>
+<td>中</td>
+<td>低</td>
+<td>LGPL 빌드 사용, 라이선스 명시</td>
+</tr>
+<tr>
+<td>R10</td>
+<td>브라우저 확장 통합이 보안 표면 확대</td>
+<td>中</td>
+<td>中</td>
+<td>minimal permission(activeTab, clipboard), 코드 사이닝, OSS 감사</td>
+</tr>
+<tr>
+<td>R11</td>
+<td>OSS 출시 후 폐쇄 경쟁자(Stacher 등)가 기능 모방 + 폐쇄 유지</td>
+<td>低</td>
+<td>中</td>
+<td>차별화는 코드가 아닌 운영 품질·커뮤니티·i18n. AGPL 검토(서버 모드 추가 시)</td>
+</tr>
+<tr>
+<td>R12</td>
+<td>Deno 런타임 의존성으로 앱 크기 + 설치 복잡도 ↑</td>
+<td>中</td>
+<td>中</td>
+<td>시스템 Deno 자동 감지, 옵트인 다운로드, PoToken 미사용도 fallback로 동작</td>
+</tr>
+<tr>
+<td>R13</td>
+<td>Parabolic식 크래시 빈발</td>
+<td>中</td>
+<td>中</td>
+<td>safe-mode 부팅(플러그인/프로파일 비활성), 자동 크래시 리포트(옵트인), CI smoke test</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="105-differentiation-strategy">10.5 차별화 전략 (Differentiation Strategy)<a class="headerlink" href="#105-differentiation-strategy" title="Permanent link">¶</a></h2>
+<p>motif 조사(§7.5)에서 도출한 시장 빈틈 중 YCollector가 우선적으로 채울 6가지. v1~v3에 걸쳐 점진적으로 구현한다.</p>
+<h3 id="d1-vs-stacher">D1. 라이브러리 + 태그 + 자막 텍스트 검색 (vs Stacher)<a class="headerlink" href="#d1-vs-stacher" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>시장 상태</strong>: Stacher Premium만 있음. 폐쇄 소스 + Patreon 라이선스로 r/DataHoarder 회의적.</li>
+<li><strong>YCollector 구현</strong>: SQLite 라이브러리 테이블 + 사용자 태그 + <strong>자막 본문 인덱싱(SQLite FTS5)</strong> → "이 자막 본문에 'kubernetes'가 들어간 영상" 검색.</li>
+<li><strong>D6와 결합</strong>: Whisper 전사로 사람 자막 없는 영상까지 검색 인덱스에 포함 → Stacher가 못 하는 영역.</li>
+<li><strong>Phase</strong>: 라이브러리는 Phase 2, 자막 검색은 Phase 3.</li>
+</ul>
+<h3 id="d2-smart-mode-vs-4k-video-downloader">D2. "Smart Mode" 프리셋 (vs 4K Video Downloader)<a class="headerlink" href="#d2-smart-mode-vs-4k-video-downloader" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>시장 상태</strong>: 상용에만 있고 OSS에서는 부재.</li>
+<li><strong>YCollector 구현</strong>: 명명된 프리셋 ("강의 1080p+자막", "음악 320kbps", "백업 최고화질") + <strong>채널/사이트별 오버라이드</strong> + Seal식 명령 템플릿(고급).</li>
+<li><strong>구현 형태</strong>: gallery-dl 영감의 <strong>typed 컨피그 트리(TOML)</strong>, deep-merge로 <code>defaults → preset → site → channel</code> 머지. UI는 컨피그를 편집하는 폼; CLI는 일회 오버라이드. <strong>컨피그가 단일 진실</strong> — yt-dlp <code>ydl_opts</code> dict는 매번 파생 (부록 C 매핑 표 참고).</li>
+<li><strong>Phase</strong>: 기본 프리셋 Phase 1, 채널 오버라이드 + 템플릿 Phase 2.</li>
+</ul>
+<h3 id="d3-potoken">D3. 가이디드 PoToken / 쿠키 워크플로우<a class="headerlink" href="#d3-potoken" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>시장 상태</strong>: 모든 GUI에서 가장 큰 사용자 마찰 (yt-dlp 스택트레이스 그대로 표시).</li>
+<li><strong>YCollector 구현</strong>: 봇 감지 에러 즉시 인라인 위저드 — (1) 브라우저 선택 → 쿠키 임포트, (2) PoToken provider 활성화(Deno 자동 다운로드), (3) 클라이언트 위장 토글. 진단 + "다음 시도" 명시.</li>
+<li><strong>Phase</strong>: v0 안내 메시지부터 시작, Phase 2까지 위저드 완성.</li>
+</ul>
+<h3 id="d4-vs-byclick-parabolic">D4. 클립보드 감시 + 브라우저 확장 (vs ByClick + Parabolic)<a class="headerlink" href="#d4-vs-byclick-parabolic" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>시장 상태</strong>: ByClick에 클립보드만, Parabolic에 확장만. 둘을 결합한 곳 없음.</li>
+<li><strong>YCollector 구현</strong>: 옵트인 클립보드 감시(YouTube URL 복사 시 시스템 알림 → 한 번 클릭으로 큐 추가) + 브라우저 확장(Chrome/Firefox/Edge) → 데스크톱 앱으로 URL 푸시. 모두 명시 동의.</li>
+<li><strong>Phase</strong>: 클립보드 감시 Phase 2, 확장 Phase 3.</li>
+</ul>
+<h3 id="d5-vs-tartube-ui">D5. 채널별 스케줄 아카이빙 (vs Tartube, 모던 UI)<a class="headerlink" href="#d5-vs-tartube-ui" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>시장 상태</strong>: Tartube가 기능은 있으나 GTK3 UI 노쇠, 신규 사용자 진입장벽.</li>
+<li><strong>YCollector 구현</strong>: "이 채널을 매주 일요일 동기화" + Missing Videos 감지(YouTube 측 삭제 추적) + 채널별 프로파일.</li>
+<li><strong>구현 형태</strong>: D2와 같은 <strong>typed 컨피그 트리</strong>의 <code>[channels."&lt;channel_id&gt;"]</code> 섹션. gallery-dl의 <code>extractor.youtube&gt;CHANNEL_ID</code> 패턴 차용 (부록 C).</li>
+<li><strong>Phase</strong>: Phase 3.</li>
+</ul>
+<h3 id="d6-whisper-local-transcription">D6. 로컬 Whisper 전사 (Local Transcription) — 신규<a class="headerlink" href="#d6-whisper-local-transcription" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>시장 상태</strong>: yt-dlp 래퍼 GUI 어디에도 없음. Whisper UI는 별도 앱(MacWhisper, Buzz 등) 필요. <strong>다운로더 + 전사 통합</strong>은 시장에서 빈틈.</li>
+<li><strong>YCollector 구현</strong>: <code>faster-whisper</code> 통합 → 다운로드 후 옵션으로 자동 전사. 모델은 옵트인 다운로드(250MB~1.5GB), GPU 자동 감지, 결과는 <code>.srt</code> + 라이브러리 FTS5 인덱싱(D1과 결합).</li>
+<li><strong>사용자 가치</strong>:</li>
+<li>강의/팟캐스트/세미나 사용자에게 검색 가능한 노트</li>
+<li>D1의 "자막 텍스트 검색"이 라이브러리 100%에 적용 (사람 자막 없는 영상도)</li>
+<li>한국어 영상의 정확한 전사 (medium 모델 이상)</li>
+<li><strong>자세한 기술 분석</strong>: §6.12 참고.</li>
+<li><strong>Phase</strong>: Phase 3 (D1과 동시 또는 직후).</li>
+</ul>
+<h3 id="_1">비차별화 (의도적 회피)<a class="headerlink" href="#_1" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>편집 도구 (vs VideoProc)</strong>: 사용자는 이미 익숙한 편집기 사용. 합치면 유지보수 비용만.</li>
+<li><strong>자체 추출기 (vs NewPipe)</strong>: yt-dlp가 더 잘함.</li>
+<li><strong>셀프호스트 서버 모드 (vs Cobalt)</strong>: v1 데스크톱 first; Phase 6 이후 검토.</li>
+<li><strong>DRM 우회</strong>: 비목표(§1.3 N1).</li>
+</ul>
+<h3 id="vs">차별화의 수단 vs 목적<a class="headerlink" href="#vs" title="Permanent link">¶</a></h3>
+<p>코드/기능 차별화는 OSS 특성상 모방되기 쉽다. <strong>장기 차별화는 (a) 신뢰할 수 있는 유지보수 케이던스, (b) 따라가기 쉬운 문서, (c) 적극적 i18n, (d) 한국어/일본어 first-class 지원</strong>에서 온다. v1부터 이 운영 품질을 자산으로 빌드한다.</p>
+<hr />
+<h2 id="11">11. 운영 / 배포<a class="headerlink" href="#11" title="Permanent link">¶</a></h2>
+<h3 id="111">11.1 빌드 / 패키징<a class="headerlink" href="#111" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Windows</strong>: PyInstaller(또는 Tauri) → MSI/EXE 인스톨러 (Inno Setup).</li>
+<li><strong>macOS</strong>: pyapp/py2app 또는 Tauri → .dmg, notarization.</li>
+<li><strong>Linux</strong>: AppImage 또는 .deb/.rpm + flatpak.</li>
+<li><strong>번들 의존성</strong>:</li>
+<li>yt-dlp 단일 실행파일</li>
+<li>FFmpeg (LGPL static 빌드)</li>
+<li>aria2c (선택)</li>
+</ul>
+<h3 id="112">11.2 릴리스 채널<a class="headerlink" href="#112" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>stable</strong>: 4주 단위 릴리스, 안정성 우선.</li>
+<li><strong>beta</strong>: 2주 단위, 신규 기능 테스트.</li>
+<li><strong>nightly</strong>: 매일, yt-dlp nightly 동기화.</li>
+</ul>
+<h3 id="113">11.3 자동 업데이트<a class="headerlink" href="#113" title="Permanent link">¶</a></h3>
+<ul>
+<li>앱 자체: 표준 메커니즘(Squirrel / Sparkle / Tauri updater).</li>
+<li>yt-dlp: 우리가 별도로 관리(앱 안에서 yt-dlp 바이너리 교체).</li>
+</ul>
+<h3 id="114">11.4 텔레메트리 / 에러 리포팅 (옵트인)<a class="headerlink" href="#114" title="Permanent link">¶</a></h3>
+<ul>
+<li>Sentry 자체호스팅 또는 GlitchTip → 익명 에러 트래킹.</li>
+<li>URL/계정 정보 절대 수집 X.</li>
+<li>옵트인 시에도 사용자가 언제든 끌 수 있어야 함.</li>
+</ul>
+<hr />
+<h2 id="115-ux">11.5 입력 / 출력 워크플로우 (UX)<a class="headerlink" href="#115-ux" title="Permanent link">¶</a></h2>
+<p>요구사항 §3.1.7 (입력 모드)의 구체적 흐름. CLI와 GUI 양쪽을 1차 시민으로 설계한다.</p>
+<h3 id="1151-cli">11.5.1 CLI 워크플로우<a class="headerlink" href="#1151-cli" title="Permanent link">¶</a></h3>
+<p><strong>원칙</strong>: UNIX-friendly. stdin / 인자 / 파일 모두 지원. 종료 코드 의미 있음.</p>
+<div class="codehilite"><pre><span></span><code># 1. 단일 URL
+$ ycollector https://www.youtube.com/watch?v=dQw4w9WgXcQ
+[1/1] Resolved: dQw4w9WgXcQ — Rick Astley - Never Gonna Give You Up
+  Preset: default (mp4 1080p + ko/en subs)
+  Output: D:/Videos/Rick Astley/Never Gonna Give You Up [dQw4w9WgXcQ].mp4
+  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 100%  38.4 MB  12.3 MB/s  done in 0:03
+✓ Saved.
+
+# 2. 여러 URL을 인자로
+$ ycollector URL1 URL2 URL3 --preset music
+
+# 3. 파일에서 (한 줄에 하나; # 주석 / 빈 줄 OK)
+$ ycollector --from urls.txt
+Loaded 47 URLs (4 playlists expanded → 132 videos, 18 already in library — skipped)
+Estimated: 24 GB, ~1h 40m at current bandwidth.
+Continue? [Y/n] y
+
+# 4. stdin 파이프
+$ cat urls.txt | ycollector -
+$ yt-dlp --flat-playlist -j PLAYLIST_URL | jq -r .url | ycollector -
+
+# 5. 채널 동기화 (D5 — 새 영상만)
+$ ycollector sync UC_MyFavoriteChannel
+Sync: 3 new videos since last run (2026-05-08).
+
+# 6. 재생목록 펼치기 + 인터랙티브 선택
+$ ycollector --pick https://www.youtube.com/playlist?list=PL...
+[ ] 1. (12:34) 첫 번째 영상
+[x] 2. (08:21) 두 번째 영상
+[x] 3. (15:02) 세 번째 영상
+... ↑↓ 토글, Enter 확정, q 취소
+
+# 7. 전사만 실행 (이미 로컬에 있는 파일)
+$ ycollector transcribe ./video.mp4 --model medium --lang ko
+
+# 8. 컨피그 강제 오버라이드
+$ ycollector URL --format &quot;bestaudio&quot; --output-dir D:/Music --no-subs
+
+# 9. dry-run (실제 다운로드 없이 계획만)
+$ ycollector URL --dry-run
+</code></pre></div>
+
+<p><strong>종료 코드</strong>:
+- <code>0</code>: 모두 성공
+- <code>1</code>: 부분 실패 (성공 + 실패 혼재)
+- <code>2</code>: 모두 실패
+- <code>3</code>: 사용자 취소
+- <code>10+</code>: 시스템 에러 (디스크/네트워크/yt-dlp 미설치 등)</p>
+<p><strong>서브커맨드 구조</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>명령</th>
+<th>기능</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ycollector &lt;URL&gt;</code></td>
+<td>즉시 다운로드 (서브커맨드 생략 시 default)</td>
+</tr>
+<tr>
+<td><code>ycollector add &lt;URL&gt;</code></td>
+<td>큐에 추가만 (다운로드 X)</td>
+</tr>
+<tr>
+<td><code>ycollector queue</code></td>
+<td>현재 큐 표시</td>
+</tr>
+<tr>
+<td><code>ycollector sync [&lt;channel&gt;]</code></td>
+<td>등록 채널 동기화</td>
+</tr>
+<tr>
+<td><code>ycollector transcribe &lt;file&gt;</code></td>
+<td>로컬 파일 전사</td>
+</tr>
+<tr>
+<td><code>ycollector library [search "kubernetes"]</code></td>
+<td>라이브러리 조회/검색</td>
+</tr>
+<tr>
+<td><code>ycollector preset list/save/edit</code></td>
+<td>프리셋 관리</td>
+</tr>
+<tr>
+<td><code>ycollector daemon</code></td>
+<td>백그라운드 데몬 (클립보드 감시 등)</td>
+</tr>
+<tr>
+<td><code>ycollector update</code></td>
+<td>yt-dlp 강제 갱신</td>
+</tr>
+<tr>
+<td><code>ycollector doctor</code></td>
+<td>환경 진단 (yt-dlp, FFmpeg, Deno, 모델 캐시)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="1152-gui-pyside6">11.5.2 GUI 워크플로우 (PySide6)<a class="headerlink" href="#1152-gui-pyside6" title="Permanent link">¶</a></h3>
+<p><strong>메인 윈도우 레이아웃</strong> (ASCII 와이어프레임):</p>
+<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│  YCollector  [클립보드: ON]  [yt-dlp: 2026.05.07 ✓]    [⚙] [— □ ✕] │
+├──────────┬──────────────────────────────────────────────────────────┤
+│ 큐 (12)  │ ┌──────────────────────────────────────────────────────┐│
+│ 라이브러리│ │ URL 붙여넣기 (한 줄에 하나, .txt 파일 드롭 가능)        ││
+│ 채널 (8) │ │                                                       ││
+│ 프리셋    │ │                                                       ││
+│ 설정     │ └──────────────────────────────────────────────────────┘│
+│          │  프리셋: [강의 1080p+자막 ▾]  폴더: [D:/Videos ▾]  [전사 □]│
+│          │                              [큐에 추가]  [지금 다운로드] │
+│          │ ─────────────────────────────────────────────────────── │
+│          │ 큐 (3 진행 중)                                           │
+│          │ ┌────────────────────────────────────────────────────┐  │
+│          │ │● Title [채널] | 1080p | ▰▰▰▰▰░░░ 62% 12.3 MB/s    │  │
+│          │ │● Title [채널] | 1080p | ▰░░░░░░░  8% 2.1 MB/s     │  │
+│          │ │● Title [채널] | mp3   | 전사 중 (medium, GPU)      │  │
+│          │ │○ Title [채널] | 1080p | 대기                       │  │
+│          │ └────────────────────────────────────────────────────┘  │
+│          │ ─────────────────────────────────────────────────────── │
+│          │ 다운로드 합계: 24.3 MB/s  ETA 0:42                      │
+│          │ 디스크 여유: 412 GB                                      │
+└──────────┴──────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>핵심 입력 흐름</strong> (3가지):</p>
+<ol>
+<li>
+<p><strong>빠른 한 영상</strong>:
+   <code>URL paste → "지금 다운로드" → (옵션 점검) → 큐에 즉시 들어가 시작</code>
+   상단 paste 박스에 한 줄 또는 다 줄. 클립보드 자동 감지 ON이면 <strong>paste 안 해도</strong> 토스트 알림 — "URL이 감지됨. 큐에 추가? [예 / 아니오 / 무시]".</p>
+</li>
+<li>
+<p><strong>일괄 입력</strong>:
+   - 여러 URL을 paste (한 줄에 하나, <code>#</code> 주석 OK)
+   - 또는 <code>.txt</code>/<code>.csv</code> 파일을 paste 박스에 <strong>드래그 앤 드롭</strong>
+   - 또는 <strong>재생목록 URL</strong> 한 개 → 자동 펼침 → 영상 선택 다이얼로그 (<code>pick</code> 모드)</p>
+</li>
+<li>
+<p><strong>채널 구독 (D5)</strong>:
+   - 채널 URL을 "채널" 사이드바에 드롭
+   - "주기 / 프리셋" 설정 다이얼로그
+   - 백그라운드에서 주기적 동기화</p>
+</li>
+</ol>
+<p><strong>라이브러리 탭</strong> (D1 + D6 결합):</p>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────┐
+│ 검색: [ kubernetes ____________________________ ]  [태그: 강의 ▾] │
+├──────────────────────────────────────────────────────────────────┤
+│ ┌────┐ Kubernetes Networking Deep Dive                            │
+│ │ ▶  │ TGI Kubernetes #5 | 2024-01-12 | 1:23:45                   │
+│ │    │ &quot;kubernetes&quot; 매치 2회: 02:34, 18:12                         │
+│ └────┘ [재생] [폴더 열기] [전사 보기] [태그 편집]                    │
+│                                                                    │
+│ ┌────┐ Production Kubernetes — KubeCon EU 2025                    │
+│ │ ▶  │ KubeCon | 2025-03-15 | 0:42:18                             │
+│ │    │ &quot;kubernetes&quot; 매치 47회: 00:15, 01:42, 03:08, ...            │
+│ └────┘ [재생] [폴더 열기] [전사 보기] [태그 편집]                    │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p>검색은 <strong>자막 본문 + 전사 본문 + 제목/설명</strong>을 모두 SQLite FTS5로 인덱싱. 매치 클릭 시 시스템 비디오 플레이어를 해당 타임스탬프로 점프시켜 실행 (가능한 경우 <code>mpv --start=02:34 file.mp4</code>).</p>
+<h3 id="1153">11.5.3 출력 위치 / 파일 명명<a class="headerlink" href="#1153" title="Permanent link">¶</a></h3>
+<p>기본 템플릿:</p>
+<div class="codehilite"><pre><span></span><code>{output_dir}/{channel}/{playlist}/{title} [{id}].{ext}
+</code></pre></div>
+
+<p>각 부분 사용자 정의 (FR-18). gallery-dl 스타일로 <code>directory</code>(배열)와 <code>filename</code> 분리 제공:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[defaults]</span>
+<span class="n">output_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;D:/Videos&quot;</span>
+<span class="n">directory</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;{uploader}&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;{playlist}&quot;</span><span class="p">]</span>
+<span class="n">filename</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{title} [{id}].{ext}&quot;</span>
+</code></pre></div>
+
+<p><strong>사이드카 파일</strong> (옵션, 프리셋별):
+- <code>{name}.info.json</code> — 모든 메타
+- <code>{name}.{lang}.srt</code> — 자막 (사람/자동/Whisper 전사)
+- <code>{name}.thumbnail.jpg</code> — 썸네일
+- <code>{name}.transcript.json</code> — 전사 단어 단위 메타 (D1 정밀 점프용)</p>
+<p><strong>중복 처리</strong> (FR-19):
+- 영상 ID 기준 라이브러리 DB 조회. 이미 있으면:
+  - "스킵 / 더 좋은 화질로 갱신 / 강제 재다운로드" 다이얼로그.
+- 디스크의 파일명만 중복인 경우 (다른 영상이 같은 제목): <code>_2</code>, <code>_3</code> 자동 suffix.</p>
+<hr />
+<h2 id="12">12. 디렉토리 / 코드 레이아웃 (제안)<a class="headerlink" href="#12" title="Permanent link">¶</a></h2>
+<div class="codehilite"><pre><span></span><code>YCollector/
+├── README.md
+├── LICENSE
+├── docs/
+│   ├── plan/
+│   │   └── youtube_downloader_plan_260508.md   ← 본 문서
+│   ├── motif/
+│   │   └── youtube_downloader_motif_260508.md  ← 경쟁 / 모티프 조사
+│   ├── user-guide/
+│   └── architecture/
+├── src/
+│   ├── ycollector/
+│   │   ├── config/                ← TOML 컨피그 + 스키마 + 머지 (D2/D5)
+│   │   ├── engine/                ← yt-dlp 어댑터 (subprocess + Python API 하이브리드)
+│   │   ├── queue/                 ← 작업 큐, 워커 풀, FSM
+│   │   ├── classifier/            ← 에러 분류기 + 가이디드 워크플로우 (D3)
+│   │   ├── auth/                  ← 쿠키/토큰 보관
+│   │   ├── library/               ← SQLite 라이브러리 + FTS5 (D1)
+│   │   ├── transcribe/            ← faster-whisper 통합 (D6)
+│   │   ├── input/                 ← 클립보드 감시, 파일 임포트, 브라우저 확장 endpoint (D4)
+│   │   ├── schedule/              ← 채널 동기화 스케줄러 (D5)
+│   │   ├── settings/              ← 설정 / 사용자 데이터
+│   │   └── update/                ← yt-dlp 자가-업데이트
+│   ├── ycollector_cli/            ← CLI 진입점 (§11.5.1)
+│   ├── ycollector_gui/            ← PySide6 GUI 진입점 (§11.5.2)
+│   ├── services/                  ← PoToken provider, 외부 헬퍼
+│   └── tests/
+├── canary/                        ← CI 카나리 영상 목록 + 스크립트
+├── installers/
+│   ├── windows/   (Inno Setup)
+│   ├── macos/     (DMG)
+│   └── linux/     (AppImage, deb)
+└── .github/
+    └── workflows/
+        ├── ci.yml
+        ├── nightly.yml             ← 매일 카나리
+        └── release.yml
+</code></pre></div>
+
+<hr />
+<h2 id="13-open-questions">13. 열린 질문 (Open Questions)<a class="headerlink" href="#13-open-questions" title="Permanent link">¶</a></h2>
+<p>OQ-1. ~~<strong>UI 프레임워크 최종 선택</strong>~~ → <strong>잠정 결정: PySide6 (v1)</strong>. 근거 §4.2 참고. Phase 1 스파이크에서 (a) 바이너리 크기, (b) 시작 지연, (c) 디자인 자유도 측정 후 재평가. Tauri 대안은 OVD(★8.2k)가 검증해 둔 길.</p>
+<p>OQ-2. <strong>Python 런타임 동봉 방식</strong>: PyInstaller 단일파일은 시작이 느리고 AV 오탐 가능성. 대안: Nuitka 컴파일. → Phase 0/1에 두 방식 모두 빌드해 시작 지연 / 바이너리 크기 / Defender 오탐 측정.</p>
+<p>OQ-3. ~~<strong>PoToken provider</strong>~~ → <strong>잠정 결정: 외부 헬퍼(<code>bgutil-ytdlp-pot-provider</code> 또는 동등) + Deno 옵트인 다운로드</strong>. 근거 §6.2 + motif §7.5(가이디드 워크플로우는 우선 차별화 기회 — D3). 자체 헤드리스 Chromium은 앱 크기 / 유지보수 비용 과다.</p>
+<p>OQ-4. <strong>OAuth 지원 여부</strong>: 쿠키 기반이 사실상 모든 케이스를 커버하지만, OAuth는 더 깔끔한 UX. Google 정책상 토큰 발급 / 검증이 까다로움.</p>
+<p>OQ-5. <strong>YouTube Music 특화 기능</strong>: 플레이리스트 → 챕터 분할 → ID3 태그 자동 채움. Phase 4 후보.</p>
+<p>OQ-6. <strong>모바일</strong>: Phase 6에서 검토, 또는 NewPipe 같은 기존 솔루션과의 컴패니언 동기화.</p>
+<p>OQ-7. <strong>법적 자문</strong>: 정식 배포 전 한국 변호사 1회 자문 권장 (특히 텔레메트리 / 약관 / 면책).</p>
+<p>OQ-8. <strong>상업화</strong>: 본 프로젝트는 OSS 무료인가, Pro 기능(클라우드 동기화 등)을 제공할 것인가? 라이선스 결정과 연결.</p>
+<p>OQ-9. <strong>컨피그 포맷 — TOML vs JSON vs JSONC</strong>: TOML은 사용자 편집/주석 친화적, JSON은 도구 호환성 ↑, JSONC는 절충. 잠정 <strong>TOML</strong>(주석 + 단순 syntax). UI 편집은 항상 폼이라 직접 편집은 부수적. (부록 C 매핑 표 참고)</p>
+<p>OQ-10. <strong>Whisper 모델 다운로드 호스트</strong>: Hugging Face가 표준이지만 일부 사용자가 차단된 환경. 미러 또는 자체 CDN 검토. 모델 무결성은 SHA256 검증.</p>
+<p>OQ-11. <strong>클라우드 STT 통합 우선순위</strong>: D6의 옵션 단계. OpenAI(보편)/AssemblyAI(품질)/Google STT(한국어 우수). v1.0에서는 로컬 Whisper만, v1.1+에서 클라우드 옵션. API 키는 OS 자격증명에.</p>
+<p>OQ-12. <strong>클립보드 감시의 시스템 리소스</strong>: 매 초 폴링 vs 시스템 클립보드 이벤트 hook. PySide6는 <code>QClipboard.dataChanged</code> 시그널 제공 → 폴링 불필요. macOS는 별도 hook 필요할 수 있음. 측정 후 결정.</p>
+<hr />
+<h2 id="14">14. 참고<a class="headerlink" href="#14" title="Permanent link">¶</a></h2>
+<h3 id="_2">핵심 의존성<a class="headerlink" href="#_2" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>yt-dlp</strong>: https://github.com/yt-dlp/yt-dlp — 본 프로젝트의 코어 엔진, 활발한 유지보수.</li>
+<li><strong>yt-dlp PO Token Guide</strong>: https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide — Deno 의존성 등 PoToken 처리.</li>
+<li><strong>FFmpeg</strong>: https://ffmpeg.org/ — muxing, 트랜스코딩 표준.</li>
+<li><strong>aria2</strong>: https://aria2.github.io/ — 다중 연결 다운로더 옵션.</li>
+<li><strong>bgutil-ytdlp-pot-provider</strong>: PoToken 헬퍼 (Phase 2/3 통합).</li>
+<li><strong>Deno</strong>: https://deno.land/ — PoToken 관련 일부 yt-dlp 클라이언트의 JS 런타임 의존성.</li>
+</ul>
+<h3 id="d6">전사 (D6)<a class="headerlink" href="#d6" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>faster-whisper</strong>: https://github.com/SYSTRAN/faster-whisper — CTranslate2 기반, openai-whisper 4× 빠름. v1 1차 후보.</li>
+<li><strong>openai-whisper</strong>: https://github.com/openai/whisper — 표준 구현, 폴백.</li>
+<li><strong>whisper.cpp</strong>: https://github.com/ggml-org/whisper.cpp — C++ 단일 바이너리, 양자화. 저사양 옵션.</li>
+<li><strong>WhisperX</strong>: https://github.com/m-bain/whisperX — 단어 단위 정밀 정렬. D1 정밀 점프에 활용 검토.</li>
+<li><strong>Silero VAD</strong>: https://github.com/snakers4/silero-vad — Voice Activity Detection, 침묵 구간 스킵.</li>
+</ul>
+<h3 id="_3">컨피그 디자인 영감<a class="headerlink" href="#_3" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>gallery-dl</strong>: https://github.com/mikf/gallery-dl — JSON 컨피그 트리, namespace 추출기. D2/D5 모티프.</li>
+<li><strong>rclone</strong>: https://rclone.org/ — <code>~/.config/rclone/rclone.conf</code>의 multi-remote 패턴 참고.</li>
+</ul>
+<h3 id="motif">경쟁 / 모티프 (자세한 분석은 <a href="../motif/youtube_downloader_motif_260508.md">motif 문서</a>)<a class="headerlink" href="#motif" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Parabolic</strong> (NickvisionApps): https://github.com/NickvisionApps/Parabolic — 모던 OSS 벤치마크 (.NET NativeAOT, libadwaita+WinUI3).</li>
+<li><strong>Open Video Downloader</strong> (jely2002): https://github.com/jely2002/youtube-dl-gui — Tauri+Vue 검증 사례.</li>
+<li><strong>Stacher</strong>: https://stacher.io — 라이브러리/태깅/자막검색 모티프 (closed-source).</li>
+<li><strong>Tartube</strong>: https://github.com/axcore/tartube — 스케줄링 / Missing Videos 모티프.</li>
+<li><strong>Persepolis</strong>: https://github.com/persepolisdm/persepolis — PySide6 운영 검증 사례.</li>
+<li><strong>Seal</strong>: https://github.com/JunkFood02/Seal — UI / 명령 템플릿 디자인 모티프.</li>
+<li><strong>Cobalt</strong>: https://github.com/imputnet/cobalt — 미니멀 UI 모티프, 오디오 언어 픽커.</li>
+<li><strong>NewPipeExtractor</strong>: https://github.com/TeamNewPipe/NewPipeExtractor — 플러그인 SDK 참조.</li>
+<li><strong>streamlink</strong>: https://github.com/streamlink/streamlink — 플러그인 컨트랙트 모범 사례.</li>
+</ul>
+<hr />
+<h2 id="15-a-yt-dlp">15. 부록 A — 핵심 yt-dlp 인자 치트시트<a class="headerlink" href="#15-a-yt-dlp" title="Permanent link">¶</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 기본 1080p mp4</span>
+yt-dlp<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;bv*[height&lt;=1080][ext=mp4]+ba[ext=m4a]/b[height&lt;=1080]&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">       </span>--merge-output-format<span class="w"> </span>mp4<span class="w"> </span>URL
+
+<span class="c1"># 최고 화질, 포맷 자동</span>
+yt-dlp<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;bv*+ba/b&quot;</span><span class="w"> </span>--merge-output-format<span class="w"> </span>mkv<span class="w"> </span>URL
+
+<span class="c1"># 오디오 추출 (m4a)</span>
+yt-dlp<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;ba[ext=m4a]&quot;</span><span class="w"> </span>URL
+
+<span class="c1"># 자막 + 썸네일 + 메타 + 챕터 풀패키지</span>
+yt-dlp<span class="w"> </span>--write-subs<span class="w"> </span>--sub-langs<span class="w"> </span><span class="s2">&quot;ko,en&quot;</span><span class="w"> </span>--embed-subs<span class="w"> </span><span class="se">\</span>
+<span class="w">       </span>--embed-thumbnail<span class="w"> </span>--embed-metadata<span class="w"> </span>--embed-chapters<span class="w"> </span><span class="se">\</span>
+<span class="w">       </span>--convert-thumbnails<span class="w"> </span>png<span class="w"> </span>URL
+
+<span class="c1"># 라이브 처음부터</span>
+yt-dlp<span class="w"> </span>--live-from-start<span class="w"> </span>--hls-use-mpegts<span class="w"> </span>URL
+
+<span class="c1"># 쿠키 (브라우저)</span>
+yt-dlp<span class="w"> </span>--cookies-from-browser<span class="w"> </span>chrome<span class="w"> </span>URL
+
+<span class="c1"># 진행률 머신리더블</span>
+yt-dlp<span class="w"> </span>--newline<span class="w"> </span>--progress-template<span class="w"> </span><span class="s2">&quot;download:%(progress.downloaded_bytes)s/%(progress.total_bytes)s&quot;</span><span class="w"> </span>URL
+
+<span class="c1"># 재생목록 일부만</span>
+yt-dlp<span class="w"> </span>-I<span class="w"> </span><span class="s2">&quot;1-10&quot;</span><span class="w"> </span>PLAYLIST_URL
+
+<span class="c1"># 시간 구간만</span>
+yt-dlp<span class="w"> </span>--download-sections<span class="w"> </span><span class="s2">&quot;*0:00-10:00&quot;</span><span class="w"> </span>URL
+
+<span class="c1"># 다중 연결</span>
+yt-dlp<span class="w"> </span>--downloader<span class="w"> </span>aria2c<span class="w"> </span>--downloader-args<span class="w"> </span><span class="s2">&quot;aria2c:-x 4 -k 1M&quot;</span><span class="w"> </span>URL
+
+<span class="c1"># JSON으로 메타만 (UI 미리보기용)</span>
+yt-dlp<span class="w"> </span>--dump-single-json<span class="w"> </span>--no-playlist<span class="w"> </span>URL
+</code></pre></div>
+
+<h2 id="16-b-stdout">16. 부록 B — 진행률 stdout 파싱 (예시)<a class="headerlink" href="#16-b-stdout" title="Permanent link">¶</a></h2>
+<p><code>--newline --progress-template "...."</code> 를 사용하면 한 줄에 머신리더블한 키-값을 보낼 수 있다.</p>
+<div class="codehilite"><pre><span></span><code>download:23.5%/512.34MiB at 12.3MiB/s ETA 00:42
+</code></pre></div>
+
+<p>또는 더 안전하게 JSON-on-stderr 방식:</p>
+<div class="codehilite"><pre><span></span><code>yt-dlp<span class="w"> </span>--no-progress<span class="w"> </span><span class="se">\</span>
+<span class="w">       </span>--progress-template<span class="w"> </span><span class="s2">&quot;json:%(progress)j&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">       </span>--newline<span class="w"> </span>URL
+</code></pre></div>
+
+<p>→ <code>{"downloaded_bytes": 102400, "total_bytes": 524288000, "speed": 12345678, "eta": 42, ...}</code></p>
+<p>각 라인을 JSON 파싱해서 UI 상태에 매핑한다.</p>
+<hr />
+<h2 id="17-c-ydl_opts">17. 부록 C — 컨피그 트리 ↔ ydl_opts 매핑<a class="headerlink" href="#17-c-ydl_opts" title="Permanent link">¶</a></h2>
+<p>YCollector의 typed 컨피그 (TOML/JSON, gallery-dl 영감)는 yt-dlp의 <code>ydl_opts</code> dict로 1:1 또는 1:N 매핑된다. 이 표는 핵심 키만 — 시간이 지나면서 확장한다.</p>
+<h3 id="171">17.1 다운로드 / 포맷<a class="headerlink" href="#171" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>YCollector 키</th>
+<th>yt-dlp <code>ydl_opts</code> 키</th>
+<th>yt-dlp CLI 플래그</th>
+<th>메모</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>format</code></td>
+<td><code>format</code></td>
+<td><code>-f / --format</code></td>
+<td>그대로 통과</td>
+</tr>
+<tr>
+<td><code>container</code></td>
+<td><code>merge_output_format</code></td>
+<td><code>--merge-output-format</code></td>
+<td>mp4/mkv/webm</td>
+</tr>
+<tr>
+<td><code>output_template</code></td>
+<td><code>outtmpl</code></td>
+<td><code>-o / --output</code></td>
+<td>placeholder 호환</td>
+</tr>
+<tr>
+<td><code>directory</code> (배열)</td>
+<td><code>outtmpl</code> 일부로 join</td>
+<td>(synthesized)</td>
+<td>gallery-dl 스타일</td>
+</tr>
+<tr>
+<td><code>filename</code></td>
+<td><code>outtmpl</code> 일부로 join</td>
+<td>(synthesized)</td>
+<td>gallery-dl 스타일</td>
+</tr>
+<tr>
+<td><code>audio_only</code></td>
+<td><code>format='bestaudio'</code> + <code>extract_audio</code> PP</td>
+<td><code>-x</code></td>
+<td>단축</td>
+</tr>
+<tr>
+<td><code>audio_format</code></td>
+<td><code>FFmpegExtractAudio</code> PP에 <code>preferredcodec</code></td>
+<td><code>--audio-format</code></td>
+<td>mp3/m4a/opus</td>
+</tr>
+<tr>
+<td><code>audio_quality</code></td>
+<td><code>FFmpegExtractAudio</code>의 <code>preferredquality</code></td>
+<td><code>--audio-quality</code></td>
+<td>"best" or 번호</td>
+</tr>
+</tbody>
+</table>
+<h3 id="172">17.2 자막 / 메타 / 임베드<a class="headerlink" href="#172" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>YCollector 키</th>
+<th>yt-dlp <code>ydl_opts</code> 키</th>
+<th>yt-dlp CLI 플래그</th>
+<th>메모</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>subtitles</code> (배열)</td>
+<td><code>writesubtitles=True</code>, <code>subtitleslangs=[...]</code></td>
+<td><code>--write-subs --sub-langs</code></td>
+<td>빈 배열 = false</td>
+</tr>
+<tr>
+<td><code>auto_subtitles</code></td>
+<td><code>writeautomaticsub</code></td>
+<td><code>--write-auto-subs</code></td>
+<td>bool</td>
+</tr>
+<tr>
+<td><code>embed.subs</code></td>
+<td><code>FFmpegEmbedSubtitle</code> PP</td>
+<td><code>--embed-subs</code></td>
+<td>embed 배열의 멤버</td>
+</tr>
+<tr>
+<td><code>embed.thumbnail</code></td>
+<td><code>EmbedThumbnail</code> PP</td>
+<td><code>--embed-thumbnail</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>embed.metadata</code></td>
+<td><code>FFmpegMetadata</code> PP</td>
+<td><code>--embed-metadata</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>embed.chapters</code></td>
+<td><code>FFmpegMetadata(add_chapters=True)</code></td>
+<td><code>--embed-chapters</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>write_info_json</code></td>
+<td><code>writeinfojson</code></td>
+<td><code>--write-info-json</code></td>
+<td>bool</td>
+</tr>
+<tr>
+<td><code>write_thumbnail</code></td>
+<td><code>writethumbnail</code></td>
+<td><code>--write-thumbnail</code></td>
+<td>bool</td>
+</tr>
+<tr>
+<td><code>write_comments</code></td>
+<td><code>getcomments</code></td>
+<td><code>--write-comments</code></td>
+<td>bool, 옵트인</td>
+</tr>
+</tbody>
+</table>
+<h3 id="173">17.3 인증 / 네트워크<a class="headerlink" href="#173" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>YCollector 키</th>
+<th>yt-dlp <code>ydl_opts</code> 키</th>
+<th>yt-dlp CLI 플래그</th>
+<th>메모</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cookies_from_browser</code></td>
+<td><code>cookiesfrombrowser=(name,)</code></td>
+<td><code>--cookies-from-browser</code></td>
+<td>tuple, profile/keyring 추가 가능</td>
+</tr>
+<tr>
+<td><code>cookies_file</code></td>
+<td><code>cookiefile</code></td>
+<td><code>--cookies</code></td>
+<td>Netscape 포맷 경로</td>
+</tr>
+<tr>
+<td><code>proxy</code></td>
+<td><code>proxy</code></td>
+<td><code>--proxy</code></td>
+<td>URL 형식</td>
+</tr>
+<tr>
+<td><code>username</code> / <code>password</code></td>
+<td><code>username</code>, <code>password</code></td>
+<td><code>-u / -p</code></td>
+<td>가능하면 키체인 사용</td>
+</tr>
+<tr>
+<td><code>extractor_args</code> (dict)</td>
+<td><code>extractor_args</code> (dict)</td>
+<td><code>--extractor-args</code></td>
+<td>그대로 — gallery-dl namespace와 완전 매칭</td>
+</tr>
+</tbody>
+</table>
+<h3 id="174">17.4 라이브 / 다운로드 동작<a class="headerlink" href="#174" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>YCollector 키</th>
+<th>yt-dlp <code>ydl_opts</code> 키</th>
+<th>yt-dlp CLI 플래그</th>
+<th>메모</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>live_from_start</code></td>
+<td><code>live_from_start</code></td>
+<td><code>--live-from-start</code></td>
+<td>bool</td>
+</tr>
+<tr>
+<td><code>hls_use_mpegts</code></td>
+<td><code>hls_use_mpegts</code></td>
+<td><code>--hls-use-mpegts</code></td>
+<td>라이브 안정성</td>
+</tr>
+<tr>
+<td><code>download_sections</code></td>
+<td><code>download_ranges</code> (callback)</td>
+<td><code>--download-sections</code></td>
+<td>시간 구간</td>
+</tr>
+<tr>
+<td><code>concurrent_fragments</code></td>
+<td><code>concurrent_fragment_downloads</code></td>
+<td><code>-N</code></td>
+<td>DASH 세그먼트 병렬</td>
+</tr>
+<tr>
+<td><code>external_downloader</code></td>
+<td><code>external_downloader</code></td>
+<td><code>--downloader</code></td>
+<td>aria2c/axel/curl</td>
+</tr>
+<tr>
+<td><code>external_downloader_args</code></td>
+<td><code>external_downloader_args</code></td>
+<td><code>--downloader-args</code></td>
+<td>dict, 다운로더별</td>
+</tr>
+<tr>
+<td><code>retries</code></td>
+<td><code>retries</code></td>
+<td><code>--retries</code></td>
+<td>정수 또는 "infinite"</td>
+</tr>
+</tbody>
+</table>
+<h3 id="175-d6-whisper-d2-pp">17.5 후처리 (D6 Whisper, D2 사용자 PP)<a class="headerlink" href="#175-d6-whisper-d2-pp" title="Permanent link">¶</a></h3>
+<p>YCollector 컨피그의 <code>postprocessors</code> 배열은 yt-dlp의 <code>postprocessors</code> 리스트에 직접 매핑되지만, <strong>YCollector 전용 PP</strong> (Whisper, NAS 업로드 등)는 우리 어댑터가 추가:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[presets.lecture]</span>
+<span class="n">postprocessors</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="n">type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;embed_subs&quot;</span><span class="w"> </span><span class="p">},</span><span class="w">                              </span><span class="c1"># → FFmpegEmbedSubtitle</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="n">type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;embed_metadata&quot;</span><span class="w"> </span><span class="p">},</span><span class="w">                          </span><span class="c1"># → FFmpegMetadata</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="n">type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;transcribe&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">model</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;medium&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">lang</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;ko&quot;</span><span class="w"> </span><span class="p">},</span><span class="w">  </span><span class="c1"># → YCollector 전용 (D6)</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="n">type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;set_metadata&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">fields</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">genre</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;Lecture&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="n">type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;upload_nas&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">target</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;</span><span class="se">\\\\</span><span class="s2">NAS</span><span class="se">\\</span><span class="s2">Lectures&quot;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="c1"># → 사용자 플러그인 (D5 SDK)</span>
+<span class="p">]</span>
+</code></pre></div>
+
+<p>매핑 함수 (<code>adapter.py</code> 의 <code>to_ydl_opts</code>):</p>
+<div class="codehilite"><pre><span></span><code><span class="n">PP_MAP</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;embed_subs&quot;</span><span class="p">:</span>     <span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;FFmpegEmbedSubtitle&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;embed_metadata&quot;</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;FFmpegMetadata&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;embed_chapters&quot;</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;FFmpegMetadata&quot;</span><span class="p">,</span> <span class="s2">&quot;add_chapters&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+    <span class="s2">&quot;embed_thumbnail&quot;</span><span class="p">:</span><span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;EmbedThumbnail&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;extract_audio&quot;</span><span class="p">:</span>  <span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;FFmpegExtractAudio&quot;</span><span class="p">,</span>
+                                  <span class="s2">&quot;preferredcodec&quot;</span><span class="p">:</span> <span class="n">c</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;format&quot;</span><span class="p">,</span> <span class="s2">&quot;m4a&quot;</span><span class="p">),</span>
+                                  <span class="s2">&quot;preferredquality&quot;</span><span class="p">:</span> <span class="n">c</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;quality&quot;</span><span class="p">,</span> <span class="s2">&quot;best&quot;</span><span class="p">)},</span>
+<span class="p">}</span>
+<span class="n">YCOLLECTOR_PP</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;transcribe&quot;</span><span class="p">:</span>   <span class="s2">&quot;ycollector.transcribe.WhisperPP&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;set_metadata&quot;</span><span class="p">:</span> <span class="s2">&quot;ycollector.engine.pp.SetMetadataPP&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;upload_nas&quot;</span><span class="p">:</span>   <span class="s2">&quot;ycollector.engine.pp.UploadNASPP&quot;</span><span class="p">,</span>
+    <span class="c1"># ... 사용자 플러그인 (entry_points &quot;ycollector.postprocessors&quot;)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="176-gallery-dl">17.6 머지 시맨틱 (gallery-dl 영감)<a class="headerlink" href="#176-gallery-dl" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>defaults
+   ▼  deep-merge
+sites.&lt;host&gt;
+   ▼  deep-merge
+presets.&lt;active_preset&gt;
+   ▼  deep-merge
+channels.&lt;channel_id&gt;
+   ▼  deep-merge
+CLI / UI 일회 오버라이드
+   ▼
+Effective Config
+   ▼  to_ydl_opts()
+ydl_opts (yt-dlp가 이해하는 dict)
+</code></pre></div>
+
+<p>머지 규칙:
+- 객체 키: 깊은 머지 (<code>{a:1, b:2}</code> + <code>{b:3, c:4}</code> = <code>{a:1, b:3, c:4}</code>)
+- 배열: <strong>교체</strong> (병합 아님). 명시적 머지 원하면 <code>{ extend = [...] }</code> 같은 syntax 도입 검토.
+- 스칼라: 마지막 값이 이김.
+- <code>None</code> / 명시적 unset: 부모의 키를 제거.</p>
+<h3 id="177">17.7 검증<a class="headerlink" href="#177" title="Permanent link">¶</a></h3>
+<p>스키마는 <code>pydantic</code> 또는 <code>jsonschema</code> 로 정의. <code>formaat = "..."</code> 같은 오타는 yt-dlp에 도달하기 전에 잡힘. CLI에서 <code>ycollector doctor</code> 가 컨피그 검증 + 마이그레이션 안내.</p>
+<hr />
+<p><strong>(끝)</strong></p>
+  </main>
+</div>
+
+<div class="footer">YCollector · 2026-05-08 · 자동 생성 (docs/_build_html.py)</div>
+
+</body>
+</html>

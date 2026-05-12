@@ -1,0 +1,51 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+build/
+dist/
+sdist/
+wheels/
+.eggs/
+
+# --- uv / venv ---
+.venv/
+.uv/
+uv.lock.bak
+
+# --- Tests / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- YCollector runtime artifacts ---
+downloads/
+*.part
+*.ytdl
+ycollector.db
+ycollector.db-journal
+ycollector.db-wal
+ycollector.db-shm
+ycollector.log
+.ycollector/
+
+# --- Whisper model cache (D6) ---
+models/
+*.bin
