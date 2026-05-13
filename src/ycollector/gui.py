@@ -62,6 +62,7 @@ from ycollector.engine import (
     compose_format_spec,
     spec_for_format_id,
 )
+from ycollector.engine.ytdlp import is_ambiguous_playlist_url
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -96,6 +97,9 @@ class DownloadWorker(QObject):
         retries: int = 10,
         fragment_retries: int = 10,
         throttled_rate: str | None = None,
+        playlist_mode: str = "auto",
+        max_downloads: int | None = None,
+        playlist_items: str | None = None,
     ) -> None:
         super().__init__()
         self._urls = urls
@@ -109,6 +113,9 @@ class DownloadWorker(QObject):
         self._retries = retries
         self._fragment_retries = fragment_retries
         self._throttled_rate = throttled_rate
+        self._playlist_mode = playlist_mode
+        self._max_downloads = max_downloads
+        self._playlist_items = playlist_items
         self._cancelled = False
         self._proc: subprocess.Popen[str] | None = None
 
@@ -125,6 +132,22 @@ class DownloadWorker(QObject):
     def _capture_proc(self, proc: subprocess.Popen[str]) -> None:
         self._proc = proc
 
+    def _decide_playlist(self, url: str) -> tuple[bool, bool]:
+        """Return ``(no_playlist, yes_playlist)`` for this URL."""
+        mode = self._playlist_mode
+        if mode == "single":
+            return True, False
+        if mode == "expand":
+            return False, True
+        # auto
+        if is_ambiguous_playlist_url(url):
+            self.log.emit(
+                "  [i] 단일 영상 URL + ?list= 컨텍스트 → 단일 영상만 받습니다 "
+                "(설정에서 playlist.mode=expand로 변경 가능)."
+            )
+            return True, False
+        return False, False
+
     def run(self) -> None:
         try:
             engine = YtdlpEngine()
@@ -139,6 +162,10 @@ class DownloadWorker(QObject):
                 self.log.emit("\n[!] 사용자 취소 — 남은 작업 중단.")
                 break
             self.log.emit(f"\n[{i}/{len(self._urls)}] {url}")
+
+            # Decide playlist behaviour from settings + URL pattern.
+            no_pl, yes_pl = self._decide_playlist(url)
+
             try:
                 path = engine.download(
                     url,
@@ -152,6 +179,10 @@ class DownloadWorker(QObject):
                     retries=self._retries,
                     fragment_retries=self._fragment_retries,
                     throttled_rate=self._throttled_rate,
+                    no_playlist=no_pl,
+                    yes_playlist=yes_pl,
+                    max_downloads=self._max_downloads,
+                    playlist_items=self._playlist_items,
                     on_progress=self.progress.emit,
                     on_log=self.log.emit,
                     on_process=self._capture_proc,
@@ -738,6 +769,9 @@ class MainWindow(QMainWindow):
             retries=self._settings.retries,
             fragment_retries=self._settings.fragment_retries,
             throttled_rate=self._settings.throttled_rate,
+            playlist_mode=self._settings.playlist_mode,
+            max_downloads=self._settings.max_downloads,
+            playlist_items=self._settings.playlist_items,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)

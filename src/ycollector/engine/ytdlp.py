@@ -15,6 +15,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# ── Playlist URL detection ──────────────────────────────────────────────────
+# A "single video URL with a playlist context" — `youtu.be/<id>?list=...`
+# or `youtube.com/watch?v=<id>...&list=...`. yt-dlp defaults to expanding
+# the playlist for these, which surprises users who clicked one video.
+_AMBIGUOUS_PLAYLIST_PATTERNS = (
+    re.compile(r"youtu\.be/[A-Za-z0-9_-]+\?.*list=", re.IGNORECASE),
+    re.compile(r"youtube\.com/watch\?.*v=[A-Za-z0-9_-]+.*list=", re.IGNORECASE),
+    re.compile(r"youtube\.com/watch\?.*list=.*v=[A-Za-z0-9_-]+", re.IGNORECASE),
+)
+
+
+def is_ambiguous_playlist_url(url: str) -> bool:
+    """True iff the URL is a single video + ?list= context (most users want
+    just the single video). Pure playlist URLs (``/playlist?list=...``)
+    are NOT considered ambiguous — those should expand normally."""
+    return any(p.search(url) for p in _AMBIGUOUS_PLAYLIST_PATTERNS)
+
+
 # ── Error classification (plan §7.3) ────────────────────────────────────────
 ERROR_PATTERNS: dict[str, str] = {
     "bot-detect":      r"Sign in to confirm you'?re not a bot",
@@ -163,6 +181,10 @@ class YtdlpEngine:
         retries: int = 10,
         fragment_retries: int = 10,
         throttled_rate: str | None = None,
+        no_playlist: bool = False,
+        yes_playlist: bool = False,
+        max_downloads: int | None = None,
+        playlist_items: str | None = None,
         extra_args: list[str] | None = None,
         on_progress: Callable[[ProgressEvent], None] | None = None,
         on_log: Callable[[str], None] | None = None,
@@ -206,6 +228,15 @@ class YtdlpEngine:
             cmd += ["--socket-timeout", str(socket_timeout)]
         if throttled_rate:
             cmd += ["--throttled-rate", throttled_rate]
+        # Playlist handling. `no_playlist` wins if both are set.
+        if no_playlist:
+            cmd.append("--no-playlist")
+        elif yes_playlist:
+            cmd.append("--yes-playlist")
+        if max_downloads is not None:
+            cmd += ["--max-downloads", str(max_downloads)]
+        if playlist_items:
+            cmd += ["--playlist-items", playlist_items]
         if write_subs and sub_langs:
             cmd += [
                 "--write-subs",

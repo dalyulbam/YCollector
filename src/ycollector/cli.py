@@ -29,6 +29,7 @@ from ycollector.engine import (
     YtdlpEngine,
     compose_format_spec,
 )
+from ycollector.engine.ytdlp import is_ambiguous_playlist_url
 
 
 def _human_bytes(n: float) -> str:
@@ -127,6 +128,17 @@ def _build_parser(s: Settings) -> argparse.ArgumentParser:
     p.add_argument("--cookies-from-browser", metavar="BROWSER",
                    default=s.cookies_from_browser,
                    help="Import cookies from browser (chrome, firefox, edge, brave, ...).")
+    # ── playlist handling ──────────────────────────────────────────────────
+    pl_grp = p.add_mutually_exclusive_group()
+    pl_grp.add_argument("--no-playlist", action="store_true",
+                        help="Treat URL as a single video even if it has ?list=PLAYLIST_ID.")
+    pl_grp.add_argument("--yes-playlist", action="store_true",
+                        help="Force-expand the playlist (overrides settings.ini and auto-detect).")
+    p.add_argument("--max-downloads", type=int, default=s.max_downloads, metavar="N",
+                   help=f"Stop after N successful downloads (default from settings.ini: "
+                        f"{s.max_downloads or 'unlimited'}).")
+    p.add_argument("--playlist-items", default=s.playlist_items, metavar="SPEC",
+                   help="Which items of a playlist to download (e.g. '1-3,7,10-').")
     # ── stall mitigation (defaults from settings.ini) ──────────────────────
     p.add_argument("--socket-timeout", type=int, default=s.socket_timeout, metavar="SEC",
                    help=f"Abort hung sockets after N seconds and retry "
@@ -199,6 +211,31 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for i, url in enumerate(urls, start=1):
             print(f"\n[{i}/{len(urls)}] {url}", file=sys.stderr)
+
+            # Decide playlist behaviour. Precedence:
+            #   1) explicit --yes-playlist / --no-playlist
+            #   2) settings.ini [playlist] mode
+            #   3) auto: ambiguous video?list= URLs become single-video
+            if args.yes_playlist:
+                no_pl, yes_pl = False, True
+            elif args.no_playlist:
+                no_pl, yes_pl = True, False
+            elif settings.playlist_mode == "single":
+                no_pl, yes_pl = True, False
+                print("  [i] playlist mode = single → 단일 영상으로 처리", file=sys.stderr)
+            elif settings.playlist_mode == "expand":
+                no_pl, yes_pl = False, True
+            else:  # auto
+                if is_ambiguous_playlist_url(url):
+                    no_pl, yes_pl = True, False
+                    print(
+                        "  [i] 단일 영상 URL + ?list= 컨텍스트 감지 — 단일 영상만 받습니다.\n"
+                        "      재생목록 전체를 받으려면 --yes-playlist 추가.",
+                        file=sys.stderr,
+                    )
+                else:
+                    no_pl, yes_pl = False, False  # let yt-dlp default
+
             try:
                 path = engine.download(
                     url,
@@ -212,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
                     retries=args.retries,
                     fragment_retries=args.fragment_retries,
                     throttled_rate=args.throttled_rate,
+                    no_playlist=no_pl,
+                    yes_playlist=yes_pl,
+                    max_downloads=args.max_downloads,
+                    playlist_items=args.playlist_items,
                     on_progress=_make_progress_printer(),
                 )
                 print(f"  → {path}", file=sys.stderr)

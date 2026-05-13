@@ -640,7 +640,37 @@ uv run ycollector URL
 
 (영구 설정은 Phase 1 컨피그 파일로)
 
-### 5.10 디스크 가득 참
+### 5.10 재생목록 URL에서 멈춤 (`youtu.be/...?list=...`)
+
+증상: `youtu.be/<id>?list=<...>` URL로 실행 시 아무 출력 없이 1~5분 정지.
+
+원인: yt-dlp가 재생목록 전체의 메타데이터를 먼저 가져옵니다. 100개+ 영상이면 시간이 걸리고, 그 동안 진행 표시가 없습니다.
+
+**Phase 0 Day 3부터 자동 처리**: YCollector는 `youtu.be/<id>?list=...` 패턴을 감지하면 **단일 영상으로 처리**(yt-dlp의 `--no-playlist`)합니다:
+
+```powershell
+uv run ycollector "https://youtu.be/jxCleZOPxX8?list=PLbb..."
+# → [i] 단일 영상 URL + ?list= 컨텍스트 감지 — 단일 영상만 받습니다.
+#     재생목록 전체를 받으려면 --yes-playlist 추가.
+```
+
+전체 재생목록을 원하면:
+```powershell
+uv run ycollector URL --yes-playlist
+# 또는 처음 10개만:
+uv run ycollector URL --yes-playlist --max-downloads 10
+# 또는 1-3, 7, 10번째 이후:
+uv run ycollector URL --yes-playlist --playlist-items "1-3,7,10-"
+```
+
+`settings.ini` 의 `[playlist] mode` 로 기본 동작 전환:
+- `auto` (기본) — 위 자동 처리
+- `expand` — 항상 재생목록 펼침 (yt-dlp 본래 동작)
+- `single` — 항상 단일 영상 (모든 `list=` 무시)
+
+순수 재생목록 URL (`youtube.com/playlist?list=...`) 은 영향받지 않고 평소대로 펼쳐집니다.
+
+### 5.11 디스크 가득 참
 
 8시간 라이브 4K = 50GB+. 다운로드 전 예상 크기 확인:
 ```powershell

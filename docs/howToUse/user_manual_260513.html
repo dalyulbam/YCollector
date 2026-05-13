@@ -446,7 +446,8 @@ body {
 <li><a href="#57-gui">5.7 GUI가 안 뜨고 에러</a></li>
 <li><a href="#58-requested-format-is-not-available">5.8 Requested format is not available</a></li>
 <li><a href="#59-ssl">5.9 SSL 인증서 에러</a></li>
-<li><a href="#510">5.10 디스크 가득 참</a></li>
+<li><a href="#510-url-youtubelist">5.10 재생목록 URL에서 멈춤 (youtu.be/...?list=...)</a></li>
+<li><a href="#511">5.11 디스크 가득 참</a></li>
 </ul>
 </li>
 <li><a href="#6-faq">6. 자주 묻는 질문 (FAQ)</a><ul>
@@ -1187,7 +1188,29 @@ uv run yt-dlp --live-from-start --hls-use-mpegts URL</code></p>
 </code></pre></div>
 
 <p>(영구 설정은 Phase 1 컨피그 파일로)</p>
-<h3 id="510">5.10 디스크 가득 참<a class="headerlink" href="#510" title="Permanent link">¶</a></h3>
+<h3 id="510-url-youtubelist">5.10 재생목록 URL에서 멈춤 (<code>youtu.be/...?list=...</code>)<a class="headerlink" href="#510-url-youtubelist" title="Permanent link">¶</a></h3>
+<p>증상: <code>youtu.be/&lt;id&gt;?list=&lt;...&gt;</code> URL로 실행 시 아무 출력 없이 1~5분 정지.</p>
+<p>원인: yt-dlp가 재생목록 전체의 메타데이터를 먼저 가져옵니다. 100개+ 영상이면 시간이 걸리고, 그 동안 진행 표시가 없습니다.</p>
+<p><strong>Phase 0 Day 3부터 자동 처리</strong>: YCollector는 <code>youtu.be/&lt;id&gt;?list=...</code> 패턴을 감지하면 <strong>단일 영상으로 처리</strong>(yt-dlp의 <code>--no-playlist</code>)합니다:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="s2">&quot;https://youtu.be/jxCleZOPxX8?list=PLbb...&quot;</span>
+<span class="c"># → [i] 단일 영상 URL + ?list= 컨텍스트 감지 — 단일 영상만 받습니다.</span>
+<span class="c">#     재생목록 전체를 받으려면 --yes-playlist 추가.</span>
+</code></pre></div>
+
+<p>전체 재생목록을 원하면:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-yes-playlist</span>
+<span class="c"># 또는 처음 10개만:</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-yes-playlist</span> <span class="p">-</span><span class="n">-max-downloads</span> <span class="n">10</span>
+<span class="c"># 또는 1-3, 7, 10번째 이후:</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-yes-playlist</span> <span class="p">-</span><span class="n">-playlist-items</span> <span class="s2">&quot;1-3,7,10-&quot;</span>
+</code></pre></div>
+
+<p><code>settings.ini</code> 의 <code>[playlist] mode</code> 로 기본 동작 전환:
+- <code>auto</code> (기본) — 위 자동 처리
+- <code>expand</code> — 항상 재생목록 펼침 (yt-dlp 본래 동작)
+- <code>single</code> — 항상 단일 영상 (모든 <code>list=</code> 무시)</p>
+<p>순수 재생목록 URL (<code>youtube.com/playlist?list=...</code>) 은 영향받지 않고 평소대로 펼쳐집니다.</p>
+<h3 id="511">5.11 디스크 가득 참<a class="headerlink" href="#511" title="Permanent link">¶</a></h3>
 <p>8시간 라이브 4K = 50GB+. 다운로드 전 예상 크기 확인:</p>
 <div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">yt-dlp</span> <span class="p">-</span><span class="n">-get-filename</span> <span class="p">-</span><span class="n">-get-format</span> <span class="n">URL</span>
 </code></pre></div>

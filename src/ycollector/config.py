@@ -45,6 +45,11 @@ class Settings:
     sub_langs: list[str] = field(default_factory=lambda: ["ko", "en"])
     cookies_from_browser: str | None = None
 
+    # [playlist] — playlist handling
+    playlist_mode: str = "auto"  # auto | expand | single
+    max_downloads: int | None = None
+    playlist_items: str | None = None
+
     # [network] — stall mitigation defaults (Phase 0 Day 3 recommendation)
     socket_timeout: int = 30
     retries: int = 10
@@ -89,6 +94,16 @@ def load_settings(explicit: Path | None = None) -> tuple[Settings, Path | None]:
             s.sub_langs = [x.strip() for x in o["sub_langs"].split(",") if x.strip()]
         cb = (o.get("cookies_from_browser") or "").strip()
         s.cookies_from_browser = cb or None
+
+    if "playlist" in parser:
+        pl = parser["playlist"]
+        mode = (pl.get("mode") or s.playlist_mode).strip().lower()
+        if mode in ("auto", "expand", "single"):
+            s.playlist_mode = mode
+        md = (pl.get("max_downloads") or "").strip()
+        s.max_downloads = _int_or_default(md, s.max_downloads or 0) or None
+        items = (pl.get("items") or "").strip()
+        s.playlist_items = items or None
 
     if "network" in parser:
         n = parser["network"]
@@ -162,6 +177,17 @@ embed_subs = true
 sub_langs = ko,en
 # 쿠키 임포트 브라우저 (chrome|firefox|edge|brave, 빈 값 = 사용 안 함)
 cookies_from_browser =
+
+[playlist]
+# 재생목록 처리 모드.
+#   auto    — "단일 영상 URL + ?list=..."는 단일 영상으로 처리. (권장)
+#   expand  — 항상 재생목록 펼침.
+#   single  — 항상 단일 영상.
+mode = auto
+# 펼침 시 N개까지만
+max_downloads =
+# 펼침 시 특정 항목만 (예: 1-10)
+items =
 
 [network]
 # Phase 0 Day 3 멈춤 대응 기본값.
