@@ -276,6 +276,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{len(failures)}/{len(urls)} failed:", file=sys.stderr)
         for url, err in failures:
             print(f"  - {url}\n      [{err.category}] {err.message}", file=sys.stderr)
+        # 카테고리별 한 줄 가이드 (한 번씩만).
+        hinted: set[str] = set()
+        for _, err in failures:
+            if err.category == "js-runtime" and "js-runtime" not in hinted:
+                print(
+                    "\n  💡 yt-dlp 가 외부 JavaScript 런타임(deno 등)을 요구합니다.\n"
+                    "     재생목록 / n-sig 풀이 등 일부 추출 경로에 필요합니다.\n"
+                    "     Windows:  winget install DenoLand.Deno\n"
+                    "     macOS:    brew install deno\n"
+                    "     설치 후 새 터미널에서 다시 실행하세요.",
+                    file=sys.stderr,
+                )
+                hinted.add("js-runtime")
         return 1 if len(failures) < len(urls) else 2
     return 0
 

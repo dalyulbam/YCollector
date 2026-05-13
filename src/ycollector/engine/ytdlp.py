@@ -41,6 +41,9 @@ ERROR_PATTERNS: dict[str, str] = {
     "age-restricted":  r"is age restricted|age[- ]restricted",
     "geo-blocked":     r"not available in your country|geo[- ]restricted",
     "rate-limit":      r"HTTP Error 429",
+    # yt-dlp 의 EJS(Extractor JS) 의존성. 재생목록 등 일부 추출 경로가 deno/node 같은
+    # 외부 JS 런타임을 필요로 함. 사용자 가이드: `winget install DenoLand.Deno`.
+    "js-runtime":      r"No supported JavaScript runtime|n challenge solving failed",
     "stale-extractor": r"unable to extract|could not find sig function|n[- ]?sig",
     "video-removed":   r"Video unavailable|has been removed",
     "network":         r"Connection (reset|refused|aborted)|timed out",
@@ -100,6 +103,14 @@ class DownloadError(Exception):
 # events from arbitrary log lines.
 _PROGRESS_TEMPLATE = "download:YCPROG:%(progress)j"
 _PROGRESS_MARKER = "YCPROG:"
+
+# Sentinel for the *final* on-disk filepath after all post-processing
+# (merge bv+ba, embed subs, move to outtmpl). progress events only report
+# intermediate fragment filenames (e.g. ``.f140.mp4``) and in recent yt-dlp
+# may omit ``filename`` entirely, so we ask yt-dlp directly via ``--print``.
+# Emitted once per finished video — for playlists, the last line wins.
+_FINAL_PATH_TEMPLATE = "after_move:YCFINAL:%(filepath)s"
+_FINAL_PATH_MARKER = "YCFINAL:"
 
 
 class YtdlpEngine:
@@ -218,6 +229,7 @@ class YtdlpEngine:
             str(self.ytdlp_path),
             "--newline",
             "--progress-template", _PROGRESS_TEMPLATE,
+            "--print", _FINAL_PATH_TEMPLATE,
             "-f", format,
             "--merge-output-format", merge_format,
             "-o", outtmpl,
@@ -268,11 +280,20 @@ class YtdlpEngine:
             assert proc.stdout is not None
             for raw in proc.stdout:
                 line = raw.rstrip()
-                if line.startswith(_PROGRESS_MARKER):
+                if line.startswith(_FINAL_PATH_MARKER):
+                    # Authoritative final path after merge + post-process + move.
+                    # For playlists this fires per video; the last one wins.
+                    payload = line[len(_FINAL_PATH_MARKER):].strip()
+                    if payload:
+                        final_path = Path(payload)
+                elif line.startswith(_PROGRESS_MARKER):
                     event = _parse_progress(line[len(_PROGRESS_MARKER):])
                     if event is None:
                         continue
-                    if event.filename:
+                    # Progress filename points at intermediate fragments
+                    # (e.g. .f140.mp4) — keep only as a fallback if --print
+                    # never fires (e.g. audio-only with no post-processing).
+                    if event.filename and final_path is None:
                         final_path = Path(event.filename)
                     if on_progress:
                         on_progress(event)
