@@ -114,11 +114,22 @@ def _find_deno_dir() -> Path | None:
 
 
 def _subprocess_env() -> dict[str, str]:
-    """deno fallback 디렉터리가 있으면 PATH 에 prepend 한 env dict 반환.
+    """yt-dlp 자식 프로세스용 env. PATH 보정 + UTF-8 출력 강제.
 
-    yt-dlp 자식 프로세스에만 영향을 주고, 부모 프로세스의 환경은 건드리지 않는다.
+    부모 프로세스의 ``os.environ`` 은 건드리지 않는다.
+
+    PYTHONIOENCODING / PYTHONUTF8:
+        Korean Windows 의 기본 콘솔 인코딩은 cp949. 이걸 그대로 두면
+        yt-dlp 가 한글 제목/채널을 cp949 로 stdout 에 쏘는데, 우리는
+        ``Popen(..., encoding="utf-8")`` 로 디코드하므로 한글이 ``�``
+        replacement char 로 깨진다 ("채널: ������2" 현상).
+        자식 Python 인터프리터에 UTF-8 출력을 강제해 양쪽이 같은
+        인코딩으로 만난다. yt-dlp 가 PyInstaller / Nuitka 로 패킹된
+        경우에도 내부 Python 이 환경변수를 존중하므로 동일하게 동작.
     """
     env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     deno_dir = _find_deno_dir()
     if deno_dir is not None:
         env["PATH"] = f"{deno_dir}{os.pathsep}{env.get('PATH', '')}"
