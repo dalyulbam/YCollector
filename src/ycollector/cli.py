@@ -31,7 +31,7 @@ from ycollector.engine import (
     YtdlpEngine,
     compose_format_spec,
 )
-from ycollector.engine.ytdlp import is_ambiguous_playlist_url
+from ycollector.engine.ytdlp import _find_deno_dir, is_ambiguous_playlist_url
 
 
 def _human_bytes(n: float) -> str:
@@ -269,6 +269,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 10
     print(f"yt-dlp {engine.version()}  (ycollector {__version__})", file=sys.stderr)
+    # winget 으로 설치한 deno 가 PATH 에 없을 때, 발견된 fallback 경로를 알린다.
+    deno_dir = _find_deno_dir()
+    if deno_dir is not None:
+        print(f"[i] deno (JS runtime) 발견 — PATH 추가: {deno_dir}", file=sys.stderr)
 
     if args.format is None:
         choice = FormatChoice(

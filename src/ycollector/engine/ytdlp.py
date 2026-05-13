@@ -7,9 +7,11 @@ The Python API mode (in-process metadata extraction) is added in Phase 1+.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +66,65 @@ def classify_error(stderr: str) -> str:
     return "unknown"
 
 
+# ── JS runtime discovery ───────────────────────────────────────────────────
+# 최근 yt-dlp 는 YouTube 추출(특히 재생목록)에서 외부 JS 런타임(deno) 을 요구.
+# winget 으로 deno 를 설치해도 winget Links 폴더에 shim 이 생성 안 될 때가 있어
+# PATH 에 안 잡힌다. yt-dlp 가 무한 재시도하며 멈춰 보이는 가장 흔한 원인.
+# 여기서 알려진 설치 위치를 직접 뒤져, 찾은 디렉터리를 yt-dlp 의 env PATH 에
+# prepend 해서 yt-dlp 의 자동 감지 로직이 그대로 동작하게 한다.
+_DENO_FALLBACK_DIR: Path | None = None
+_DENO_PROBED = False
+
+
+def _find_deno_dir() -> Path | None:
+    """deno.exe 를 담은 디렉터리를 찾는다. PATH 에 이미 있으면 None.
+
+    캐싱: 한 프로세스 안에서 한 번만 디스크를 뒤진다.
+    """
+    global _DENO_FALLBACK_DIR, _DENO_PROBED
+    if _DENO_PROBED:
+        return _DENO_FALLBACK_DIR
+    _DENO_PROBED = True
+
+    if shutil.which("deno"):
+        # 이미 PATH 에 있음 → 별도 prepend 불필요.
+        return None
+
+    if sys.platform != "win32":
+        return None
+
+    local = os.environ.get("LOCALAPPDATA") or ""
+    home = os.environ.get("USERPROFILE") or ""
+    candidates = [
+        # winget 기본 설치 위치 (Links shim 누락 시 여기서만 발견됨)
+        Path(local) / "Microsoft" / "WinGet" / "Packages"
+            / "DenoLand.Deno_Microsoft.Winget.Source_8wekyb3d8bbwe",
+        # 공식 install 스크립트 기본 위치
+        Path(home) / ".deno" / "bin",
+        # scoop
+        Path(home) / "scoop" / "apps" / "deno" / "current",
+        # chocolatey
+        Path("C:/ProgramData/chocolatey/lib/deno/tools"),
+    ]
+    for c in candidates:
+        if (c / "deno.exe").is_file():
+            _DENO_FALLBACK_DIR = c
+            return c
+    return None
+
+
+def _subprocess_env() -> dict[str, str]:
+    """deno fallback 디렉터리가 있으면 PATH 에 prepend 한 env dict 반환.
+
+    yt-dlp 자식 프로세스에만 영향을 주고, 부모 프로세스의 환경은 건드리지 않는다.
+    """
+    env = os.environ.copy()
+    deno_dir = _find_deno_dir()
+    if deno_dir is not None:
+        env["PATH"] = f"{deno_dir}{os.pathsep}{env.get('PATH', '')}"
+    return env
+
+
 # ── Progress / errors ───────────────────────────────────────────────────────
 @dataclass
 class ProgressEvent:
@@ -112,6 +173,15 @@ _PROGRESS_MARKER = "YCPROG:"
 _FINAL_PATH_TEMPLATE = "after_move:YCFINAL:%(filepath)s"
 _FINAL_PATH_MARKER = "YCFINAL:"
 
+# 이미 받은 파일이면 yt-dlp 가 다운로드를 건너뛰어 --print after_move 도 안 쏘기에
+# 로그 라인에서 직접 경로를 캡처해 둔다. 예:
+#   [download] downloads\foo\bar [id].mp4 has already been downloaded
+_ALREADY_DOWNLOADED_RE = re.compile(r"^\[download\]\s+(.+?)\s+has already been downloaded$")
+
+# yt-dlp 가 `--max-downloads N` 에 도달했을 때 사용하는 정상 종료 코드.
+# 정확히 N 개를 받은 뒤 깨끗하게 멈췄다는 신호로 실패가 아니다.
+_MAX_DOWNLOADS_REACHED_EXIT = 101
+
 
 class YtdlpEngine:
     """Subprocess-based yt-dlp adapter (plan §4.4)."""
@@ -158,6 +228,7 @@ class YtdlpEngine:
             encoding="utf-8",
             errors="replace",
             check=False,
+            env=_subprocess_env(),
         )
         if result.returncode != 0:
             stderr = result.stderr or ""
@@ -233,6 +304,11 @@ class YtdlpEngine:
             # --no-quiet 로 명시적 해제 — 진행률 + 최종 경로 둘 다 받기 위해 필수.
             "--no-quiet",
             "--print", _FINAL_PATH_TEMPLATE,
+            # YouTube n-sig 풀이용 EJS(Extractor JS) 챌린지 솔버 자동 수신.
+            # deno/node 런타임만으론 부족하고 yt-dlp 가 권장하는 ejs:github 가
+            # 있어야 재생목록·일부 화질 추출이 동작. 최초 1회만 GitHub 에서
+            # 받아 캐시 — 이후엔 오프라인에서도 동작.
+            "--remote-components", "ejs:github",
             "-f", format,
             "--merge-output-format", merge_format,
             "-o", outtmpl,
@@ -272,6 +348,7 @@ class YtdlpEngine:
             bufsize=1,
             encoding="utf-8",
             errors="replace",
+            env=_subprocess_env(),
         )
         if on_process:
             on_process(proc)
@@ -303,6 +380,11 @@ class YtdlpEngine:
                 elif line:
                     if on_log:
                         on_log(line)
+                    # 이미 받은 파일 — yt-dlp 는 다운로드/머지/move 를 건너뛰므로
+                    # progress 도 --print 도 발사 안 됨. 로그 라인에서 직접 캡처.
+                    m = _ALREADY_DOWNLOADED_RE.match(line)
+                    if m:
+                        final_path = Path(m.group(1))
 
             assert proc.stderr is not None
             for raw in proc.stderr:
@@ -320,7 +402,9 @@ class YtdlpEngine:
                 except subprocess.TimeoutExpired:
                     proc.kill()
 
-        if proc.returncode != 0:
+        # exit 101 = --max-downloads 도달. yt-dlp 가 의도적으로 일찍 멈춘
+        # 신호이므로 success 와 동등 취급 (final_path 는 이미 마지막 영상에서 set).
+        if proc.returncode not in (0, _MAX_DOWNLOADS_REACHED_EXIT):
             stderr = "\n".join(stderr_lines)
             # `terminate()` / Ctrl+C usually surfaces as a negative return
             # code on POSIX or a non-zero on Windows.  Treat any non-success
