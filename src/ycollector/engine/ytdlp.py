@@ -309,6 +309,9 @@ class YtdlpEngine:
             # 있어야 재생목록·일부 화질 추출이 동작. 최초 1회만 GitHub 에서
             # 받아 캐시 — 이후엔 오프라인에서도 동작.
             "--remote-components", "ejs:github",
+            # 재생목록 내 일부 영상(삭제·비공개·연령제한·지역차단) 에서 에러가 나도
+            # 전체를 중단하지 않고 다음 항목으로. 단일 영상에선 영향 없음.
+            "--ignore-errors",
             "-f", format,
             "--merge-output-format", merge_format,
             "-o", outtmpl,
@@ -415,12 +418,16 @@ class YtdlpEngine:
                     message=f"yt-dlp interrupted (exit {proc.returncode})",
                     raw_stderr="",
                 )
-            last = stderr_lines[-1]
-            raise DownloadError(
-                category=classify_error(stderr),
-                message=last,
-                raw_stderr=stderr,
-            )
+            # 재생목록에서 일부 영상이 실패했지만 (--ignore-errors 로 진행) 적어도
+            # 한 개는 받았다면 partial success — 마지막 final_path 반환. 단일 영상
+            # 실패 (final_path is None) 만 진짜 DownloadError 로 올린다.
+            if final_path is None:
+                last = stderr_lines[-1]
+                raise DownloadError(
+                    category=classify_error(stderr),
+                    message=last,
+                    raw_stderr=stderr,
+                )
 
         if final_path is None:
             raise DownloadError(
