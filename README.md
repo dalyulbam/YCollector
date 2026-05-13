@@ -37,6 +37,8 @@ Get-Content urls.txt | uv run ycollector -
 uv run ycollector-gui
 ```
 
+> 기본값은 저장소의 [`settings.ini`](settings.ini)에 모여 있습니다. 화질/포맷/멈춤 대응(`throttled_rate = 100K` 등)을 한곳에서 조정 가능. 자세히는 [사용설명서 §8.5](docs/howToUse/user_manual_260513.md#85-설정-파일-settingsini).
+
 플래그 일부:
 - `--quality {144p,240p,360p,480p,720p,1080p,1440p,2160p,best,audio}` — 화질 프리셋
 - `--codec {auto,h264,vp9,av1}` — 비디오 코덱 선호

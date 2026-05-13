@@ -1,6 +1,6 @@
 # YCollector 사용설명서
 
-- **문서 버전**: 1.2 (Phase 0 Day 3 기준 — 이어받기 / 취소 / 멈춤 대응)
+- **문서 버전**: 1.3 (Phase 0 Day 3 기준 — settings.ini 추가)
 - **작성일**: 2026-05-13 (YYMMDD: 260513), 최종 갱신 2026-05-13
 - **대상**: 데스크톱(Windows 우선) 사용자
 - **연관**:
@@ -750,6 +750,119 @@ YCollector가 다른 OSS yt-dlp 래퍼와 다른 점. **현재 Phase 0에는 없
 | **D6** | 로컬 Whisper 전사 | (시장 빈틈) | 3 |
 
 상세: [plan §10.5 차별화 전략](../plan/youtube_downloader_plan_260508.md#105-차별화-전략-differentiation-strategy).
+
+---
+
+## 8.5 설정 파일 (settings.ini)
+
+화질, 포맷, 자막, 멈춤 대응 등 **모든 기본값을 settings.ini에 적어두면 매번 플래그를 칠 필요 없습니다**.
+
+### 파일 위치 (우선순위 순)
+
+1. CLI 인자 `--config PATH` (최우선)
+2. 사용자 config dir
+   - Windows: `%APPDATA%\YCollector\settings.ini`
+   - macOS:   `~/Library/Application Support/YCollector/settings.ini`
+   - Linux:   `~/.config/ycollector/settings.ini`
+3. 작업 디렉토리의 `./settings.ini` (저장소에 기본 파일 제공)
+4. 코드 기본값 (위 셋 다 없을 때)
+
+### 기본 제공 내용 (저장소 `settings.ini`)
+
+```ini
+[defaults]
+quality = 1080p          # 144p/240p/360p/480p/720p/1080p/1440p/2160p/best/audio
+codec = auto             # auto/h264/vp9/av1
+audio = best             # best/m4a/opus
+container = mp4          # mp4/mkv/webm
+
+[output]
+output_dir = downloads
+embed_subs = true
+sub_langs = ko,en
+cookies_from_browser =   # chrome/firefox/edge/brave, 빈 값 = 사용 안 함
+
+[network]
+# Phase 0 Day 3 멈춤 대응 — 적극적 기본값.
+socket_timeout = 30       # 30초 무응답이면 abort+retry
+retries = 10
+fragment_retries = 10
+throttled_rate = 100K     # 100 KB/s 미만으로 떨어지면 connection 재시작
+```
+
+→ `throttled_rate = 100K`이 기본으로 활성화되어 있어, **별도 명령 없이도** YouTube의 의도적 throttling에 자동 대응합니다.
+
+### 우선순위
+
+```
+CLI 플래그  >  --config PATH  >  사용자 config dir  >  ./settings.ini  >  코드 기본값
+```
+
+즉 `settings.ini`의 `quality = 1440p`을 적어두고 한 번만 1080p로 받고 싶다면:
+
+```powershell
+uv run ycollector URL --quality 1080p   # 이 한 번만 1080p
+```
+
+### 개인 설정 (저장소 파일을 안 건드리고)
+
+저장소의 `settings.ini`는 git이 추적합니다. 개인 설정은 사용자 config dir에 두는 게 깔끔합니다.
+
+```powershell
+# Windows — 한 번만 실행
+New-Item -ItemType Directory -Force $env:APPDATA\YCollector | Out-Null
+Copy-Item settings.ini $env:APPDATA\YCollector\settings.ini
+
+# 이제 이쪽을 편집하면 됩니다
+notepad $env:APPDATA\YCollector\settings.ini
+```
+
+```bash
+# macOS / Linux
+mkdir -p ~/.config/ycollector
+cp settings.ini ~/.config/ycollector/settings.ini
+nano ~/.config/ycollector/settings.ini
+```
+
+### 흔한 커스터마이즈
+
+**아카이비스트 (최고 화질, 모든 자막)**:
+```ini
+[defaults]
+quality = best
+codec = auto
+container = mkv
+
+[output]
+sub_langs = ko,en,ja,zh,es,fr
+```
+
+**음악만 (mp3 변환은 Phase 1)**:
+```ini
+[defaults]
+quality = audio
+audio = m4a
+
+[output]
+embed_subs = false
+```
+
+**느린 인터넷 (timeout 늘리고 throttle 감지 끔)**:
+```ini
+[network]
+socket_timeout = 120
+throttled_rate =
+retries = 20
+```
+
+**더 공격적 (멈춤이 잦은 환경)**:
+```ini
+[network]
+socket_timeout = 15
+throttled_rate = 200K
+retries = 30
+fragment_retries = 20
+```
 
 ---
 

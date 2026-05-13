@@ -466,6 +466,14 @@ body {
 </li>
 <li><a href="#7-roadmap">7. 향후 기능 (Roadmap 요약)</a></li>
 <li><a href="#8-6-d1d6">8. 차별화 6가지 (D1~D6 — 미래 가치)</a></li>
+<li><a href="#85-settingsini">8.5 설정 파일 (settings.ini)</a><ul>
+<li><a href="#_1">파일 위치 (우선순위 순)</a></li>
+<li><a href="#settingsini">기본 제공 내용 (저장소 settings.ini)</a></li>
+<li><a href="#_2">우선순위</a></li>
+<li><a href="#_3">개인 설정 (저장소 파일을 안 건드리고)</a></li>
+<li><a href="#_4">흔한 커스터마이즈</a></li>
+</ul>
+</li>
 <li><a href="#9">9. 이어받기 / 취소 / 멈춤 대응</a><ul>
 <li><a href="#91-resume">9.1 이어받기 (Resume)</a></li>
 <li><a href="#92">9.2 취소</a></li>
@@ -486,7 +494,7 @@ body {
     </div>
     <h1 id="ycollector">YCollector 사용설명서<a class="headerlink" href="#ycollector" title="Permanent link">¶</a></h1>
 <ul>
-<li><strong>문서 버전</strong>: 1.2 (Phase 0 Day 3 기준 — 이어받기 / 취소 / 멈춤 대응)</li>
+<li><strong>문서 버전</strong>: 1.3 (Phase 0 Day 3 기준 — settings.ini 추가)</li>
 <li><strong>작성일</strong>: 2026-05-13 (YYMMDD: 260513), 최종 갱신 2026-05-13</li>
 <li><strong>대상</strong>: 데스크톱(Windows 우선) 사용자</li>
 <li><strong>연관</strong>:
@@ -1374,6 +1382,100 @@ uv run yt-dlp --live-from-start --hls-use-mpegts URL</code></p>
 </tbody>
 </table>
 <p>상세: <a href="../plan/youtube_downloader_plan_260508.html#105-차별화-전략-differentiation-strategy">plan §10.5 차별화 전략</a>.</p>
+<hr />
+<h2 id="85-settingsini">8.5 설정 파일 (settings.ini)<a class="headerlink" href="#85-settingsini" title="Permanent link">¶</a></h2>
+<p>화질, 포맷, 자막, 멈춤 대응 등 <strong>모든 기본값을 settings.ini에 적어두면 매번 플래그를 칠 필요 없습니다</strong>.</p>
+<h3 id="_1">파일 위치 (우선순위 순)<a class="headerlink" href="#_1" title="Permanent link">¶</a></h3>
+<ol>
+<li>CLI 인자 <code>--config PATH</code> (최우선)</li>
+<li>사용자 config dir
+   - Windows: <code>%APPDATA%\YCollector\settings.ini</code>
+   - macOS:   <code>~/Library/Application Support/YCollector/settings.ini</code>
+   - Linux:   <code>~/.config/ycollector/settings.ini</code></li>
+<li>작업 디렉토리의 <code>./settings.ini</code> (저장소에 기본 파일 제공)</li>
+<li>코드 기본값 (위 셋 다 없을 때)</li>
+</ol>
+<h3 id="settingsini">기본 제공 내용 (저장소 <code>settings.ini</code>)<a class="headerlink" href="#settingsini" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">[defaults]</span>
+<span class="na">quality</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">1080p</span><span class="w">          </span><span class="c1"># 144p/240p/360p/480p/720p/1080p/1440p/2160p/best/audio</span>
+<span class="na">codec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">auto</span><span class="w">             </span><span class="c1"># auto/h264/vp9/av1</span>
+<span class="na">audio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">best</span><span class="w">             </span><span class="c1"># best/m4a/opus</span>
+<span class="na">container</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">mp4</span><span class="w">          </span><span class="c1"># mp4/mkv/webm</span>
+
+<span class="k">[output]</span>
+<span class="na">output_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">downloads</span>
+<span class="na">embed_subs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">true</span>
+<span class="na">sub_langs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">ko,en</span>
+<span class="na">cookies_from_browser</span><span class="w"> </span><span class="o">=</span><span class="w">   </span><span class="c1"># chrome/firefox/edge/brave, 빈 값 = 사용 안 함</span>
+
+<span class="k">[network]</span>
+<span class="c1"># Phase 0 Day 3 멈춤 대응 — 적극적 기본값.</span>
+<span class="na">socket_timeout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">30</span><span class="w">       </span><span class="c1"># 30초 무응답이면 abort+retry</span>
+<span class="na">retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">10</span>
+<span class="na">fragment_retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">10</span>
+<span class="na">throttled_rate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">100K</span><span class="w">     </span><span class="c1"># 100 KB/s 미만으로 떨어지면 connection 재시작</span>
+</code></pre></div>
+
+<p>→ <code>throttled_rate = 100K</code>이 기본으로 활성화되어 있어, <strong>별도 명령 없이도</strong> YouTube의 의도적 throttling에 자동 대응합니다.</p>
+<h3 id="_2">우선순위<a class="headerlink" href="#_2" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>CLI 플래그  &gt;  --config PATH  &gt;  사용자 config dir  &gt;  ./settings.ini  &gt;  코드 기본값
+</code></pre></div>
+
+<p>즉 <code>settings.ini</code>의 <code>quality = 1440p</code>을 적어두고 한 번만 1080p로 받고 싶다면:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-quality</span> <span class="n">1080p</span>   <span class="c"># 이 한 번만 1080p</span>
+</code></pre></div>
+
+<h3 id="_3">개인 설정 (저장소 파일을 안 건드리고)<a class="headerlink" href="#_3" title="Permanent link">¶</a></h3>
+<p>저장소의 <code>settings.ini</code>는 git이 추적합니다. 개인 설정은 사용자 config dir에 두는 게 깔끔합니다.</p>
+<div class="codehilite"><pre><span></span><code><span class="c"># Windows — 한 번만 실행</span>
+<span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Force</span> <span class="nv">$env:APPDATA</span><span class="p">\</span><span class="n">YCollector</span> <span class="p">|</span> <span class="nb">Out-Null</span>
+<span class="nb">Copy-Item</span> <span class="n">settings</span><span class="p">.</span><span class="n">ini</span> <span class="nv">$env:APPDATA</span><span class="p">\</span><span class="n">YCollector</span><span class="p">\</span><span class="n">settings</span><span class="p">.</span><span class="n">ini</span>
+
+<span class="c"># 이제 이쪽을 편집하면 됩니다</span>
+<span class="n">notepad</span> <span class="nv">$env:APPDATA</span><span class="p">\</span><span class="n">YCollector</span><span class="p">\</span><span class="n">settings</span><span class="p">.</span><span class="n">ini</span>
+</code></pre></div>
+
+<div class="codehilite"><pre><span></span><code><span class="c1"># macOS / Linux</span>
+mkdir<span class="w"> </span>-p<span class="w"> </span>~/.config/ycollector
+cp<span class="w"> </span>settings.ini<span class="w"> </span>~/.config/ycollector/settings.ini
+nano<span class="w"> </span>~/.config/ycollector/settings.ini
+</code></pre></div>
+
+<h3 id="_4">흔한 커스터마이즈<a class="headerlink" href="#_4" title="Permanent link">¶</a></h3>
+<p><strong>아카이비스트 (최고 화질, 모든 자막)</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[defaults]</span>
+<span class="na">quality</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">best</span>
+<span class="na">codec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">auto</span>
+<span class="na">container</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">mkv</span>
+
+<span class="k">[output]</span>
+<span class="na">sub_langs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">ko,en,ja,zh,es,fr</span>
+</code></pre></div>
+
+<p><strong>음악만 (mp3 변환은 Phase 1)</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[defaults]</span>
+<span class="na">quality</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">audio</span>
+<span class="na">audio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">m4a</span>
+
+<span class="k">[output]</span>
+<span class="na">embed_subs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">false</span>
+</code></pre></div>
+
+<p><strong>느린 인터넷 (timeout 늘리고 throttle 감지 끔)</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[network]</span>
+<span class="na">socket_timeout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">120</span>
+<span class="na">throttled_rate</span><span class="w"> </span><span class="o">=</span>
+<span class="na">retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">20</span>
+</code></pre></div>
+
+<p><strong>더 공격적 (멈춤이 잦은 환경)</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[network]</span>
+<span class="na">socket_timeout</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">15</span>
+<span class="na">throttled_rate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">200K</span>
+<span class="na">retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">30</span>
+<span class="na">fragment_retries</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">20</span>
+</code></pre></div>
+
 <hr />
 <h2 id="9">9. 이어받기 / 취소 / 멈춤 대응<a class="headerlink" href="#9" title="Permanent link">¶</a></h2>
 <h3 id="91-resume">9.1 이어받기 (Resume)<a class="headerlink" href="#91-resume" title="Permanent link">¶</a></h3>

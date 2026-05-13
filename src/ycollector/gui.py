@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from ycollector import __version__
+from ycollector.config import Settings, load_settings
 from ycollector.engine import (
     AudioPref,
     CodecPref,
@@ -90,6 +91,11 @@ class DownloadWorker(QObject):
         write_subs: bool,
         sub_langs: list[str],
         cookies_from_browser: str | None,
+        *,
+        socket_timeout: int = 30,
+        retries: int = 10,
+        fragment_retries: int = 10,
+        throttled_rate: str | None = None,
     ) -> None:
         super().__init__()
         self._urls = urls
@@ -99,6 +105,10 @@ class DownloadWorker(QObject):
         self._write_subs = write_subs
         self._sub_langs = sub_langs
         self._cookies_from_browser = cookies_from_browser
+        self._socket_timeout = socket_timeout
+        self._retries = retries
+        self._fragment_retries = fragment_retries
+        self._throttled_rate = throttled_rate
         self._cancelled = False
         self._proc: subprocess.Popen[str] | None = None
 
@@ -138,6 +148,10 @@ class DownloadWorker(QObject):
                     write_subs=self._write_subs,
                     sub_langs=self._sub_langs,
                     cookies_from_browser=self._cookies_from_browser,
+                    socket_timeout=self._socket_timeout,
+                    retries=self._retries,
+                    fragment_retries=self._fragment_retries,
+                    throttled_rate=self._throttled_rate,
                     on_progress=self.progress.emit,
                     on_log=self.log.emit,
                     on_process=self._capture_proc,
@@ -226,10 +240,19 @@ class FormatPanel(QGroupBox):
     changed = Signal()             # emitted whenever selection or override changes
     browse_requested = Signal()    # user clicked "가용 포맷 보기"
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         super().__init__("포맷")
         self._override: str | None = None
         self._build_ui()
+        if settings is not None:
+            self.apply_settings(settings)
+
+    def apply_settings(self, s: Settings) -> None:
+        self.quality.set_value(s.quality)
+        self.container.set_value(s.container)
+        self.codec.set_value(s.codec)
+        self.audio.set_value(s.audio)
+        self._refresh()
 
     def _build_ui(self) -> None:
         self.quality = _RadioRow(
@@ -355,10 +378,20 @@ class FormatPanel(QGroupBox):
 class OutputPanel(QGroupBox):
     """Output folder + subtitle settings."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         super().__init__("출력")
-        self.output_dir = (Path.cwd() / "downloads").resolve()
+        default_dir = settings.output_dir if settings else "downloads"
+        self.output_dir = Path(default_dir).expanduser().resolve()
         self._build_ui()
+        if settings is not None:
+            self._apply_settings(settings)
+
+    def _apply_settings(self, s: Settings) -> None:
+        self.subs_check.setChecked(s.embed_subs)
+        self.sub_langs.setText(",".join(s.sub_langs))
+        self.sub_langs.setEnabled(s.embed_subs)
+        if s.cookies_from_browser:
+            self.cookies.setText(s.cookies_from_browser)
 
     def _build_ui(self) -> None:
         self.dir_label = QLabel(str(self.output_dir))
@@ -585,9 +618,12 @@ class FormatBrowserDialog(QDialog):
 # Main window
 # ────────────────────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None,
+                 settings_source: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle(f"YCollector v{__version__}")
+        self._settings = settings or Settings()
+        title_suffix = f" — settings: {settings_source.name}" if settings_source else ""
+        self.setWindowTitle(f"YCollector v{__version__}{title_suffix}")
         self.resize(1080, 720)
 
         self.url_box = QPlainTextEdit()
@@ -598,11 +634,11 @@ class MainWindow(QMainWindow):
         self.url_box.setFont(QFont("Consolas", 10))
         self.url_box.setMaximumHeight(140)
 
-        self.format_panel = FormatPanel()
+        self.format_panel = FormatPanel(self._settings)
         self.format_panel.browse_requested.connect(self._open_format_browser)
         self.format_panel.changed.connect(self._update_status_hint)
 
-        self.output_panel = OutputPanel()
+        self.output_panel = OutputPanel(self._settings)
 
         self.dl_btn = QPushButton("지금 다운로드")
         self.dl_btn.setMinimumHeight(36)
@@ -698,6 +734,10 @@ class MainWindow(QMainWindow):
             write_subs=bool(self.output_panel.sub_languages()),
             sub_langs=self.output_panel.sub_languages(),
             cookies_from_browser=self.output_panel.cookies_browser(),
+            socket_timeout=self._settings.socket_timeout,
+            retries=self._settings.retries,
+            fragment_retries=self._settings.fragment_retries,
+            throttled_rate=self._settings.throttled_rate,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -745,8 +785,9 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    settings, source = load_settings()
     app = QApplication(sys.argv)
-    win = MainWindow()
+    win = MainWindow(settings, source)
     win.show()
     return app.exec()
 

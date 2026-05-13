@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from ycollector import __version__
+from ycollector.config import Settings, load_settings
 from ycollector.engine import (
     AudioPref,
     CodecPref,
@@ -90,7 +91,8 @@ def _read_urls(args: argparse.Namespace) -> list[str]:
     return urls
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser(s: Settings) -> argparse.ArgumentParser:
+    """Build the CLI parser using ``s`` (from settings.ini) as defaults."""
     p = argparse.ArgumentParser(
         prog="ycollector",
         description="YouTube video collector — yt-dlp wrapper (Phase 0)",
@@ -99,40 +101,58 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="URL(s) to download. Use '-' to read additional URLs from stdin.")
     p.add_argument("--from", dest="from_", metavar="FILE",
                    help="Read URLs from a file (one per line, '#' for comments).")
-    p.add_argument("-o", "--output-dir", default=Path("downloads"), type=Path,
-                   help="Output directory (default: ./downloads).")
+    p.add_argument("--config", metavar="PATH", type=Path,
+                   help="Use this settings.ini instead of the default search "
+                        "(./settings.ini, %%APPDATA%%\\YCollector\\settings.ini, ...).")
+    p.add_argument("-o", "--output-dir", type=Path, default=Path(s.output_dir),
+                   help=f"Output directory (default from settings.ini: {s.output_dir}).")
     p.add_argument("-f", "--format", default=None,
                    help="Raw yt-dlp format selector (overrides --quality / --codec / --audio).")
-    p.add_argument("--quality", default=Quality.P1080.value,
+    p.add_argument("--quality", default=s.quality,
                    choices=[q.value for q in Quality],
-                   help="Quality preset: 144p/240p/360p/480p/720p/1080p/1440p/2160p/best/audio "
-                        "(default: 1080p).")
-    p.add_argument("--codec", default=CodecPref.AUTO.value,
+                   help=f"Quality preset (default from settings.ini: {s.quality}).")
+    p.add_argument("--codec", default=s.codec,
                    choices=[c.value for c in CodecPref],
-                   help="Video codec preference (default: auto).")
-    p.add_argument("--audio", default=AudioPref.BEST.value,
+                   help=f"Video codec preference (default from settings.ini: {s.codec}).")
+    p.add_argument("--audio", default=s.audio,
                    choices=[a.value for a in AudioPref],
-                   help="Audio preference (default: best).")
-    p.add_argument("--container", default="mp4", choices=["mp4", "mkv", "webm"],
-                   help="Output container (default: mp4).")
+                   help=f"Audio preference (default from settings.ini: {s.audio}).")
+    p.add_argument("--container", default=s.container, choices=["mp4", "mkv", "webm"],
+                   help=f"Output container (default from settings.ini: {s.container}).")
     p.add_argument("--no-subs", action="store_true",
                    help="Skip subtitle download / embed.")
-    p.add_argument("--sub-langs", default="ko,en",
-                   help="Comma-separated subtitle languages (default: ko,en).")
+    p.add_argument("--sub-langs", default=",".join(s.sub_langs),
+                   help=f"Comma-separated subtitle languages "
+                        f"(default from settings.ini: {','.join(s.sub_langs)}).")
     p.add_argument("--cookies-from-browser", metavar="BROWSER",
+                   default=s.cookies_from_browser,
                    help="Import cookies from browser (chrome, firefox, edge, brave, ...).")
-    # ── stall mitigation ───────────────────────────────────────────────────
-    p.add_argument("--socket-timeout", type=int, default=30, metavar="SEC",
-                   help="Abort hung sockets after N seconds and retry (default: 30).")
-    p.add_argument("--retries", type=int, default=10, metavar="N",
-                   help="Retries for failed connections (default: 10).")
-    p.add_argument("--fragment-retries", type=int, default=10, metavar="N",
-                   help="Retries for failed DASH/HLS fragments (default: 10).")
-    p.add_argument("--throttled-rate", metavar="RATE",
-                   help="If download rate falls below RATE (e.g. '100K'), restart "
-                        "the connection. Useful against YouTube throttling.")
+    # ── stall mitigation (defaults from settings.ini) ──────────────────────
+    p.add_argument("--socket-timeout", type=int, default=s.socket_timeout, metavar="SEC",
+                   help=f"Abort hung sockets after N seconds and retry "
+                        f"(default from settings.ini: {s.socket_timeout}).")
+    p.add_argument("--retries", type=int, default=s.retries, metavar="N",
+                   help=f"Retries for failed connections (default from settings.ini: {s.retries}).")
+    p.add_argument("--fragment-retries", type=int, default=s.fragment_retries, metavar="N",
+                   help=f"Retries for failed DASH/HLS fragments "
+                        f"(default from settings.ini: {s.fragment_retries}).")
+    p.add_argument("--throttled-rate", metavar="RATE", default=s.throttled_rate,
+                   help=f"If download rate falls below RATE (e.g. '100K'), restart "
+                        f"the connection (default from settings.ini: {s.throttled_rate or 'off'}).")
     p.add_argument("--version", action="version", version=f"ycollector {__version__}")
     return p
+
+
+def _preparse_config(argv: list[str] | None) -> Path | None:
+    """Sniff just ``--config PATH`` from argv so we can load settings before
+    building the full parser (which uses settings as defaults)."""
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=Path)
+    try:
+        known, _ = pre.parse_known_args(argv)
+    except SystemExit:
+        return None
+    return known.config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -144,8 +164,13 @@ def main(argv: list[str] | None = None) -> int:
             except (AttributeError, OSError):
                 pass
 
-    parser = _build_parser()
+    settings, settings_path = load_settings(_preparse_config(argv))
+    parser = _build_parser(settings)
     args = parser.parse_args(argv)
+    if settings_path is not None:
+        print(f"settings: {settings_path}", file=sys.stderr)
+    else:
+        print("settings: (none — using code defaults)", file=sys.stderr)
 
     urls = _read_urls(args)
     if not urls:
