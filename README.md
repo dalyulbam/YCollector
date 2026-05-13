@@ -18,31 +18,54 @@ YouTube 영상을 손쉽게 다운로드하기 위한 데스크톱 도구. **yt-
 # 1. 의존성 설치 (.venv 자동 생성)
 uv sync
 
-# 2. CLI — 단일 URL
+# 2. CLI — 단일 URL (기본: 1080p mp4 + ko/en 자막)
 uv run ycollector https://www.youtube.com/watch?v=dQw4w9WgXcQ
 
-# 3. CLI — 여러 URL
-uv run ycollector URL1 URL2 URL3 -o D:/Videos --container mkv
+# 3. CLI — 화질/코덱 프리셋
+uv run ycollector URL --quality 2160p --codec av1 --container mkv
 
-# 4. CLI — 파일에서 (한 줄에 하나, '#' 주석)
+# 4. CLI — 오디오만
+uv run ycollector URL --quality audio --audio m4a --no-subs
+
+# 5. CLI — 파일에서 (한 줄에 하나, '#' 주석)
 uv run ycollector --from urls.txt
 
-# 5. CLI — stdin 파이프
+# 6. CLI — stdin 파이프
 Get-Content urls.txt | uv run ycollector -
 
-# 6. GUI
+# 7. GUI (radio 버튼 + "가용 포맷 보기" 다이얼로그)
 uv run ycollector-gui
 ```
 
-기본 동작: `bv*[height<=1080]+ba/b[height<=1080]` (1080p mp4) + ko/en 자막 임베드 → `./downloads/`.
-
 플래그 일부:
-- `-f / --format` — yt-dlp 포맷 셀렉터
-- `-o / --output-dir` — 출력 폴더 (기본 `./downloads`)
+- `--quality {144p,240p,360p,480p,720p,1080p,1440p,2160p,best,audio}` — 화질 프리셋
+- `--codec {auto,h264,vp9,av1}` — 비디오 코덱 선호
+- `--audio {best,m4a,opus}` — 오디오 선호
 - `--container {mp4,mkv,webm}` — 머지 컨테이너
+- `-f / --format SPEC` — raw yt-dlp 포맷 셀렉터 (위 프리셋 모두 무시)
+- `-o / --output-dir` — 출력 폴더 (기본 `./downloads`)
 - `--no-subs` — 자막 다운로드 스킵
 - `--sub-langs ko,en,ja` — 자막 언어
 - `--cookies-from-browser chrome` — 비공개/연령제한/멤버십 (브라우저는 닫혀 있어야 함)
+
+### 단일 .exe 빌드 (uv 없이 더블클릭으로 실행하기)
+
+```powershell
+# 빌드 의존성 설치
+uv sync --extra build
+
+# Nuitka로 단일 .exe 빌드 (권장 — 빠른 시작, AV 오탐 ↓)
+uv run python scripts/build_exe.py
+
+# 또는 PyInstaller (대안)
+uv run python scripts/build_exe.py --mode pyinstaller
+
+# CLI .exe도 같이
+uv run python scripts/build_exe.py --target both
+```
+
+결과: `dist/gui.dist/YCollector.exe` (Nuitka) 또는 `dist/YCollector/YCollector.exe` (PyInstaller).
+바로가기를 만들어 시작 메뉴 / 바탕화면에 고정하면 됩니다.
 
 ---
 

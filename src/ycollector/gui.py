@@ -1,46 +1,72 @@
-"""YCollector GUI — Phase 0 Day 1 (PySide6).
+"""YCollector GUI — Phase 0 Day 2 (PySide6).
 
-Minimal main window:
+Improvements over Day 1:
+  - Replaced raw QLineEdit format spec with structured controls
+    (radio groups for quality/container/codec/audio).
+  - Added "가용 포맷 보기" dialog that calls ``yt-dlp -J URL`` in a worker
+    thread and lets the user pick a specific format from a sortable table.
+  - Output settings (folder, subtitles) split into their own panel.
 
-  - URL paste box (multi-line, '#' comments)
-  - Format / output directory selectors
-  - Single "지금 다운로드" button (sequential, no real queue yet)
-  - Live log
-
-Queue, library, preset picker, transcribe, etc. arrive in later phases.
-For full UX wireframe see plan §11.5.2.
+Coming in later phases (per plan §11.5.2):
+  - Persistent settings (Phase 1)
+  - Queue / library views (Phase 1~2)
+  - Preset profiles + channel overrides (D2)
+  - Guided PoToken/cookie wizard (D3)
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QGridLayout,
+    QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from ycollector import __version__
-from ycollector.engine import DownloadError, ProgressEvent, YtdlpEngine
+from ycollector.engine import (
+    AudioPref,
+    CodecPref,
+    Container,
+    DownloadError,
+    FormatChoice,
+    ProgressEvent,
+    Quality,
+    YtdlpEngine,
+    compose_format_spec,
+    spec_for_format_id,
+)
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Worker threads
+# ────────────────────────────────────────────────────────────────────────────
 class DownloadWorker(QObject):
-    """Sequentially download a list of URLs using ``YtdlpEngine``.
-
-    Lives on a dedicated ``QThread``; signals marshal updates to the UI thread.
-    """
+    """Sequentially download URLs using ``YtdlpEngine``."""
 
     progress = Signal(object)            # ProgressEvent
     log = Signal(str)
@@ -48,11 +74,24 @@ class DownloadWorker(QObject):
     item_failed = Signal(str, str, str)  # url, category, message
     all_done = Signal()
 
-    def __init__(self, urls: list[str], output_dir: Path, format_: str) -> None:
+    def __init__(
+        self,
+        urls: list[str],
+        output_dir: Path,
+        format_spec: str,
+        container: str,
+        write_subs: bool,
+        sub_langs: list[str],
+        cookies_from_browser: str | None,
+    ) -> None:
         super().__init__()
         self._urls = urls
         self._output_dir = output_dir
-        self._format = format_
+        self._format = format_spec
+        self._container = container
+        self._write_subs = write_subs
+        self._sub_langs = sub_langs
+        self._cookies_from_browser = cookies_from_browser
 
     def run(self) -> None:
         try:
@@ -70,6 +109,10 @@ class DownloadWorker(QObject):
                     url,
                     format=self._format,
                     output_dir=self._output_dir,
+                    merge_format=self._container,
+                    write_subs=self._write_subs,
+                    sub_langs=self._sub_langs,
+                    cookies_from_browser=self._cookies_from_browser,
                     on_progress=self.progress.emit,
                     on_log=self.log.emit,
                 )
@@ -79,90 +122,535 @@ class DownloadWorker(QObject):
         self.all_done.emit()
 
 
+class FormatFetchWorker(QObject):
+    done = Signal(dict, list)   # info, formats
+    failed = Signal(str, str)   # category, message
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            engine = YtdlpEngine()
+        except FileNotFoundError as exc:
+            self.failed.emit("missing", str(exc))
+            return
+        try:
+            info, formats = engine.list_formats(self._url)
+            self.done.emit(info, formats)
+        except DownloadError as exc:
+            self.failed.emit(exc.category, exc.message)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Format panel — radio groups + spec preview + "가용 포맷 보기" button
+# ────────────────────────────────────────────────────────────────────────────
+class _RadioRow(QWidget):
+    """A horizontal row of radio buttons backed by a QButtonGroup."""
+
+    selected = Signal(str)  # the value of the chosen radio (Enum.value)
+
+    def __init__(self, options: list[tuple[str, str]], default_value: str) -> None:
+        super().__init__()
+        self._group = QButtonGroup(self)
+        self._buttons: dict[str, QRadioButton] = {}
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        for value, label in options:
+            btn = QRadioButton(label)
+            btn.setProperty("value", value)
+            self._group.addButton(btn)
+            self._buttons[value] = btn
+            layout.addWidget(btn)
+            if value == default_value:
+                btn.setChecked(True)
+        layout.addStretch(1)
+        self._group.buttonClicked.connect(
+            lambda b: self.selected.emit(str(b.property("value")))
+        )
+
+    def value(self) -> str:
+        for value, btn in self._buttons.items():
+            if btn.isChecked():
+                return value
+        return ""
+
+    def set_value(self, value: str) -> None:
+        if value in self._buttons:
+            self._buttons[value].setChecked(True)
+
+    def set_enabled_all(self, enabled: bool) -> None:
+        for btn in self._buttons.values():
+            btn.setEnabled(enabled)
+
+
+class FormatPanel(QGroupBox):
+    """Structured format selector — produces a yt-dlp ``-f`` spec."""
+
+    changed = Signal()             # emitted whenever selection or override changes
+    browse_requested = Signal()    # user clicked "가용 포맷 보기"
+
+    def __init__(self) -> None:
+        super().__init__("포맷")
+        self._override: str | None = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.quality = _RadioRow(
+            [
+                (Quality.P360.value, "360p"),
+                (Quality.P480.value, "480p"),
+                (Quality.P720.value, "720p"),
+                (Quality.P1080.value, "1080p"),
+                (Quality.P1440.value, "1440p"),
+                (Quality.P2160.value, "4K"),
+                (Quality.BEST.value, "최고"),
+                (Quality.AUDIO.value, "오디오만"),
+            ],
+            default_value=Quality.P1080.value,
+        )
+        self.container = _RadioRow(
+            [
+                (Container.MP4.value, "mp4"),
+                (Container.MKV.value, "mkv"),
+                (Container.WEBM.value, "webm"),
+            ],
+            default_value=Container.MP4.value,
+        )
+        self.codec = _RadioRow(
+            [
+                (CodecPref.AUTO.value, "자동"),
+                (CodecPref.H264.value, "H.264"),
+                (CodecPref.VP9.value, "VP9"),
+                (CodecPref.AV1.value, "AV1"),
+            ],
+            default_value=CodecPref.AUTO.value,
+        )
+        self.audio = _RadioRow(
+            [
+                (AudioPref.BEST.value, "최고"),
+                (AudioPref.M4A.value, "m4a (AAC)"),
+                (AudioPref.OPUS.value, "opus"),
+            ],
+            default_value=AudioPref.BEST.value,
+        )
+
+        for row in (self.quality, self.container, self.codec, self.audio):
+            row.selected.connect(lambda *_: self._refresh())
+
+        self.browse_btn = QPushButton("가용 포맷 보기…")
+        self.browse_btn.setToolTip("URL의 실제 가용 비디오/오디오 포맷을 yt-dlp로 조회")
+        self.browse_btn.clicked.connect(self.browse_requested.emit)
+
+        self.clear_override_btn = QPushButton("오버라이드 해제")
+        self.clear_override_btn.setVisible(False)
+        self.clear_override_btn.clicked.connect(self.clear_override)
+
+        self.spec_label = QLabel()
+        self.spec_label.setStyleSheet(
+            "color: #555; font-family: 'JetBrains Mono','Consolas',monospace; font-size: 11px;"
+        )
+        self.spec_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        grid.setVerticalSpacing(6)
+        grid.addWidget(QLabel("화질:"),     0, 0)
+        grid.addWidget(self.quality,        0, 1, 1, 2)
+        grid.addWidget(QLabel("컨테이너:"), 1, 0)
+        grid.addWidget(self.container,      1, 1, 1, 2)
+        grid.addWidget(QLabel("비디오 코덱:"), 2, 0)
+        grid.addWidget(self.codec,          2, 1, 1, 2)
+        grid.addWidget(QLabel("오디오:"),   3, 0)
+        grid.addWidget(self.audio,          3, 1, 1, 2)
+
+        bottom = QHBoxLayout()
+        bottom.addWidget(self.browse_btn)
+        bottom.addWidget(self.clear_override_btn)
+        bottom.addStretch(1)
+        bottom.addWidget(self.spec_label)
+
+        outer = QVBoxLayout(self)
+        outer.addLayout(grid)
+        outer.addSpacing(4)
+        outer.addLayout(bottom)
+        self._refresh()
+
+    # ── public API ─────────────────────────────────────────────────────────
+    def choice(self) -> FormatChoice:
+        return FormatChoice(
+            quality=Quality(self.quality.value() or Quality.P1080.value),
+            container=Container(self.container.value() or Container.MP4.value),
+            codec=CodecPref(self.codec.value() or CodecPref.AUTO.value),
+            audio=AudioPref(self.audio.value() or AudioPref.BEST.value),
+        )
+
+    def current_spec(self) -> str:
+        return self._override or compose_format_spec(self.choice())
+
+    def current_container(self) -> str:
+        return self.container.value() or Container.MP4.value
+
+    def set_override(self, spec: str) -> None:
+        self._override = spec
+        for row in (self.quality, self.container, self.codec, self.audio):
+            row.set_enabled_all(False)
+        self.clear_override_btn.setVisible(True)
+        self._refresh()
+
+    def clear_override(self) -> None:
+        self._override = None
+        for row in (self.quality, self.container, self.codec, self.audio):
+            row.set_enabled_all(True)
+        self.clear_override_btn.setVisible(False)
+        self._refresh()
+
+    # ── internal ──────────────────────────────────────────────────────────
+    def _refresh(self) -> None:
+        spec = self.current_spec()
+        prefix = "수동" if self._override else "spec"
+        self.spec_label.setText(f"{prefix}: {spec}")
+        self.changed.emit()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Output panel
+# ────────────────────────────────────────────────────────────────────────────
+class OutputPanel(QGroupBox):
+    """Output folder + subtitle settings."""
+
+    def __init__(self) -> None:
+        super().__init__("출력")
+        self.output_dir = (Path.cwd() / "downloads").resolve()
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.dir_label = QLabel(str(self.output_dir))
+        self.dir_label.setStyleSheet("color: #444;")
+        self.dir_label.setWordWrap(True)
+
+        pick_btn = QPushButton("폴더…")
+        pick_btn.clicked.connect(self._pick)
+
+        self.subs_check = QCheckBox("자막 다운로드 + 임베드")
+        self.subs_check.setChecked(True)
+        self.sub_langs = QLineEdit("ko,en")
+        self.sub_langs.setMaximumWidth(160)
+        self.sub_langs.setPlaceholderText("ko,en,ja")
+        self.subs_check.toggled.connect(self.sub_langs.setEnabled)
+
+        self.cookies = QLineEdit()
+        self.cookies.setPlaceholderText("(예: chrome / firefox / edge — 비워두면 사용 안 함)")
+
+        grid = QGridLayout(self)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+
+        grid.addWidget(QLabel("폴더:"),       0, 0)
+        grid.addWidget(self.dir_label,        0, 1)
+        grid.addWidget(pick_btn,              0, 2)
+
+        sub_row = QHBoxLayout()
+        sub_row.addWidget(self.subs_check)
+        sub_row.addWidget(QLabel("언어:"))
+        sub_row.addWidget(self.sub_langs)
+        sub_row.addStretch(1)
+        sub_w = QWidget()
+        sub_w.setLayout(sub_row)
+        grid.addWidget(QLabel("자막:"),       1, 0)
+        grid.addWidget(sub_w,                 1, 1, 1, 2)
+
+        grid.addWidget(QLabel("쿠키:"),       2, 0)
+        grid.addWidget(self.cookies,          2, 1, 1, 2)
+
+    def _pick(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "출력 폴더 선택", str(self.output_dir))
+        if path:
+            self.output_dir = Path(path)
+            self.dir_label.setText(path)
+
+    def sub_languages(self) -> list[str]:
+        if not self.subs_check.isChecked():
+            return []
+        return [s.strip() for s in self.sub_langs.text().split(",") if s.strip()]
+
+    def cookies_browser(self) -> str | None:
+        v = self.cookies.text().strip().lower()
+        return v or None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Format browser dialog
+# ────────────────────────────────────────────────────────────────────────────
+_FMT_COLUMNS = ("종류", "ID", "확장자", "해상도", "FPS", "VCodec", "ACodec", "크기", "비트레이트", "노트")
+
+
+class FormatBrowserDialog(QDialog):
+    """Async-fetches ``yt-dlp -J URL`` and shows the format table."""
+
+    def __init__(self, url: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"가용 포맷 — {url[:80]}")
+        self.resize(960, 540)
+        self._url = url
+        self._formats: list[dict[str, Any]] = []
+        self._selected_spec: str | None = None
+        self._build_ui()
+        self._fetch()
+
+    def _build_ui(self) -> None:
+        self.title_label = QLabel("로드 중…")
+        self.title_label.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.meta_label = QLabel("")
+        self.meta_label.setStyleSheet("color: #666; font-size: 11px;")
+
+        self.table = QTableWidget(0, len(_FMT_COLUMNS))
+        self.table.setHorizontalHeaderLabels(list(_FMT_COLUMNS))
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.setAlternatingRowColors(True)
+        h = self.table.horizontalHeader()
+        h.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        h.setStretchLastSection(True)
+        self.table.itemDoubleClicked.connect(lambda *_: self._accept_selection())
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        self.use_btn = QPushButton("이 포맷 사용")
+        self.use_btn.setDefault(True)
+        self.use_btn.clicked.connect(self._accept_selection)
+        buttons.addButton(self.use_btn, QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.meta_label)
+        layout.addSpacing(6)
+        layout.addWidget(self.table, 1)
+        layout.addWidget(buttons)
+
+    def _fetch(self) -> None:
+        thread = QThread(self)
+        worker = FormatFetchWorker(self._url)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.done.connect(self._on_loaded)
+        worker.failed.connect(self._on_failed)
+        worker.done.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+
+    def _on_loaded(self, info: dict, formats: list[dict]) -> None:
+        title = str(info.get("title") or "(제목 없음)")
+        channel = str(info.get("channel") or info.get("uploader") or "?")
+        duration = info.get("duration")
+        dur_str = self._format_duration(duration) if isinstance(duration, (int, float)) else "?"
+        vid = str(info.get("id") or "?")
+        self.title_label.setText(title)
+        self.meta_label.setText(f"채널: {channel}    길이: {dur_str}    ID: {vid}    포맷 {len(formats)}개")
+
+        self._formats = formats
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(formats))
+        for row, fmt in enumerate(formats):
+            self._fill_row(row, fmt)
+        self.table.setSortingEnabled(True)
+        if formats:
+            self.table.selectRow(0)
+
+    def _fill_row(self, row: int, fmt: dict) -> None:
+        vc = (fmt.get("vcodec") or "none")
+        ac = (fmt.get("acodec") or "none")
+        has_v = vc != "none"
+        has_a = ac != "none"
+        kind = (
+            "비디오+오디오" if has_v and has_a
+            else "비디오"   if has_v
+            else "오디오"   if has_a
+            else "?"
+        )
+        res = ""
+        if has_v:
+            w = fmt.get("width")
+            h = fmt.get("height")
+            if w and h:
+                res = f"{w}x{h}"
+            elif fmt.get("resolution"):
+                res = str(fmt["resolution"])
+        fps = fmt.get("fps")
+        size = fmt.get("filesize") or fmt.get("filesize_approx")
+        size_s = self._format_bytes(size) if size else ""
+        tbr = fmt.get("tbr")
+        tbr_s = f"{tbr:.0f}k" if isinstance(tbr, (int, float)) else ""
+        cells = (
+            kind,
+            str(fmt.get("format_id", "")),
+            str(fmt.get("ext", "")),
+            res,
+            f"{fps:.0f}" if isinstance(fps, (int, float)) else "",
+            self._truncate(vc, 18),
+            self._truncate(ac, 18),
+            size_s,
+            tbr_s,
+            self._truncate(str(fmt.get("format_note") or ""), 30),
+        )
+        for col, text in enumerate(cells):
+            item = QTableWidgetItem(text)
+            if col in (3, 4, 7, 8):  # right-align numerics
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, col, item)
+
+    def _on_failed(self, category: str, message: str) -> None:
+        self.title_label.setText("로드 실패")
+        self.meta_label.setText(f"[{category}] {message}")
+        self.use_btn.setEnabled(False)
+
+    def _accept_selection(self) -> None:
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._formats):
+            return
+        fmt = self._formats[row]
+        self._selected_spec = spec_for_format_id(fmt)
+        self.accept()
+
+    def selected_spec(self) -> str | None:
+        return self._selected_spec
+
+    @staticmethod
+    def _format_bytes(n: int) -> str:
+        size = float(n)
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+    @staticmethod
+    def _format_duration(s: float) -> str:
+        s = int(s)
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+    @staticmethod
+    def _truncate(text: str, n: int) -> str:
+        return text if len(text) <= n else text[: n - 1] + "…"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Main window
+# ────────────────────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"YCollector v{__version__}")
-        self.resize(960, 640)
+        self.resize(1080, 720)
 
-        # --- URL input ---
         self.url_box = QPlainTextEdit()
         self.url_box.setPlaceholderText(
             "URL 붙여넣기 (한 줄에 하나, '#' 주석)\n"
             "예: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         )
         self.url_box.setFont(QFont("Consolas", 10))
+        self.url_box.setMaximumHeight(140)
 
-        # --- Controls ---
-        self.format_input = QLineEdit("bv*[height<=1080]+ba/b[height<=1080]")
-        self.output_dir = (Path.cwd() / "downloads").resolve()
-        self.output_dir_label = QLabel(str(self.output_dir))
-        self.output_dir_label.setStyleSheet("color: #555;")
+        self.format_panel = FormatPanel()
+        self.format_panel.browse_requested.connect(self._open_format_browser)
+        self.format_panel.changed.connect(self._update_status_hint)
 
-        pick_btn = QPushButton("폴더…")
-        pick_btn.clicked.connect(self._pick_output_dir)
+        self.output_panel = OutputPanel()
 
         self.dl_btn = QPushButton("지금 다운로드")
+        self.dl_btn.setMinimumHeight(36)
         self.dl_btn.setDefault(True)
         self.dl_btn.clicked.connect(self._start_download)
 
-        controls = QHBoxLayout()
-        controls.addWidget(QLabel("형식:"))
-        controls.addWidget(self.format_input, 2)
-        controls.addSpacing(12)
-        controls.addWidget(QLabel("폴더:"))
-        controls.addWidget(self.output_dir_label, 1)
-        controls.addWidget(pick_btn)
-        controls.addSpacing(12)
-        controls.addWidget(self.dl_btn)
-
-        # --- Log ---
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setFont(QFont("Consolas", 9))
 
-        # --- Layout ---
+        side_panels = QHBoxLayout()
+        side_panels.addWidget(self.format_panel, 3)
+        side_panels.addWidget(self.output_panel, 2)
+
+        action_row = QHBoxLayout()
+        action_row.addStretch(1)
+        action_row.addWidget(self.dl_btn)
+
         layout = QVBoxLayout()
         layout.addWidget(QLabel("URL"))
-        layout.addWidget(self.url_box, 2)
-        layout.addLayout(controls)
+        layout.addWidget(self.url_box)
+        layout.addLayout(side_panels)
+        layout.addLayout(action_row)
         layout.addWidget(QLabel("로그"))
-        layout.addWidget(self.log_view, 3)
+        layout.addWidget(self.log_view, 1)
 
         central = QWidget()
         central.setLayout(layout)
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
+        self._update_status_hint()
 
         self._thread: QThread | None = None
         self._worker: DownloadWorker | None = None
 
-    # ── slots ──────────────────────────────────────────────────────────────
-    def _pick_output_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "출력 폴더 선택", str(self.output_dir)
-        )
-        if path:
-            self.output_dir = Path(path)
-            self.output_dir_label.setText(path)
-
-    def _start_download(self) -> None:
-        urls = [
+    # ── helpers ─────────────────────────────────────────────────────────────
+    def _extract_urls(self) -> list[str]:
+        return [
             line.strip()
             for line in self.url_box.toPlainText().splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
+
+    def _update_status_hint(self) -> None:
+        self.statusBar().showMessage(f"포맷 spec: {self.format_panel.current_spec()}")
+
+    # ── slots ──────────────────────────────────────────────────────────────
+    def _open_format_browser(self) -> None:
+        urls = self._extract_urls()
+        if not urls:
+            QMessageBox.information(
+                self, "포맷 탐색",
+                "URL을 먼저 입력하세요. 첫 번째 URL의 가용 포맷을 yt-dlp로 조회합니다."
+            )
+            return
+        dlg = FormatBrowserDialog(urls[0], self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            spec = dlg.selected_spec()
+            if spec:
+                self.format_panel.set_override(spec)
+                self.log_view.appendPlainText(f"[i] 포맷 오버라이드: {spec}")
+
+    def _start_download(self) -> None:
+        urls = self._extract_urls()
         if not urls:
             self.log_view.appendPlainText("[!] URL이 비어 있습니다.")
             return
 
         self.dl_btn.setEnabled(False)
-        self.statusBar().showMessage(f"다운로드 시작: {len(urls)}개")
+        self.log_view.appendPlainText(f"\n— {len(urls)}개 다운로드 시작 —")
 
         thread = QThread(self)
-        worker = DownloadWorker(urls, self.output_dir, self.format_input.text())
+        worker = DownloadWorker(
+            urls=urls,
+            output_dir=self.output_panel.output_dir,
+            format_spec=self.format_panel.current_spec(),
+            container=self.format_panel.current_container(),
+            write_subs=bool(self.output_panel.sub_languages()),
+            sub_langs=self.output_panel.sub_languages(),
+            cookies_from_browser=self.output_panel.cookies_browser(),
+        )
         worker.moveToThread(thread)
-
         thread.started.connect(worker.run)
         worker.log.connect(self.log_view.appendPlainText)
         worker.progress.connect(self._on_progress)
@@ -179,7 +667,7 @@ class MainWindow(QMainWindow):
 
     def _on_thread_finished(self) -> None:
         self.dl_btn.setEnabled(True)
-        self.statusBar().showMessage("완료", 3000)
+        self.statusBar().showMessage("완료", 4000)
         if self._thread is not None:
             self._thread.deleteLater()
         if self._worker is not None:

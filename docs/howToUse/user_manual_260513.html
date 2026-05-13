@@ -414,10 +414,11 @@ body {
 </ul>
 </li>
 <li><a href="#3-gui">3. GUI 사용법</a><ul>
-<li><a href="#31-phase-0-day-1">3.1 메인 윈도우 (Phase 0 Day 1)</a></li>
+<li><a href="#31-phase-0-day-2">3.1 메인 윈도우 (Phase 0 Day 2)</a></li>
 <li><a href="#32">3.2 사용 흐름</a></li>
 <li><a href="#33">3.3 키보드</a></li>
 <li><a href="#34">3.4 출력 폴더 변경</a></li>
+<li><a href="#35-exe-uv">3.5 단일 .exe 빌드 — uv 없이 더블클릭으로 실행</a></li>
 </ul>
 </li>
 <li><a href="#4">4. 상황별 가이드</a><ul>
@@ -478,8 +479,8 @@ body {
     </div>
     <h1 id="ycollector">YCollector 사용설명서<a class="headerlink" href="#ycollector" title="Permanent link">¶</a></h1>
 <ul>
-<li><strong>문서 버전</strong>: 1.0 (Phase 0 Day 1 기준)</li>
-<li><strong>작성일</strong>: 2026-05-13 (YYMMDD: 260513)</li>
+<li><strong>문서 버전</strong>: 1.1 (Phase 0 Day 2 기준 — 포맷 UI 개편 + .exe 빌드 추가)</li>
+<li><strong>작성일</strong>: 2026-05-13 (YYMMDD: 260513), 최종 갱신 2026-05-13</li>
 <li><strong>대상</strong>: 데스크톱(Windows 우선) 사용자</li>
 <li><strong>연관</strong>:
   <a href="../plan/youtube_downloader_plan_260508.html">설계 계획</a> ·
@@ -826,30 +827,54 @@ https://music.youtube.com/watch?v=C
 <div class="codehilite"><pre><span></span><code><span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector-gui</span>
 </code></pre></div>
 
-<h3 id="31-phase-0-day-1">3.1 메인 윈도우 (Phase 0 Day 1)<a class="headerlink" href="#31-phase-0-day-1" title="Permanent link">¶</a></h3>
-<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────┐
-│ YCollector v0.1.0                                    [— □ ✕]    │
-├──────────────────────────────────────────────────────────────────┤
-│ URL                                                                │
-│ ┌────────────────────────────────────────────────────────────┐ │
-│ │ URL 붙여넣기 (한 줄에 하나, &#39;#&#39; 주석)                          │ │
-│ │ 예: https://www.youtube.com/watch?v=dQw4w9WgXcQ              │ │
-│ │                                                               │ │
-│ │                                                               │ │
-│ └────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│ 형식: [bv*[height&lt;=1080]+ba/b... ]  폴더: [D:/…/downloads] [폴더…] [지금 다운로드] │
-│                                                                   │
-│ 로그                                                               │
-│ ┌────────────────────────────────────────────────────────────┐ │
-│ │ yt-dlp 2026.05.07  (ycollector 0.1.0)                       │ │
-│ │                                                               │ │
-│ │ [1/2] https://...                                             │ │
-│ │ [download] Destination: downloads/Channel/Title [id].mp4      │ │
-│ │   ✓ downloads/Channel/Title [id].mp4                          │ │
-│ └────────────────────────────────────────────────────────────┘ │
-│ 23.5%   125.3 MB   8.4 MB/s                                      │
-└──────────────────────────────────────────────────────────────────┘
+<h3 id="31-phase-0-day-2">3.1 메인 윈도우 (Phase 0 Day 2)<a class="headerlink" href="#31-phase-0-day-2" title="Permanent link">¶</a></h3>
+<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────┐
+│ YCollector v0.1.0                                       [— □ ✕]    │
+├─────────────────────────────────────────────────────────────────────┤
+│ URL                                                                  │
+│ ┌──────────────────────────────────────────────────────────────┐ │
+│ │ URL 붙여넣기 (한 줄에 하나, &#39;#&#39; 주석)                              │ │
+│ │ 예: https://www.youtube.com/watch?v=dQw4w9WgXcQ                  │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│                                                                      │
+│ ┌─ 포맷 ──────────────────────────────────┐ ┌─ 출력 ───────────┐  │
+│ │ 화질:    ○360 ○480 ○720 ●1080 ○1440 ○4K   │ │ 폴더:[D:/...] [폴더…]│ │
+│ │          ○ 최고  ○ 오디오만                  │ │                    │ │
+│ │ 컨테이너: ●mp4 ○mkv ○webm                  │ │ 자막: ☑ 임베드      │ │
+│ │ 코덱:    ●자동 ○H.264 ○VP9 ○AV1            │ │   언어:[ko,en]     │ │
+│ │ 오디오:  ●최고 ○m4a ○opus                  │ │                    │ │
+│ │ [가용 포맷 보기…]   spec: bv*[height&lt;=1080]+ba/b[height&lt;=1080]    │ │ 쿠키: [chrome    ] │ │
+│ └──────────────────────────────────────────────┘ └────────────────────┘ │
+│                                                                      │
+│                                              [지금 다운로드]           │
+│                                                                      │
+│ 로그                                                                  │
+│ ┌──────────────────────────────────────────────────────────────┐ │
+│ │ yt-dlp 2026.05.07  (ycollector 0.1.0)                          │ │
+│ │ [1/2] https://...                                                │ │
+│ │   ✓ downloads/Channel/Title [id].mp4                             │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│ 포맷 spec: bv*[height&lt;=1080]+ba/b[height&lt;=1080]                     │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p><strong>포맷 패널</strong> — radio 버튼으로 모든 옵션 조절. 우하단의 <code>spec:</code> 표시는 현재 선택이 yt-dlp의 어떤 포맷 셀렉터로 변환되는지 실시간으로 보여줍니다 (디버깅 / 학습용).</p>
+<p><strong>가용 포맷 보기</strong> 버튼 — URL 박스의 첫 번째 URL을 yt-dlp로 분석해 그 영상에 실제로 가용한 모든 포맷(비디오/오디오 분리, 4K/1080p/HDR, AV1/VP9/H.264, m4a/opus 등)을 표로 보여줍니다. 행을 더블클릭하거나 "이 포맷 사용" 버튼으로 특정 포맷 ID를 직접 선택 가능 (라디오 선택은 일시 비활성화 → "오버라이드 해제"로 복귀).</p>
+<div class="codehilite"><pre><span></span><code>┌─ 가용 포맷 — Rick Astley - Never Gonna Give You Up ──────────────┐
+│ Rick Astley - Never Gonna Give You Up                              │
+│ 채널: Rick Astley   길이: 3:33   ID: dQw4w9WgXcQ   포맷 23개         │
+├──┬───┬─────┬──────────┬───┬──────────┬──────────┬───────┬──────┤
+│ 종류             │ ID │ EXT │ 해상도    │FPS│ VCodec   │ ACodec   │ 크기  │ 노트  │
+├──┴───┴─────┴──────────┴───┴──────────┴──────────┴───────┴──────┤
+│ 비디오+오디오    │ 22 │ mp4 │ 1280x720 │ 30│ avc1.640 │ mp4a.40  │ 53MB │      │
+│ 비디오           │137 │ mp4 │1920x1080 │ 30│ avc1.640 │          │ 87MB │ 1080p│
+│ 비디오           │248 │webm │1920x1080 │ 30│ vp09     │          │ 67MB │ 1080p│
+│ 비디오           │401 │ mp4 │3840x2160 │ 30│ av01     │          │450MB │ 4K   │
+│ 오디오           │140 │ m4a │     -    │ - │          │ mp4a.40  │  5MB │ 128k │
+│ ...                                                                 │
+├────────────────────────────────────────────────────────────────────┤
+│                                          [이 포맷 사용]  [취소]      │
+└────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 <h3 id="32">3.2 사용 흐름<a class="headerlink" href="#32" title="Permanent link">¶</a></h3>
@@ -902,6 +927,57 @@ https://music.youtube.com/watch?v=C
 <p>"폴더…" 버튼 → 시스템 폴더 선택 다이얼로그 → 선택. 다음 다운로드부터 새 폴더에 저장.</p>
 <blockquote>
 <p>변경 사항이 세션 간 보존되지는 않습니다 (Phase 1 SQLite 영속화 예정).</p>
+</blockquote>
+<h3 id="35-exe-uv">3.5 단일 .exe 빌드 — uv 없이 더블클릭으로 실행<a class="headerlink" href="#35-exe-uv" title="Permanent link">¶</a></h3>
+<p>매번 <code>uv run ycollector-gui</code> 입력이 번거로우면 <strong>단일 실행 파일</strong>로 빌드 가능.</p>
+<div class="codehilite"><pre><span></span><code><span class="c"># 1. 빌드 의존성 설치 (Nuitka + PyInstaller)</span>
+<span class="n">uv</span> <span class="n">sync</span> <span class="p">-</span><span class="n">-extra</span> <span class="n">build</span>
+
+<span class="c"># 2-A. Nuitka로 빌드 (권장 — 시작 빠름, AV 오탐 ↓)</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_exe</span><span class="p">.</span><span class="n">py</span>
+
+<span class="c"># 2-B. 또는 PyInstaller (대안)</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_exe</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-mode</span> <span class="n">pyinstaller</span>
+
+<span class="c"># 3. CLI .exe도 같이 빌드하려면</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_exe</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-target</span> <span class="n">both</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>빌드 도구</th>
+<th>결과 위치</th>
+<th>크기 (대략)</th>
+<th>시작 지연</th>
+<th>AV 오탐</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Nuitka</strong></td>
+<td><code>dist/gui.dist/YCollector.exe</code></td>
+<td>80~120 MB</td>
+<td>1~2초</td>
+<td>낮음</td>
+</tr>
+<tr>
+<td><strong>PyInstaller</strong></td>
+<td><code>dist/YCollector/YCollector.exe</code></td>
+<td>130~180 MB</td>
+<td>3~5초</td>
+<td>중간</td>
+</tr>
+</tbody>
+</table>
+<p><strong>바탕화면 / 시작 메뉴에 등록</strong>:
+1. <code>dist/gui.dist/YCollector.exe</code> 우클릭 → <strong>바로 가기 만들기</strong>
+2. 만들어진 바로가기를 바탕화면 또는 <code>시작 메뉴 &gt; 프로그램</code>으로 이동
+3. (선택) 우클릭 → 작업 표시줄에 고정</p>
+<blockquote>
+<p><strong>첫 빌드 시간</strong>: Nuitka 8~15분, PyInstaller 3~8분 (PySide6 ~80MB 분석/패킹).
+Nuitka는 첫 실행 시 C 컴파일러(MinGW64)를 자동 다운로드 — 인터넷 + 약 200MB 디스크.
+코드 사이닝 인증서는 Phase 4에서 도입 예정 (현재는 Windows Defender / SmartScreen 경고가 한 번 뜰 수 있음).</p>
 </blockquote>
 <hr />
 <h2 id="4">4. 상황별 가이드<a class="headerlink" href="#4" title="Permanent link">¶</a></h2>

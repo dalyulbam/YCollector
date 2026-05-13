@@ -3,6 +3,15 @@
 Plan §4.4 참고.
 """
 
+from .format_spec import (
+    AudioPref,
+    CodecPref,
+    Container,
+    FormatChoice,
+    Quality,
+    compose_format_spec,
+    spec_for_format_id,
+)
 from .ytdlp import (
     DownloadError,
     ProgressEvent,
@@ -11,8 +20,15 @@ from .ytdlp import (
 )
 
 __all__ = [
+    "AudioPref",
+    "CodecPref",
+    "Container",
     "DownloadError",
+    "FormatChoice",
     "ProgressEvent",
+    "Quality",
     "YtdlpEngine",
     "classify_error",
+    "compose_format_spec",
+    "spec_for_format_id",
 ]

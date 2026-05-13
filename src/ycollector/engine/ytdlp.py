@@ -106,6 +106,46 @@ class YtdlpEngine:
         )
         return result.stdout.strip()
 
+    def list_formats(self, url: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Return ``(info, formats)`` for ``url``.
+
+        ``info`` carries top-level metadata (title, channel, duration, ...);
+        ``formats`` is the per-format list yt-dlp surfaces under ``-F``.
+        Raises :class:`DownloadError` on failure with classified category.
+        """
+        result = subprocess.run(
+            [
+                str(self.ytdlp_path),
+                "--dump-single-json",
+                "--no-playlist",
+                "--no-warnings",
+                "--no-progress",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr or ""
+            last = stderr.strip().splitlines()[-1] if stderr.strip() else "yt-dlp failed"
+            raise DownloadError(
+                category=classify_error(stderr),
+                message=last,
+                raw_stderr=stderr,
+            )
+        try:
+            info: dict[str, Any] = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise DownloadError(
+                category="unknown",
+                message=f"Failed to parse yt-dlp JSON output: {exc}",
+                raw_stderr=result.stderr or "",
+            ) from exc
+        return info, list(info.get("formats", []))
+
     def download(
         self,
         url: str,

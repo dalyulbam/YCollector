@@ -17,7 +17,17 @@ import sys
 from pathlib import Path
 
 from ycollector import __version__
-from ycollector.engine import DownloadError, ProgressEvent, YtdlpEngine
+from ycollector.engine import (
+    AudioPref,
+    CodecPref,
+    Container,
+    DownloadError,
+    FormatChoice,
+    ProgressEvent,
+    Quality,
+    YtdlpEngine,
+    compose_format_spec,
+)
 
 
 def _human_bytes(n: float) -> str:
@@ -91,8 +101,18 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Read URLs from a file (one per line, '#' for comments).")
     p.add_argument("-o", "--output-dir", default=Path("downloads"), type=Path,
                    help="Output directory (default: ./downloads).")
-    p.add_argument("-f", "--format", default="bv*[height<=1080]+ba/b[height<=1080]",
-                   help="yt-dlp format selector.")
+    p.add_argument("-f", "--format", default=None,
+                   help="Raw yt-dlp format selector (overrides --quality / --codec / --audio).")
+    p.add_argument("--quality", default=Quality.P1080.value,
+                   choices=[q.value for q in Quality],
+                   help="Quality preset: 144p/240p/360p/480p/720p/1080p/1440p/2160p/best/audio "
+                        "(default: 1080p).")
+    p.add_argument("--codec", default=CodecPref.AUTO.value,
+                   choices=[c.value for c in CodecPref],
+                   help="Video codec preference (default: auto).")
+    p.add_argument("--audio", default=AudioPref.BEST.value,
+                   choices=[a.value for a in AudioPref],
+                   help="Audio preference (default: best).")
     p.add_argument("--container", default="mp4", choices=["mp4", "mkv", "webm"],
                    help="Output container (default: mp4).")
     p.add_argument("--no-subs", action="store_true",
@@ -106,6 +126,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows 한국어 시스템의 cp949 콘솔에서 ✓ / ✗ / 한글 등이 깨지지 않도록.
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+            except (AttributeError, OSError):
+                pass
+
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -120,6 +148,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 10
     print(f"yt-dlp {engine.version()}  (ycollector {__version__})", file=sys.stderr)
+
+    if args.format is None:
+        choice = FormatChoice(
+            quality=Quality(args.quality),
+            container=Container(args.container),
+            codec=CodecPref(args.codec),
+            audio=AudioPref(args.audio),
+        )
+        args.format = compose_format_spec(choice)
+        print(f"format spec: {args.format}", file=sys.stderr)
 
     failures: list[tuple[str, DownloadError]] = []
     for i, url in enumerate(urls, start=1):
