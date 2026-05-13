@@ -1,7 +1,7 @@
 # YCollector 사용설명서
 
-- **문서 버전**: 1.3 (Phase 0 Day 3 기준 — settings.ini 추가)
-- **작성일**: 2026-05-13 (YYMMDD: 260513), 최종 갱신 2026-05-13
+- **문서 버전**: 1.4 (Phase 0 Day 4 — 제목/활동 라벨 표시)
+- **작성일**: 2026-05-13 (YYMMDD: 260513), 최종 갱신 2026-05-14
 - **대상**: 데스크톱(Windows 우선) 사용자
 - **연관**:
   [설계 계획](../plan/youtube_downloader_plan_260508.md) ·
@@ -125,14 +125,23 @@ uv run ycollector "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 성공 화면:
 
 ```
+settings: D:\26y\YCollector\settings.ini
 yt-dlp 2026.05.07  (ycollector 0.1.0)
+format spec: bv*[height<=1080]+ba/b[height<=1080]
 
 [1/1] https://www.youtube.com/watch?v=dQw4w9WgXcQ
-   23.5%   125.3 MB / 533.4 MB  @  12.3 MB/s
-   ...
-   ✓ downloads\Rick Astley\Never Gonna Give You Up [dQw4w9WgXcQ].mp4
+  ▶ Rick Astley - Never Gonna Give You Up                ← 추출 직후 제목/채널 노출
+     채널: Rick Astley   길이: 3:33   ID: dQw4w9WgXcQ
+  ⠹ 준비 중... 8.3s  —  Downloading ios player API JSON   ← 현재 yt-dlp 활동
+  ⠼  62.3%   125.3 MB / 206.1 MB  @  12.3 MB/s   ETA 6s  (12s)
+  ...
+  ✓ downloads\Rick Astley\Never Gonna Give You Up [dQw4w9WgXcQ].mp4
   → downloads\Rick Astley\Never Gonna Give You Up [dQw4w9WgXcQ].mp4
 ```
+
+**제목 표시 (▶ 라인)**: yt-dlp의 `pre_process` 단계 메타데이터를 받아 즉시 출력. 바이트가 흐르기 전에도 어떤 영상을 처리 중인지 표시됩니다.
+
+**활동 라벨**: spinner의 "준비 중 / 후처리 중" 옆에 yt-dlp가 지금 하는 일(`Downloading webpage`, `Downloading js player`, `Extracting URL` 등)을 실시간 표시. 어느 단계에서 시간이 걸리는지 판별 가능.
 
 기본 동작:
 - **포맷**: `bv*[height<=1080]+ba/b[height<=1080]` (1080p 최고 화질)

@@ -57,6 +57,7 @@ from ycollector.engine import (
     Container,
     DownloadError,
     FormatChoice,
+    MetaInfo,
     ProgressEvent,
     Quality,
     YtdlpEngine,
@@ -81,6 +82,7 @@ class DownloadWorker(QObject):
     progress = Signal(object)            # ProgressEvent
     log = Signal(str)
     item_started = Signal(int, int, str) # index, total, url — for status bar
+    item_meta = Signal(object)           # MetaInfo — title/channel/duration before download
     item_done = Signal(str)              # filepath
     item_failed = Signal(str, str, str)  # url, category, message
     all_done = Signal()
@@ -189,6 +191,7 @@ class DownloadWorker(QObject):
                     on_progress=self.progress.emit,
                     on_log=self.log.emit,
                     on_process=self._capture_proc,
+                    on_meta=self.item_meta.emit,
                 )
                 self.item_done.emit(str(path))
             except DownloadError as exc:
@@ -727,6 +730,7 @@ class MainWindow(QMainWindow):
         self._status_t0: float = 0.0
         self._status_event: ProgressEvent | None = None
         self._status_url_idx: tuple[int, int] | None = None  # (i, total)
+        self._status_title: str | None = None  # 현재 영상 제목 (item_meta 도착 후)
         self._status_frame_idx: int = 0
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(200)
@@ -792,6 +796,7 @@ class MainWindow(QMainWindow):
         worker.log.connect(self.log_view.appendPlainText)
         worker.progress.connect(self._on_progress)
         worker.item_started.connect(self._on_item_started)
+        worker.item_meta.connect(self._on_item_meta)
         worker.item_done.connect(self._on_item_done)
         worker.item_failed.connect(self._on_item_failed)
         worker.all_done.connect(thread.quit)
@@ -831,8 +836,18 @@ class MainWindow(QMainWindow):
         self._status_t0 = time.monotonic()
         self._status_event = None
         self._status_url_idx = (i, total)
+        self._status_title = None  # 새 영상 → 이전 제목 비우기
         if not self._status_timer.isActive():
             self._status_timer.start()
+
+    def _on_item_meta(self, meta: MetaInfo) -> None:
+        # 다운로드 시작 전 yt-dlp 가 추출한 제목/채널을 prominent 하게 로그에 남기고
+        # 상태바 / 윈도우 타이틀에도 반영.
+        self.log_view.appendPlainText(f"  ▶ {meta.title}")
+        self.log_view.appendPlainText(
+            f"     채널: {meta.channel}   길이: {meta.duration}   ID: {meta.video_id}"
+        )
+        self._status_title = meta.title
 
     def _on_item_done(self, path: str) -> None:
         self.log_view.appendPlainText(f"  ✓ {path}")
@@ -858,6 +873,11 @@ class MainWindow(QMainWindow):
         if self._status_url_idx is not None:
             i, total = self._status_url_idx
             idx_prefix = f"[{i}/{total}]  "
+        # 제목이 도착했으면 상태바에 함께 표시 (60자 잘라).
+        title_suffix = ""
+        if self._status_title:
+            t = self._status_title
+            title_suffix = f"   ▶ {t[:60] + '…' if len(t) > 60 else t}"
 
         if self._status_state == "downloading" and self._status_event is not None:
             e = self._status_event
@@ -867,12 +887,16 @@ class MainWindow(QMainWindow):
             eta_str = f"   ETA {e.eta}s" if e.eta else ""
             self.statusBar().showMessage(
                 f"{idx_prefix}{ch} {pct:5.1f}%   {mb:7.1f} MB   "
-                f"{speed:5.2f} MB/s{eta_str}   ({elapsed:.0f}s)"
+                f"{speed:5.2f} MB/s{eta_str}   ({elapsed:.0f}s){title_suffix}"
             )
         elif self._status_state == "preparing":
-            self.statusBar().showMessage(f"{idx_prefix}{ch} 준비 중... {elapsed:.1f}s")
+            self.statusBar().showMessage(
+                f"{idx_prefix}{ch} 준비 중... {elapsed:.1f}s{title_suffix}"
+            )
         elif self._status_state == "postprocessing":
-            self.statusBar().showMessage(f"{idx_prefix}{ch} 후처리 중... {elapsed:.1f}s")
+            self.statusBar().showMessage(
+                f"{idx_prefix}{ch} 후처리 중... {elapsed:.1f}s{title_suffix}"
+            )
 
 
 def main() -> int:

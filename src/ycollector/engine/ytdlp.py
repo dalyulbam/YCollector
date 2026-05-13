@@ -144,6 +144,37 @@ class ProgressEvent:
         return None
 
 
+@dataclass
+class MetaInfo:
+    """Video metadata surfaced *before* download bytes flow.
+
+    yt-dlp emits this via our dedicated ``--print pre_process:`` template, so
+    the UI can show "▶ <title>" while the slow "extract player.js → solve
+    n-sig → fetch formats" phase is still going on (no progress events yet).
+    """
+
+    title: str
+    channel: str
+    duration: str
+    video_id: str
+
+
+def _parse_meta(payload: str) -> MetaInfo | None:
+    parts = payload.split("\t", 3)
+    while len(parts) < 4:
+        parts.append("")
+    cleaned = [("" if p in ("NA", "N/A") else p) for p in parts]
+    title, channel, duration, vid_id = cleaned
+    if not (title or channel or duration or vid_id):
+        return None
+    return MetaInfo(
+        title=title or "(제목 불명)",
+        channel=channel or "?",
+        duration=duration or "?",
+        video_id=vid_id or "?",
+    )
+
+
 class DownloadError(Exception):
     """Categorised download failure carrying classified category + raw stderr."""
 
@@ -172,6 +203,17 @@ _PROGRESS_MARKER = "YCPROG:"
 # Emitted once per finished video — for playlists, the last line wins.
 _FINAL_PATH_TEMPLATE = "after_move:YCFINAL:%(filepath)s"
 _FINAL_PATH_MARKER = "YCFINAL:"
+
+# Video metadata (title / channel / duration / id) emitted right after
+# extraction succeeds, *before* download bytes start flowing. yt-dlp's own
+# default output buries this in "[youtube] xxx: Downloading webpage" noise;
+# we route a dedicated --print so the UI can show "▶ <Title>" prominently
+# and the user knows which video is being prepared. Fires once per video.
+_META_TEMPLATE = (
+    "pre_process:YCMETA\t"
+    "%(title)s\t%(channel,uploader)s\t%(duration_string,duration)s\t%(id)s"
+)
+_META_MARKER = "YCMETA\t"
 
 # 이미 받은 파일이면 yt-dlp 가 다운로드를 건너뛰어 --print after_move 도 안 쏘기에
 # 로그 라인에서 직접 경로를 캡처해 둔다. 예:
@@ -271,6 +313,7 @@ class YtdlpEngine:
         on_progress: Callable[[ProgressEvent], None] | None = None,
         on_log: Callable[[str], None] | None = None,
         on_process: Callable[[subprocess.Popen[str]], None] | None = None,
+        on_meta: Callable[[MetaInfo], None] | None = None,
     ) -> Path:
         """Download URL and return the final filepath.
 
@@ -303,6 +346,7 @@ class YtdlpEngine:
             # --print 가 yt-dlp 의 --quiet 를 묵시적으로 켜서 진행률 출력이 사라지므로
             # --no-quiet 로 명시적 해제 — 진행률 + 최종 경로 둘 다 받기 위해 필수.
             "--no-quiet",
+            "--print", _META_TEMPLATE,
             "--print", _FINAL_PATH_TEMPLATE,
             # YouTube n-sig 풀이용 EJS(Extractor JS) 챌린지 솔버 자동 수신.
             # deno/node 런타임만으론 부족하고 yt-dlp 가 권장하는 ejs:github 가
@@ -369,6 +413,10 @@ class YtdlpEngine:
                     payload = line[len(_FINAL_PATH_MARKER):].strip()
                     if payload:
                         final_path = Path(payload)
+                elif line.startswith(_META_MARKER):
+                    meta = _parse_meta(line[len(_META_MARKER):])
+                    if meta is not None and on_meta:
+                        on_meta(meta)
                 elif line.startswith(_PROGRESS_MARKER):
                     event = _parse_progress(line[len(_PROGRESS_MARKER):])
                     if event is None:

@@ -13,6 +13,7 @@ are described in the plan and will land in later phases.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import threading
 import time
@@ -26,12 +27,33 @@ from ycollector.engine import (
     Container,
     DownloadError,
     FormatChoice,
+    MetaInfo,
     ProgressEvent,
     Quality,
     YtdlpEngine,
     compose_format_spec,
 )
 from ycollector.engine.ytdlp import _find_deno_dir, is_ambiguous_playlist_url
+
+
+# yt-dlp 가 stderr/stdout 에 찍는 단계 라벨. 다운로드 직전까지 무엇을 하고 있는지
+# 보여주려고 spinner 라벨로 노출한다 ("준비 중" 만으로는 사용자가 멈춤을 의심).
+_ACTIVITY_RE = re.compile(r"^\[(?P<src>\w+)\]\s+(?P<msg>.+?)$")
+# 11자 YouTube video-ID 프리픽스. `[youtube]`/`[info]` 메시지에서만 떼어낸다 —
+# `[download] Destination:` 의 "Destination" 도 11자 영문이라 무조건 떼면 오인.
+_VID_ID_PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]{11}:\s+")
+
+
+def _format_activity_msg(line: str) -> str | None:
+    """yt-dlp 의 ``[src] message`` 라인에서 사용자에게 보여줄 메시지를 추출."""
+    m = _ACTIVITY_RE.match(line)
+    if not m:
+        return None
+    src = m.group("src")
+    msg = m.group("msg")
+    if src in ("youtube", "info"):
+        msg = _VID_ID_PREFIX_RE.sub("", msg)
+    return msg
 
 
 def _human_bytes(n: float) -> str:
@@ -71,11 +93,33 @@ class _StatusLine:
         self._t0 = time.monotonic()
         self._state = "preparing"   # preparing | downloading | postprocessing
         self._event: ProgressEvent | None = None
+        self._meta: MetaInfo | None = None
+        self._activity: str = ""  # 마지막 yt-dlp "[src] message" 라인
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._is_tty = sys.stderr.isatty()
         self._frame_idx = 0
         self._last_log_t = 0.0
+
+    def on_meta(self, meta: MetaInfo) -> None:
+        """yt-dlp pre_process — 다운로드 시작 전 제목/채널/길이가 알려진 시점."""
+        with self._lock:
+            self._meta = meta
+        # spinner 라인을 일시적으로 지우고 굵게 한 줄 출력 → spinner 가 그 아래에 다시 그림.
+        if self._is_tty:
+            sys.stderr.write("\r\033[K")
+        sys.stderr.write(f"  ▶ {meta.title}\n")
+        sys.stderr.write(f"     채널: {meta.channel}   길이: {meta.duration}   ID: {meta.video_id}\n")
+        sys.stderr.flush()
+
+    def on_log(self, line: str) -> None:
+        """yt-dlp 의 모든 stdout/stderr 라인을 받아 spinner 활동 라벨을 갱신."""
+        msg = _format_activity_msg(line)
+        if msg is not None:
+            if len(msg) > 70:
+                msg = msg[:67] + "…"
+            with self._lock:
+                self._activity = msg
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -133,7 +177,9 @@ class _StatusLine:
                 )
             else:
                 label = "준비 중" if self._state == "preparing" else "후처리 중"
-                line = f"  {ch} {label}... {elapsed:.1f}s"
+                # 활동 라벨이 있으면 같이 — 이게 핵심: "준비 중 — Downloading js player..."
+                activity = f"  —  {self._activity}" if self._activity else ""
+                line = f"  {ch} {label}... {elapsed:.1f}s{activity}"
 
             if self._is_tty:
                 sys.stderr.write("\r\033[K" + line)
@@ -334,6 +380,8 @@ def main(argv: list[str] | None = None) -> int:
                     max_downloads=args.max_downloads,
                     playlist_items=args.playlist_items,
                     on_progress=status.on_progress,
+                    on_log=status.on_log,
+                    on_meta=status.on_meta,
                 )
             except DownloadError as exc:
                 failures.append((url, exc))

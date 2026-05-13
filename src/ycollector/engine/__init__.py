@@ -14,6 +14,7 @@ from .format_spec import (
 )
 from .ytdlp import (
     DownloadError,
+    MetaInfo,
     ProgressEvent,
     YtdlpEngine,
     classify_error,
@@ -25,6 +26,7 @@ __all__ = [
     "Container",
     "DownloadError",
     "FormatChoice",
+    "MetaInfo",
     "ProgressEvent",
     "Quality",
     "YtdlpEngine",
