@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -79,6 +80,7 @@ class DownloadWorker(QObject):
 
     progress = Signal(object)            # ProgressEvent
     log = Signal(str)
+    item_started = Signal(int, int, str) # index, total, url — for status bar
     item_done = Signal(str)              # filepath
     item_failed = Signal(str, str, str)  # url, category, message
     all_done = Signal()
@@ -162,6 +164,7 @@ class DownloadWorker(QObject):
                 self.log.emit("\n[!] 사용자 취소 — 남은 작업 중단.")
                 break
             self.log.emit(f"\n[{i}/{len(self._urls)}] {url}")
+            self.item_started.emit(i, len(self._urls), url)
 
             # Decide playlist behaviour from settings + URL pattern.
             no_pl, yes_pl = self._decide_playlist(url)
@@ -718,6 +721,17 @@ class MainWindow(QMainWindow):
         self._thread: QThread | None = None
         self._worker: DownloadWorker | None = None
 
+        # 상태 바 — 진행률 hook 이 없는 구간(메타데이터 추출 / merge / 자막 임베드)
+        # 에도 "준비 중 / 후처리 중 + 경과 시간"이 보이도록 200ms QTimer 로 페인팅.
+        self._status_state: str = "idle"   # idle | preparing | downloading | postprocessing
+        self._status_t0: float = 0.0
+        self._status_event: ProgressEvent | None = None
+        self._status_url_idx: tuple[int, int] | None = None  # (i, total)
+        self._status_frame_idx: int = 0
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(200)
+        self._status_timer.timeout.connect(self._paint_status_bar)
+
     # ── helpers ─────────────────────────────────────────────────────────────
     def _extract_urls(self) -> list[str]:
         return [
@@ -777,10 +791,9 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
         worker.log.connect(self.log_view.appendPlainText)
         worker.progress.connect(self._on_progress)
-        worker.item_done.connect(lambda p: self.log_view.appendPlainText(f"  ✓ {p}"))
-        worker.item_failed.connect(
-            lambda url, cat, msg: self.log_view.appendPlainText(f"  ✗ [{cat}] {msg}")
-        )
+        worker.item_started.connect(self._on_item_started)
+        worker.item_done.connect(self._on_item_done)
+        worker.item_failed.connect(self._on_item_failed)
         worker.all_done.connect(thread.quit)
         thread.finished.connect(self._on_thread_finished)
 
@@ -799,6 +812,8 @@ class MainWindow(QMainWindow):
         self.dl_btn.setVisible(True)
         self.cancel_btn.setVisible(False)
         self.cancel_btn.setText("취소 (이어받기 가능)")
+        self._status_timer.stop()
+        self._status_state = "idle"
         self.statusBar().showMessage("완료", 4000)
         if self._thread is not None:
             self._thread.deleteLater()
@@ -807,15 +822,57 @@ class MainWindow(QMainWindow):
         self._thread = None
         self._worker = None
 
+    # ── status bar — 단계별 + 경과 시간 페인터 ─────────────────────────────────
+    _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+    def _on_item_started(self, i: int, total: int, url: str) -> None:  # noqa: ARG002
+        # 새 URL 시작 — 상태 머신 reset, 페인터 가동.
+        self._status_state = "preparing"
+        self._status_t0 = time.monotonic()
+        self._status_event = None
+        self._status_url_idx = (i, total)
+        if not self._status_timer.isActive():
+            self._status_timer.start()
+
+    def _on_item_done(self, path: str) -> None:
+        self.log_view.appendPlainText(f"  ✓ {path}")
+        # all_done 가 도착할 때까지 stop 은 잠시 보류 — 다음 URL 이 곧 시작될 수 있음.
+
+    def _on_item_failed(self, url: str, category: str, message: str) -> None:  # noqa: ARG002
+        self.log_view.appendPlainText(f"  ✗ [{category}] {message}")
+
     def _on_progress(self, event: ProgressEvent) -> None:
-        if event.status != "downloading":
-            return
-        pct = event.percent or 0.0
-        mb = event.downloaded_bytes / 1024 / 1024
-        speed = (event.speed or 0) / 1024 / 1024
-        self.statusBar().showMessage(
-            f"{pct:5.1f}%   {mb:7.1f} MB   {speed:5.2f} MB/s"
-        )
+        if event.status == "downloading":
+            self._status_state = "downloading"
+            self._status_event = event
+        elif event.status == "finished":
+            # 프래그먼트 완료 — 다음 fragment 가 오면 다시 downloading 으로.
+            self._status_state = "postprocessing"
+            self._status_event = None
+
+    def _paint_status_bar(self) -> None:
+        elapsed = time.monotonic() - self._status_t0
+        self._status_frame_idx = (self._status_frame_idx + 1) % len(self._SPINNER_FRAMES)
+        ch = self._SPINNER_FRAMES[self._status_frame_idx]
+        idx_prefix = ""
+        if self._status_url_idx is not None:
+            i, total = self._status_url_idx
+            idx_prefix = f"[{i}/{total}]  "
+
+        if self._status_state == "downloading" and self._status_event is not None:
+            e = self._status_event
+            pct = e.percent or 0.0
+            mb = e.downloaded_bytes / 1024 / 1024
+            speed = (e.speed or 0) / 1024 / 1024
+            eta_str = f"   ETA {e.eta}s" if e.eta else ""
+            self.statusBar().showMessage(
+                f"{idx_prefix}{ch} {pct:5.1f}%   {mb:7.1f} MB   "
+                f"{speed:5.2f} MB/s{eta_str}   ({elapsed:.0f}s)"
+            )
+        elif self._status_state == "preparing":
+            self.statusBar().showMessage(f"{idx_prefix}{ch} 준비 중... {elapsed:.1f}s")
+        elif self._status_state == "postprocessing":
+            self.statusBar().showMessage(f"{idx_prefix}{ch} 후처리 중... {elapsed:.1f}s")
 
 
 def main() -> int:

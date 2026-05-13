@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
+import time
 from pathlib import Path
 
 from ycollector import __version__
@@ -42,32 +44,104 @@ def _human_bytes(n: float) -> str:
     return f"{size:6.1f} PB"  # unreachable, satisfies type checker
 
 
-def _make_progress_printer():
-    is_tty = sys.stderr.isatty()
-    state = {"painting": False}
+_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
-    def printer(event: ProgressEvent) -> None:
-        if event.status == "downloading":
-            pct = event.percent or 0.0
-            done = _human_bytes(event.downloaded_bytes)
-            total = _human_bytes(event.total_bytes) if event.total_bytes else "    ?  "
-            speed = _human_bytes(event.speed) + "/s" if event.speed else "      ?    "
-            line = f"  {pct:5.1f}%  {done} / {total}  @ {speed}"
-            if is_tty:
-                sys.stderr.write("\r\033[K" + line)
-                state["painting"] = True
+
+class _StatusLine:
+    """단일 stderr 라인을 백그라운드 스레드가 상시 페인팅.
+
+    yt-dlp 가 메타데이터 추출(시작 직후)·머지/자막 임베드(다운로드 직후)
+    같은 진행률 hook 이 없는 구간에 머무를 때, "준비 중 / 후처리 중"
+    스피너와 경과 시간을 100ms 주기로 갱신해서 사용자가 멈춤/대기를
+    구분할 수 있게 한다. ProgressEvent 가 들어오면 같은 라인을 진행률
+    숫자로 바꿔 페인팅 — 두 출력원이 한 라인을 공유하지 않도록 본 클래스가
+    유일한 페인터다.
+    """
+
+    # 진행률 이벤트조차 없는 초기 대기가 매우 짧을 땐 스피너를 띄우지 말자.
+    # 300ms 이내에 끝나면 깜빡임 없이 통과.
+    _PAINT_DELAY = 0.3
+
+    # TTY 가 아니면(파일 리다이렉트 등) 매 frame 출력은 spam — 2초마다 한 줄.
+    # 추가로 상태 전환(preparing→downloading→postprocessing) 시점엔 즉시 한 줄.
+    _NONTTY_LOG_INTERVAL = 2.0
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._t0 = time.monotonic()
+        self._state = "preparing"   # preparing | downloading | postprocessing
+        self._event: ProgressEvent | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._is_tty = sys.stderr.isatty()
+        self._frame_idx = 0
+        self._last_log_t = 0.0
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def on_progress(self, event: ProgressEvent) -> None:
+        with self._lock:
+            prev = self._state
+            if event.status == "downloading":
+                self._state = "downloading"
+                self._event = event
+            elif event.status == "finished":
+                # 비디오/오디오 프래그먼트가 끝나면 잠시 postprocessing 으로.
+                # 다음 fragment 가 시작되면 다시 downloading 으로 전환됨.
+                self._state = "postprocessing"
+                self._event = None
+            transitioned = prev != self._state
+        # 상태 전환 시점엔 비-TTY 모드에서도 보이도록 즉시 한 줄 페인팅.
+        if transitioned:
+            self._paint(force=True)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        if self._is_tty:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+
+    def _loop(self) -> None:
+        # 너무 빨리 끝나는 작업에선 스피너를 표시하지 않는다.
+        if self._stop.wait(self._PAINT_DELAY):
+            return
+        self._paint()
+        while not self._stop.wait(0.1):
+            self._paint()
+
+    def _paint(self, *, force: bool = False) -> None:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._t0
+            self._frame_idx = (self._frame_idx + 1) % len(_SPINNER_FRAMES)
+            ch = _SPINNER_FRAMES[self._frame_idx]
+
+            if self._state == "downloading" and self._event:
+                e = self._event
+                pct = e.percent or 0.0
+                done = _human_bytes(e.downloaded_bytes)
+                total = _human_bytes(e.total_bytes) if e.total_bytes else "    ?  "
+                speed = _human_bytes(e.speed) + "/s" if e.speed else "      ?    "
+                eta_str = f"  ETA {e.eta}s" if e.eta else ""
+                line = (
+                    f"  {ch} {pct:5.1f}%  {done} / {total}  @ {speed}"
+                    f"{eta_str}  ({elapsed:.0f}s)"
+                )
             else:
-                sys.stderr.write(line + "\n")
-            sys.stderr.flush()
-        elif event.status == "finished":
-            if state["painting"]:
-                sys.stderr.write("\n")
-                state["painting"] = False
-            if event.filename:
-                sys.stderr.write(f"  ✓ {event.filename}\n")
-            sys.stderr.flush()
+                label = "준비 중" if self._state == "preparing" else "후처리 중"
+                line = f"  {ch} {label}... {elapsed:.1f}s"
 
-    return printer
+            if self._is_tty:
+                sys.stderr.write("\r\033[K" + line)
+                sys.stderr.flush()
+            elif force or now - self._last_log_t >= self._NONTTY_LOG_INTERVAL:
+                sys.stderr.write(line + "\n")
+                sys.stderr.flush()
+                self._last_log_t = now
 
 
 def _read_urls(args: argparse.Namespace) -> list[str]:
@@ -236,6 +310,8 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     no_pl, yes_pl = False, False  # let yt-dlp default
 
+            status = _StatusLine()
+            status.start()
             try:
                 path = engine.download(
                     url,
@@ -253,12 +329,17 @@ def main(argv: list[str] | None = None) -> int:
                     yes_playlist=yes_pl,
                     max_downloads=args.max_downloads,
                     playlist_items=args.playlist_items,
-                    on_progress=_make_progress_printer(),
+                    on_progress=status.on_progress,
                 )
-                print(f"  → {path}", file=sys.stderr)
             except DownloadError as exc:
                 failures.append((url, exc))
                 print(f"  ✗ {exc}", file=sys.stderr)
+            else:
+                print(f"  → {path}", file=sys.stderr)
+            finally:
+                # KeyboardInterrupt 가 download() 한가운데서 발생해도
+                # 페인터 스레드가 단정하게 멈춘다.
+                status.stop()
     except KeyboardInterrupt:
         interrupted_at = i  # noqa: F821 - bound by `for` above when this runs
         print(

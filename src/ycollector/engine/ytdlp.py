@@ -229,6 +229,9 @@ class YtdlpEngine:
             str(self.ytdlp_path),
             "--newline",
             "--progress-template", _PROGRESS_TEMPLATE,
+            # --print 가 yt-dlp 의 --quiet 를 묵시적으로 켜서 진행률 출력이 사라지므로
+            # --no-quiet 로 명시적 해제 — 진행률 + 최종 경로 둘 다 받기 위해 필수.
+            "--no-quiet",
             "--print", _FINAL_PATH_TEMPLATE,
             "-f", format,
             "--merge-output-format", merge_format,
