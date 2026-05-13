@@ -1,6 +1,6 @@
 # YCollector 사용설명서
 
-- **문서 버전**: 1.1 (Phase 0 Day 2 기준 — 포맷 UI 개편 + .exe 빌드 추가)
+- **문서 버전**: 1.2 (Phase 0 Day 3 기준 — 이어받기 / 취소 / 멈춤 대응)
 - **작성일**: 2026-05-13 (YYMMDD: 260513), 최종 갱신 2026-05-13
 - **대상**: 데스크톱(Windows 우선) 사용자
 - **연관**:
@@ -543,15 +543,42 @@ uv sync
 
 현재는 yt-dlp 인자 직접 전달 어려움. Phase 2까지 기다리거나 yt-dlp 단독 사용 권장.
 
-### 5.4 다운로드가 너무 느림
+### 5.4 다운로드가 멈춘 것 같음 / 너무 느림
 
-YouTube가 의도적으로 단일 연결 속도를 떨어뜨리는 경우. 대응:
+증상: 진행률이 1분 이상 변화가 없음, 또는 속도가 KB/s 단위로 떨어짐.
 
+**즉시 대응** — 안전하게 중단해도 됩니다. **.part 파일이 남아 다시 실행하면 자동 이어받기**:
+
+CLI:
+```powershell
+# Ctrl+C → 현재 작업 안전 중단
+# 같은 명령으로 다시 실행 → 자동 이어받기
+uv run ycollector URL ...
+```
+
+GUI:
+- "취소 (이어받기 가능)" 버튼 클릭 → subprocess 안전 종료
+- 같은 URL+옵션으로 다시 다운로드 → 이어받기
+
+**적극 대응** — 멈춤이 잦으면 stall 감지 옵션 강화:
+
+```powershell
+# 15초 동안 데이터가 안 오면 abort+retry, 100KB/s 미만이면 connection 재시작
+uv run ycollector URL --socket-timeout 15 --throttled-rate 100K --retries 20
+```
+
+| 옵션 | 기본값 | 의미 |
+|---|---|---|
+| `--socket-timeout SEC` | 30 | N초 동안 데이터 없으면 abort+retry |
+| `--retries N` | 10 | 연결 실패 재시도 횟수 |
+| `--fragment-retries N` | 10 | DASH/HLS 프래그먼트 재시도 |
+| `--throttled-rate RATE` | (미설정) | 이 속도 미만이면 connection 재시작 (예: `100K`) |
+
+**근본 대응**:
 1. yt-dlp 최신 확인 (`uv lock --upgrade-package yt-dlp && uv sync`)
-2. 시간대 변경 시도 (피크 시간대 회피)
-3. 인터넷 속도 자체 확인
-
-> Phase 1에서 aria2c 다중 연결 옵션이 추가됩니다.
+2. 시간대 변경 (YouTube 피크 시간대 회피)
+3. 인터넷 자체 속도 점검
+4. (Phase 1) aria2c 다중 연결 옵션
 
 ### 5.5 한글 파일명 깨짐
 
@@ -726,7 +753,66 @@ YCollector가 다른 OSS yt-dlp 래퍼와 다른 점. **현재 Phase 0에는 없
 
 ---
 
-## 9. 도움 받기 / 기여
+## 9. 이어받기 / 취소 / 멈춤 대응
+
+### 9.1 이어받기 (Resume)
+
+**자동입니다 — 별도 옵션 불필요.**
+
+yt-dlp는 다운로드 중 영상별 임시 파일을 `<제목>.<id>.fNNN.<ext>.part` 같은 이름으로 저장합니다. 다음 둘 중 어느 상황이든 동일한 명령을 다시 실행하면 **이어받기**됩니다:
+
+| 발생 상황 | 결과 |
+|---|---|
+| Ctrl+C로 중단 | `.part` 남음 → 재실행 시 이어받기 |
+| GUI "취소" 버튼 | `.part` 남음 → 재실행 시 이어받기 |
+| 네트워크 끊김 | yt-dlp가 자동 재시도 (`--retries 10`) |
+| 컴퓨터 갑작스러운 종료 | `.part` 남음 → 재실행 시 이어받기 |
+| 디스크 가득 → 실패 | `.part` 남음 → 공간 확보 후 재실행 |
+
+**중요한 조건**: 같은 **URL + 출력 폴더 + 출력 템플릿 + 포맷**일 때만 이어받기됨. 셋 중 하나라도 다르면 새로 받습니다.
+
+### 9.2 취소
+
+**CLI**:
+- `Ctrl+C` 한 번 → 안전하게 subprocess 종료. `.part` 보존. 종료 코드 `3`.
+- 친절한 안내 메시지가 표시됩니다.
+
+**GUI**:
+- "지금 다운로드" 버튼이 다운로드 중에는 빨간색 **"취소 (이어받기 가능)"** 버튼으로 바뀝니다.
+- 클릭 → 현재 작업 즉시 종료 (5초 내 정리, 그 후 강제 kill).
+- 다음 큐 작업도 함께 중단됩니다 (1개 → 1개씩 처리).
+
+### 9.3 멈춤 감지 / 자동 재시작
+
+기본값으로 다음 보호장치가 작동합니다:
+
+| 보호장치 | 기본 |
+|---|---|
+| `--socket-timeout 30` | 30초 동안 데이터가 안 오면 socket abort → 자동 재시도 |
+| `--retries 10` | 연결 실패 시 최대 10회 재시도 |
+| `--fragment-retries 10` | DASH/HLS 프래그먼트 실패 시 최대 10회 재시도 |
+
+**더 적극적**:
+```powershell
+# 짧은 timeout + throttle 감지 + 더 많은 retry
+uv run ycollector URL --socket-timeout 15 --throttled-rate 100K --retries 20
+```
+
+`--throttled-rate 100K` — 다운로드 속도가 100KB/s 미만으로 떨어지면 yt-dlp가 connection을 재시작. YouTube 측 throttling 대응에 효과적.
+
+### 9.4 자주 발생하는 문제
+
+| 증상 | 원인 가능성 | 즉시 대응 |
+|---|---|---|
+| 진행률이 1분+ 정지 | TCP 연결 동결 | Ctrl+C → 재실행 (자동 이어받기) |
+| 속도가 KB/s 단위 | YouTube throttling | `--throttled-rate 100K` 추가 |
+| HLS 라이브 일부 누락 | 프래그먼트 실패 | `--fragment-retries 30` |
+| 자정 즈음에만 빠름 | 피크 시간 throttling | 시간대 변경 |
+| 항상 1080p에서 느림 | 봇 감지 (저화질로 강등) | 쿠키 임포트 (5.3) |
+
+---
+
+## 10. 도움 받기 / 기여
 
 - **버그 / 기능 요청**: https://github.com/dalyulbam/YCollector/issues
 - **소스 코드**: https://github.com/dalyulbam/YCollector

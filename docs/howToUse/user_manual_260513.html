@@ -440,7 +440,7 @@ body {
 <li><a href="#4-potoken-provider-phase-2-ui">4순위: PoToken provider (Phase 2에서 가이디드 UI로 추가 예정)</a></li>
 </ul>
 </li>
-<li><a href="#54">5.4 다운로드가 너무 느림</a></li>
+<li><a href="#54">5.4 다운로드가 멈춘 것 같음 / 너무 느림</a></li>
 <li><a href="#55">5.5 한글 파일명 깨짐</a></li>
 <li><a href="#56-4k">5.6 4K가 안 받아짐</a></li>
 <li><a href="#57-gui">5.7 GUI가 안 뜨고 에러</a></li>
@@ -466,7 +466,14 @@ body {
 </li>
 <li><a href="#7-roadmap">7. 향후 기능 (Roadmap 요약)</a></li>
 <li><a href="#8-6-d1d6">8. 차별화 6가지 (D1~D6 — 미래 가치)</a></li>
-<li><a href="#9">9. 도움 받기 / 기여</a></li>
+<li><a href="#9">9. 이어받기 / 취소 / 멈춤 대응</a><ul>
+<li><a href="#91-resume">9.1 이어받기 (Resume)</a></li>
+<li><a href="#92">9.2 취소</a></li>
+<li><a href="#93">9.3 멈춤 감지 / 자동 재시작</a></li>
+<li><a href="#94">9.4 자주 발생하는 문제</a></li>
+</ul>
+</li>
+<li><a href="#10">10. 도움 받기 / 기여</a></li>
 </ul>
 
   </aside>
@@ -479,7 +486,7 @@ body {
     </div>
     <h1 id="ycollector">YCollector 사용설명서<a class="headerlink" href="#ycollector" title="Permanent link">¶</a></h1>
 <ul>
-<li><strong>문서 버전</strong>: 1.1 (Phase 0 Day 2 기준 — 포맷 UI 개편 + .exe 빌드 추가)</li>
+<li><strong>문서 버전</strong>: 1.2 (Phase 0 Day 3 기준 — 이어받기 / 취소 / 멈춤 대응)</li>
 <li><strong>작성일</strong>: 2026-05-13 (YYMMDD: 260513), 최종 갱신 2026-05-13</li>
 <li><strong>대상</strong>: 데스크톱(Windows 우선) 사용자</li>
 <li><strong>연관</strong>:
@@ -1075,16 +1082,59 @@ uv run yt-dlp --live-from-start --hls-use-mpegts URL</code></p>
 
 <h4 id="4-potoken-provider-phase-2-ui">4순위: PoToken provider (Phase 2에서 가이디드 UI로 추가 예정)<a class="headerlink" href="#4-potoken-provider-phase-2-ui" title="Permanent link">¶</a></h4>
 <p>현재는 yt-dlp 인자 직접 전달 어려움. Phase 2까지 기다리거나 yt-dlp 단독 사용 권장.</p>
-<h3 id="54">5.4 다운로드가 너무 느림<a class="headerlink" href="#54" title="Permanent link">¶</a></h3>
-<p>YouTube가 의도적으로 단일 연결 속도를 떨어뜨리는 경우. 대응:</p>
-<ol>
-<li>yt-dlp 최신 확인 (<code>uv lock --upgrade-package yt-dlp &amp;&amp; uv sync</code>)</li>
-<li>시간대 변경 시도 (피크 시간대 회피)</li>
-<li>인터넷 속도 자체 확인</li>
-</ol>
-<blockquote>
-<p>Phase 1에서 aria2c 다중 연결 옵션이 추가됩니다.</p>
-</blockquote>
+<h3 id="54">5.4 다운로드가 멈춘 것 같음 / 너무 느림<a class="headerlink" href="#54" title="Permanent link">¶</a></h3>
+<p>증상: 진행률이 1분 이상 변화가 없음, 또는 속도가 KB/s 단위로 떨어짐.</p>
+<p><strong>즉시 대응</strong> — 안전하게 중단해도 됩니다. <strong>.part 파일이 남아 다시 실행하면 자동 이어받기</strong>:</p>
+<p>CLI:</p>
+<div class="codehilite"><pre><span></span><code><span class="c"># Ctrl+C → 현재 작업 안전 중단</span>
+<span class="c"># 같은 명령으로 다시 실행 → 자동 이어받기</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">...</span>
+</code></pre></div>
+
+<p>GUI:
+- "취소 (이어받기 가능)" 버튼 클릭 → subprocess 안전 종료
+- 같은 URL+옵션으로 다시 다운로드 → 이어받기</p>
+<p><strong>적극 대응</strong> — 멈춤이 잦으면 stall 감지 옵션 강화:</p>
+<div class="codehilite"><pre><span></span><code><span class="c"># 15초 동안 데이터가 안 오면 abort+retry, 100KB/s 미만이면 connection 재시작</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-socket-timeout</span> <span class="n">15</span> <span class="p">-</span><span class="n">-throttled-rate</span> <span class="n">100K</span> <span class="p">-</span><span class="n">-retries</span> <span class="n">20</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>옵션</th>
+<th>기본값</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--socket-timeout SEC</code></td>
+<td>30</td>
+<td>N초 동안 데이터 없으면 abort+retry</td>
+</tr>
+<tr>
+<td><code>--retries N</code></td>
+<td>10</td>
+<td>연결 실패 재시도 횟수</td>
+</tr>
+<tr>
+<td><code>--fragment-retries N</code></td>
+<td>10</td>
+<td>DASH/HLS 프래그먼트 재시도</td>
+</tr>
+<tr>
+<td><code>--throttled-rate RATE</code></td>
+<td>(미설정)</td>
+<td>이 속도 미만이면 connection 재시작 (예: <code>100K</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>근본 대응</strong>:
+1. yt-dlp 최신 확인 (<code>uv lock --upgrade-package yt-dlp &amp;&amp; uv sync</code>)
+2. 시간대 변경 (YouTube 피크 시간대 회피)
+3. 인터넷 자체 속도 점검
+4. (Phase 1) aria2c 다중 연결 옵션</p>
 <h3 id="55">5.5 한글 파일명 깨짐<a class="headerlink" href="#55" title="Permanent link">¶</a></h3>
 <p>PowerShell 콘솔 코드페이지:</p>
 <div class="codehilite"><pre><span></span><code><span class="n">chcp</span> <span class="n">65001</span>
@@ -1325,7 +1375,118 @@ uv run yt-dlp --live-from-start --hls-use-mpegts URL</code></p>
 </table>
 <p>상세: <a href="../plan/youtube_downloader_plan_260508.html#105-차별화-전략-differentiation-strategy">plan §10.5 차별화 전략</a>.</p>
 <hr />
-<h2 id="9">9. 도움 받기 / 기여<a class="headerlink" href="#9" title="Permanent link">¶</a></h2>
+<h2 id="9">9. 이어받기 / 취소 / 멈춤 대응<a class="headerlink" href="#9" title="Permanent link">¶</a></h2>
+<h3 id="91-resume">9.1 이어받기 (Resume)<a class="headerlink" href="#91-resume" title="Permanent link">¶</a></h3>
+<p><strong>자동입니다 — 별도 옵션 불필요.</strong></p>
+<p>yt-dlp는 다운로드 중 영상별 임시 파일을 <code>&lt;제목&gt;.&lt;id&gt;.fNNN.&lt;ext&gt;.part</code> 같은 이름으로 저장합니다. 다음 둘 중 어느 상황이든 동일한 명령을 다시 실행하면 <strong>이어받기</strong>됩니다:</p>
+<table>
+<thead>
+<tr>
+<th>발생 상황</th>
+<th>결과</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ctrl+C로 중단</td>
+<td><code>.part</code> 남음 → 재실행 시 이어받기</td>
+</tr>
+<tr>
+<td>GUI "취소" 버튼</td>
+<td><code>.part</code> 남음 → 재실행 시 이어받기</td>
+</tr>
+<tr>
+<td>네트워크 끊김</td>
+<td>yt-dlp가 자동 재시도 (<code>--retries 10</code>)</td>
+</tr>
+<tr>
+<td>컴퓨터 갑작스러운 종료</td>
+<td><code>.part</code> 남음 → 재실행 시 이어받기</td>
+</tr>
+<tr>
+<td>디스크 가득 → 실패</td>
+<td><code>.part</code> 남음 → 공간 확보 후 재실행</td>
+</tr>
+</tbody>
+</table>
+<p><strong>중요한 조건</strong>: 같은 <strong>URL + 출력 폴더 + 출력 템플릿 + 포맷</strong>일 때만 이어받기됨. 셋 중 하나라도 다르면 새로 받습니다.</p>
+<h3 id="92">9.2 취소<a class="headerlink" href="#92" title="Permanent link">¶</a></h3>
+<p><strong>CLI</strong>:
+- <code>Ctrl+C</code> 한 번 → 안전하게 subprocess 종료. <code>.part</code> 보존. 종료 코드 <code>3</code>.
+- 친절한 안내 메시지가 표시됩니다.</p>
+<p><strong>GUI</strong>:
+- "지금 다운로드" 버튼이 다운로드 중에는 빨간색 <strong>"취소 (이어받기 가능)"</strong> 버튼으로 바뀝니다.
+- 클릭 → 현재 작업 즉시 종료 (5초 내 정리, 그 후 강제 kill).
+- 다음 큐 작업도 함께 중단됩니다 (1개 → 1개씩 처리).</p>
+<h3 id="93">9.3 멈춤 감지 / 자동 재시작<a class="headerlink" href="#93" title="Permanent link">¶</a></h3>
+<p>기본값으로 다음 보호장치가 작동합니다:</p>
+<table>
+<thead>
+<tr>
+<th>보호장치</th>
+<th>기본</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--socket-timeout 30</code></td>
+<td>30초 동안 데이터가 안 오면 socket abort → 자동 재시도</td>
+</tr>
+<tr>
+<td><code>--retries 10</code></td>
+<td>연결 실패 시 최대 10회 재시도</td>
+</tr>
+<tr>
+<td><code>--fragment-retries 10</code></td>
+<td>DASH/HLS 프래그먼트 실패 시 최대 10회 재시도</td>
+</tr>
+</tbody>
+</table>
+<p><strong>더 적극적</strong>:</p>
+<div class="codehilite"><pre><span></span><code><span class="c"># 짧은 timeout + throttle 감지 + 더 많은 retry</span>
+<span class="n">uv</span> <span class="n">run</span> <span class="n">ycollector</span> <span class="n">URL</span> <span class="p">-</span><span class="n">-socket-timeout</span> <span class="n">15</span> <span class="p">-</span><span class="n">-throttled-rate</span> <span class="n">100K</span> <span class="p">-</span><span class="n">-retries</span> <span class="n">20</span>
+</code></pre></div>
+
+<p><code>--throttled-rate 100K</code> — 다운로드 속도가 100KB/s 미만으로 떨어지면 yt-dlp가 connection을 재시작. YouTube 측 throttling 대응에 효과적.</p>
+<h3 id="94">9.4 자주 발생하는 문제<a class="headerlink" href="#94" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>증상</th>
+<th>원인 가능성</th>
+<th>즉시 대응</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>진행률이 1분+ 정지</td>
+<td>TCP 연결 동결</td>
+<td>Ctrl+C → 재실행 (자동 이어받기)</td>
+</tr>
+<tr>
+<td>속도가 KB/s 단위</td>
+<td>YouTube throttling</td>
+<td><code>--throttled-rate 100K</code> 추가</td>
+</tr>
+<tr>
+<td>HLS 라이브 일부 누락</td>
+<td>프래그먼트 실패</td>
+<td><code>--fragment-retries 30</code></td>
+</tr>
+<tr>
+<td>자정 즈음에만 빠름</td>
+<td>피크 시간 throttling</td>
+<td>시간대 변경</td>
+</tr>
+<tr>
+<td>항상 1080p에서 느림</td>
+<td>봇 감지 (저화질로 강등)</td>
+<td>쿠키 임포트 (5.3)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10">10. 도움 받기 / 기여<a class="headerlink" href="#10" title="Permanent link">¶</a></h2>
 <ul>
 <li><strong>버그 / 기능 요청</strong>: https://github.com/dalyulbam/YCollector/issues</li>
 <li><strong>소스 코드</strong>: https://github.com/dalyulbam/YCollector</li>

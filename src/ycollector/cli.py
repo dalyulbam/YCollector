@@ -121,6 +121,16 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Comma-separated subtitle languages (default: ko,en).")
     p.add_argument("--cookies-from-browser", metavar="BROWSER",
                    help="Import cookies from browser (chrome, firefox, edge, brave, ...).")
+    # ── stall mitigation ───────────────────────────────────────────────────
+    p.add_argument("--socket-timeout", type=int, default=30, metavar="SEC",
+                   help="Abort hung sockets after N seconds and retry (default: 30).")
+    p.add_argument("--retries", type=int, default=10, metavar="N",
+                   help="Retries for failed connections (default: 10).")
+    p.add_argument("--fragment-retries", type=int, default=10, metavar="N",
+                   help="Retries for failed DASH/HLS fragments (default: 10).")
+    p.add_argument("--throttled-rate", metavar="RATE",
+                   help="If download rate falls below RATE (e.g. '100K'), restart "
+                        "the connection. Useful against YouTube throttling.")
     p.add_argument("--version", action="version", version=f"ycollector {__version__}")
     return p
 
@@ -160,23 +170,41 @@ def main(argv: list[str] | None = None) -> int:
         print(f"format spec: {args.format}", file=sys.stderr)
 
     failures: list[tuple[str, DownloadError]] = []
-    for i, url in enumerate(urls, start=1):
-        print(f"\n[{i}/{len(urls)}] {url}", file=sys.stderr)
-        try:
-            path = engine.download(
-                url,
-                format=args.format,
-                output_dir=args.output_dir,
-                merge_format=args.container,
-                write_subs=not args.no_subs,
-                sub_langs=args.sub_langs.split(",") if args.sub_langs else (),
-                cookies_from_browser=args.cookies_from_browser,
-                on_progress=_make_progress_printer(),
-            )
-            print(f"  → {path}", file=sys.stderr)
-        except DownloadError as exc:
-            failures.append((url, exc))
-            print(f"  ✗ {exc}", file=sys.stderr)
+    interrupted_at: int | None = None
+    try:
+        for i, url in enumerate(urls, start=1):
+            print(f"\n[{i}/{len(urls)}] {url}", file=sys.stderr)
+            try:
+                path = engine.download(
+                    url,
+                    format=args.format,
+                    output_dir=args.output_dir,
+                    merge_format=args.container,
+                    write_subs=not args.no_subs,
+                    sub_langs=args.sub_langs.split(",") if args.sub_langs else (),
+                    cookies_from_browser=args.cookies_from_browser,
+                    socket_timeout=args.socket_timeout,
+                    retries=args.retries,
+                    fragment_retries=args.fragment_retries,
+                    throttled_rate=args.throttled_rate,
+                    on_progress=_make_progress_printer(),
+                )
+                print(f"  → {path}", file=sys.stderr)
+            except DownloadError as exc:
+                failures.append((url, exc))
+                print(f"  ✗ {exc}", file=sys.stderr)
+    except KeyboardInterrupt:
+        interrupted_at = i  # noqa: F821 - bound by `for` above when this runs
+        print(
+            "\n\n중단됨 (Ctrl+C). 부분 다운로드(.part)가 남아 있어, "
+            "동일한 명령으로 다시 실행하면 yt-dlp가 자동으로 이어받기를 합니다.\n"
+            "  → 멈춤이 잦으면: --socket-timeout 15 --throttled-rate 100K",
+            file=sys.stderr,
+        )
+
+    if interrupted_at is not None:
+        print(f"  진행: {interrupted_at - 1}/{len(urls)} 완료, 1개 중단", file=sys.stderr)
+        return 3
 
     if failures:
         print(f"\n{len(failures)}/{len(urls)} failed:", file=sys.stderr)

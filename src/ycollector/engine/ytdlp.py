@@ -27,6 +27,8 @@ ERROR_PATTERNS: dict[str, str] = {
     "video-removed":   r"Video unavailable|has been removed",
     "network":         r"Connection (reset|refused|aborted)|timed out",
     "disk-full":       r"No space left on device|errno 28",
+    "throttled":       r"throttled|throttling|slow",
+    "cancelled":       r"interrupted|cancelled|user aborted",
 }
 
 
@@ -157,13 +159,35 @@ class YtdlpEngine:
         write_subs: bool = True,
         sub_langs: Iterable[str] = ("ko", "en"),
         cookies_from_browser: str | None = None,
+        socket_timeout: int | None = 30,
+        retries: int = 10,
+        fragment_retries: int = 10,
+        throttled_rate: str | None = None,
         extra_args: list[str] | None = None,
         on_progress: Callable[[ProgressEvent], None] | None = None,
         on_log: Callable[[str], None] | None = None,
+        on_process: Callable[[subprocess.Popen[str]], None] | None = None,
     ) -> Path:
         """Download URL and return the final filepath.
 
-        Raises ``DownloadError`` (with a classified ``category``) on failure.
+        Raises :class:`DownloadError` (with a classified ``category``) on
+        failure. Re-running the same command will automatically resume from
+        the partial ``.part`` file (yt-dlp's default behaviour).
+
+        Stall mitigation:
+          - ``socket_timeout`` (sec): abort socket if no data arrives within N
+            seconds and retry. Default 30 — yt-dlp's own default is ~600s.
+          - ``retries`` / ``fragment_retries``: how many times to retry a
+            failed connection / DASH-HLS fragment.
+          - ``throttled_rate`` (e.g. ``"100K"``): if download rate falls below
+            this for too long, restart the connection. Useful against
+            YouTube throttling. Disabled by default.
+
+        Cancellation:
+          - ``on_process(proc)`` callback receives the live ``Popen`` so that
+            another thread (e.g. the Qt worker) can call ``proc.terminate()``
+            to cancel cooperatively. The terminated subprocess raises a
+            ``DownloadError(category="cancelled", ...)`` here.
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         outtmpl = str(output_dir / output_template)
@@ -175,7 +199,13 @@ class YtdlpEngine:
             "-f", format,
             "--merge-output-format", merge_format,
             "-o", outtmpl,
+            "--retries", str(retries),
+            "--fragment-retries", str(fragment_retries),
         ]
+        if socket_timeout:
+            cmd += ["--socket-timeout", str(socket_timeout)]
+        if throttled_rate:
+            cmd += ["--throttled-rate", throttled_rate]
         if write_subs and sub_langs:
             cmd += [
                 "--write-subs",
@@ -197,37 +227,56 @@ class YtdlpEngine:
             encoding="utf-8",
             errors="replace",
         )
+        if on_process:
+            on_process(proc)
 
         final_path: Path | None = None
         stderr_lines: list[str] = []
 
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            line = raw.rstrip()
-            if line.startswith(_PROGRESS_MARKER):
-                event = _parse_progress(line[len(_PROGRESS_MARKER):])
-                if event is None:
-                    continue
-                if event.filename:
-                    final_path = Path(event.filename)
-                if on_progress:
-                    on_progress(event)
-            elif line:
-                if on_log:
-                    on_log(line)
+        try:
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                line = raw.rstrip()
+                if line.startswith(_PROGRESS_MARKER):
+                    event = _parse_progress(line[len(_PROGRESS_MARKER):])
+                    if event is None:
+                        continue
+                    if event.filename:
+                        final_path = Path(event.filename)
+                    if on_progress:
+                        on_progress(event)
+                elif line:
+                    if on_log:
+                        on_log(line)
 
-        assert proc.stderr is not None
-        for raw in proc.stderr:
-            line = raw.rstrip()
-            if line:
-                stderr_lines.append(line)
-                if on_log:
-                    on_log(line)
+            assert proc.stderr is not None
+            for raw in proc.stderr:
+                line = raw.rstrip()
+                if line:
+                    stderr_lines.append(line)
+                    if on_log:
+                        on_log(line)
+        finally:
+            # Make sure subprocess never outlives this function.
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
-        proc.wait()
         if proc.returncode != 0:
             stderr = "\n".join(stderr_lines)
-            last = stderr_lines[-1] if stderr_lines else f"yt-dlp exited with {proc.returncode}"
+            # `terminate()` / Ctrl+C usually surfaces as a negative return
+            # code on POSIX or a non-zero on Windows.  Treat any non-success
+            # while we have no real stderr as cancellation.
+            if not stderr_lines:
+                raise DownloadError(
+                    category="cancelled",
+                    message=f"yt-dlp interrupted (exit {proc.returncode})",
+                    raw_stderr="",
+                )
+            last = stderr_lines[-1]
             raise DownloadError(
                 category=classify_error(stderr),
                 message=last,

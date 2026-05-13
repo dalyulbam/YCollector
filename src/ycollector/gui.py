@@ -16,6 +16,7 @@ Coming in later phases (per plan §11.5.2):
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -66,7 +67,13 @@ from ycollector.engine import (
 # Worker threads
 # ────────────────────────────────────────────────────────────────────────────
 class DownloadWorker(QObject):
-    """Sequentially download URLs using ``YtdlpEngine``."""
+    """Sequentially download URLs using ``YtdlpEngine``.
+
+    Supports cooperative cancellation via :meth:`cancel`: the engine hands
+    us the live ``Popen`` so we can ``terminate()`` it from the UI thread.
+    Partial ``.part`` files survive the cancellation, and re-running the
+    same job resumes from where it stopped (yt-dlp built-in behaviour).
+    """
 
     progress = Signal(object)            # ProgressEvent
     log = Signal(str)
@@ -92,6 +99,21 @@ class DownloadWorker(QObject):
         self._write_subs = write_subs
         self._sub_langs = sub_langs
         self._cookies_from_browser = cookies_from_browser
+        self._cancelled = False
+        self._proc: subprocess.Popen[str] | None = None
+
+    def cancel(self) -> None:
+        """Request graceful cancellation. Safe to call from another thread."""
+        self._cancelled = True
+        proc = self._proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _capture_proc(self, proc: subprocess.Popen[str]) -> None:
+        self._proc = proc
 
     def run(self) -> None:
         try:
@@ -103,6 +125,9 @@ class DownloadWorker(QObject):
         self.log.emit(f"yt-dlp {engine.version()}  (ycollector {__version__})")
 
         for i, url in enumerate(self._urls, start=1):
+            if self._cancelled:
+                self.log.emit("\n[!] 사용자 취소 — 남은 작업 중단.")
+                break
             self.log.emit(f"\n[{i}/{len(self._urls)}] {url}")
             try:
                 path = engine.download(
@@ -115,10 +140,19 @@ class DownloadWorker(QObject):
                     cookies_from_browser=self._cookies_from_browser,
                     on_progress=self.progress.emit,
                     on_log=self.log.emit,
+                    on_process=self._capture_proc,
                 )
                 self.item_done.emit(str(path))
             except DownloadError as exc:
+                if exc.category == "cancelled" or self._cancelled:
+                    self.log.emit(
+                        f"  ✗ 취소됨. .part 파일이 남아 있어 같은 옵션으로 "
+                        f"다시 시작하면 자동 이어받기됩니다."
+                    )
+                    break
                 self.item_failed.emit(url, exc.category, exc.message)
+            finally:
+                self._proc = None
         self.all_done.emit()
 
 
@@ -572,8 +606,20 @@ class MainWindow(QMainWindow):
 
         self.dl_btn = QPushButton("지금 다운로드")
         self.dl_btn.setMinimumHeight(36)
+        self.dl_btn.setMinimumWidth(160)
         self.dl_btn.setDefault(True)
         self.dl_btn.clicked.connect(self._start_download)
+
+        self.cancel_btn = QPushButton("취소 (이어받기 가능)")
+        self.cancel_btn.setMinimumHeight(36)
+        self.cancel_btn.setMinimumWidth(160)
+        self.cancel_btn.setVisible(False)
+        self.cancel_btn.setStyleSheet("QPushButton { color: #b91c1c; font-weight: 600; }")
+        self.cancel_btn.setToolTip(
+            "현재 다운로드를 중단합니다. .part 파일이 남아 있어, "
+            "동일한 URL/옵션으로 다시 다운로드하면 yt-dlp가 자동으로 이어받기를 합니다."
+        )
+        self.cancel_btn.clicked.connect(self._cancel_download)
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -585,6 +631,7 @@ class MainWindow(QMainWindow):
 
         action_row = QHBoxLayout()
         action_row.addStretch(1)
+        action_row.addWidget(self.cancel_btn)
         action_row.addWidget(self.dl_btn)
 
         layout = QVBoxLayout()
@@ -637,7 +684,9 @@ class MainWindow(QMainWindow):
             self.log_view.appendPlainText("[!] URL이 비어 있습니다.")
             return
 
-        self.dl_btn.setEnabled(False)
+        self.dl_btn.setVisible(False)
+        self.cancel_btn.setVisible(True)
+        self.cancel_btn.setEnabled(True)
         self.log_view.appendPlainText(f"\n— {len(urls)}개 다운로드 시작 —")
 
         thread = QThread(self)
@@ -665,8 +714,17 @@ class MainWindow(QMainWindow):
         self._worker = worker
         thread.start()
 
+    def _cancel_download(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel()
+            self.cancel_btn.setEnabled(False)
+            self.cancel_btn.setText("취소 중…")
+            self.statusBar().showMessage("취소 요청됨 — 정리 중…")
+
     def _on_thread_finished(self) -> None:
-        self.dl_btn.setEnabled(True)
+        self.dl_btn.setVisible(True)
+        self.cancel_btn.setVisible(False)
+        self.cancel_btn.setText("취소 (이어받기 가능)")
         self.statusBar().showMessage("완료", 4000)
         if self._thread is not None:
             self._thread.deleteLater()
