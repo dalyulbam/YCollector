@@ -44,6 +44,9 @@ class Settings:
     embed_subs: bool = True
     sub_langs: list[str] = field(default_factory=lambda: ["ko", "en"])
     cookies_from_browser: str | None = None
+    # Netscape cookies.txt 경로. None 이면 default_cookies_path() 자동 탐지.
+    # 우선순위: cookies_file > cookies_from_browser.
+    cookies_file: str | None = None
 
     # [playlist] — playlist handling
     playlist_mode: str = "auto"  # auto | expand | single
@@ -94,6 +97,9 @@ def load_settings(explicit: Path | None = None) -> tuple[Settings, Path | None]:
             s.sub_langs = [x.strip() for x in o["sub_langs"].split(",") if x.strip()]
         cb = (o.get("cookies_from_browser") or "").strip()
         s.cookies_from_browser = cb or None
+        cf = (o.get("cookies_file") or "").strip()
+        # 환경변수 expand — %APPDATA% 등.
+        s.cookies_file = os.path.expandvars(cf) if cf else None
 
     if "playlist" in parser:
         pl = parser["playlist"]
@@ -176,7 +182,14 @@ output_dir = downloads
 embed_subs = true
 sub_langs = ko,en
 # 쿠키 임포트 브라우저 (chrome|firefox|edge|brave, 빈 값 = 사용 안 함)
+# 주의: 해당 브라우저는 yt-dlp 실행 중 완전 종료돼있어야 함(파일 락 충돌).
+# 메인 Chrome 을 켜둔 채로 쓰고 싶다면 아래 cookies_file 을 권장.
 cookies_from_browser =
+
+# Netscape HTTP Cookie File 경로 (예: %APPDATA%\YCollector\cookies.txt).
+# 빈 값이면 ycollector 가 기본 위치를 자동 탐지. cookies_from_browser 보다 우선.
+# 생성:  uv run ycollector-login   (별 Chromium 으로 로그인 → 자동 저장)
+cookies_file =
 
 [playlist]
 # 재생목록 처리 모드.

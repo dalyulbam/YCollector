@@ -21,14 +21,28 @@ classifiers = [
 ]
 dependencies = [
     "yt-dlp>=2026.2.0",
-    "PySide6>=6.8.0",
 ]
 
 [project.optional-dependencies]
+# 레거시 PySide6 GUI(`ycollector-gui`). 신규 Tauri UI 사용자는 설치 불필요.
+# 새 UI가 기능 패리티에 도달하면 본 extras도 제거 예정.
+gui-legacy = [
+    "PySide6>=6.8.0",
+]
+# 가상 Chromium(Playwright)으로 YouTube 로그인 → cookies.txt export.
+# 메인 Chrome 종료 없이 비공개/멤버십/연령제한 영상 다운로드 가능.
+# 사용:  uv sync --extra cookies-headed && uv run playwright install chromium
+#       uv run ycollector-login
+cookies-headed = [
+    "playwright>=1.50.0",
+]
 transcribe = [
     "faster-whisper>=1.0.0",
 ]
 build = [
+    # legacy GUI 빌드에 PySide6 필요. CLI(sidecar)만 빌드할 때도
+    # build_exe.py 의 --enable-plugin=pyside6 가 자동으로 skip.
+    "PySide6>=6.8.0",
     "nuitka>=2.5",
     "pyinstaller>=6.10",
     # Nuitka build orchestration extras (Windows)
@@ -41,6 +55,7 @@ dev = [
 
 [project.scripts]
 ycollector = "ycollector.cli:main"
+ycollector-login = "ycollector.cookies:main"
 
 [project.gui-scripts]
 ycollector-gui = "ycollector.gui:main"

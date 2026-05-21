@@ -43,6 +43,9 @@ ERROR_PATTERNS: dict[str, str] = {
     "age-restricted":  r"is age restricted|age[- ]restricted",
     "geo-blocked":     r"not available in your country|geo[- ]restricted",
     "rate-limit":      r"HTTP Error 429",
+    # 브라우저가 실행 중이라 쿠키 SQLite DB 에 락이 걸린 경우. yt-dlp 이슈 #7271.
+    # 해결: 해당 브라우저 완전 종료, 또는 ycollector-login 으로 cookies.txt 생성.
+    "cookies-locked":  r"Could not copy .* cookie database|cookies (?:are|is) (?:locked|in use)",
     # yt-dlp 의 EJS(Extractor JS) 의존성. 재생목록 등 일부 추출 경로가 deno/node 같은
     # 외부 JS 런타임을 필요로 함. 사용자 가이드: `winget install DenoLand.Deno`.
     "js-runtime":      r"No supported JavaScript runtime|n challenge solving failed",
@@ -312,6 +315,7 @@ class YtdlpEngine:
         write_subs: bool = True,
         sub_langs: Iterable[str] = ("ko", "en"),
         cookies_from_browser: str | None = None,
+        cookies_file: Path | None = None,
         socket_timeout: int | None = 30,
         retries: int = 10,
         fragment_retries: int = 10,
@@ -392,7 +396,11 @@ class YtdlpEngine:
                 "--sub-langs", ",".join(sub_langs),
                 "--embed-subs",
             ]
-        if cookies_from_browser:
+        # 쿠키: file 이 browser 보다 우선. 둘 다 주면 file 만 사용.
+        # (yt-dlp 가 둘 다 받지만 file 이 더 안정적 + Chrome 락 회피 가능)
+        if cookies_file is not None:
+            cmd += ["--cookies", str(cookies_file)]
+        elif cookies_from_browser:
             cmd += ["--cookies-from-browser", cookies_from_browser]
         if extra_args:
             cmd += extra_args

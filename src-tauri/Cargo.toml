@@ -1,0 +1,35 @@
+[package]
+name = "ycollector-app"
+version = "0.1.0"
+edition = "2021"
+description = "YCollector — YouTube downloader (Tauri shell)"
+license = "TBD"
+default-run = "ycollector-app"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2.0"
+tauri-plugin-shell = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+configparser = "3"
+dirs = "5"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

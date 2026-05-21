@@ -247,7 +247,14 @@ def _build_parser(s: Settings) -> argparse.ArgumentParser:
                         f"(default from settings.ini: {','.join(s.sub_langs)}).")
     p.add_argument("--cookies-from-browser", metavar="BROWSER",
                    default=s.cookies_from_browser,
-                   help="Import cookies from browser (chrome, firefox, edge, brave, ...).")
+                   help="Import cookies from browser (chrome, firefox, edge, brave, ...). "
+                        "주의: 해당 브라우저는 실행 중이면 안 됨. 메인 Chrome 켜둔 채로 "
+                        "쓰려면 --cookies 또는 `ycollector-login` 사용.")
+    p.add_argument("--cookies", metavar="FILE", type=Path, default=None,
+                   help="Netscape HTTP Cookie File 경로 (yt-dlp 의 --cookies 패스스루). "
+                        "지정 안 하면 settings.ini 의 cookies_file 또는 기본 위치 "
+                        "(%%APPDATA%%\\YCollector\\cookies.txt) 자동 탐지. "
+                        "생성: `uv run ycollector-login`.")
     # ── playlist handling ──────────────────────────────────────────────────
     pl_grp = p.add_mutually_exclusive_group()
     pl_grp.add_argument("--no-playlist", action="store_true",
@@ -295,6 +302,18 @@ def main(argv: list[str] | None = None) -> int:
                 stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             except (AttributeError, OSError):
                 pass
+    # stdin도 UTF-8 — Tauri sidecar 모드에서 한글 settings/URL이 들어와도 안전.
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except (AttributeError, OSError):
+        pass
+
+    # NDJSON sidecar 모드: 다른 모든 인자/설정을 무시하고 본격 진입.
+    # Tauri 프런트가 `ycollector --json` 으로 spawn한다.
+    raw_argv = sys.argv[1:] if argv is None else argv
+    if "--json" in raw_argv:
+        from ycollector.sidecar import run as sidecar_run
+        return sidecar_run()
 
     settings, settings_path = load_settings(_preparse_config(argv))
     parser = _build_parser(settings)
@@ -319,6 +338,30 @@ def main(argv: list[str] | None = None) -> int:
     deno_dir = _find_deno_dir()
     if deno_dir is not None:
         print(f"[i] deno (JS runtime) 발견 — PATH 추가: {deno_dir}", file=sys.stderr)
+
+    # 쿠키 우선순위:
+    #   1) CLI --cookies
+    #   2) settings.ini cookies_file
+    #   3) 기본 위치(%APPDATA%\YCollector\cookies.txt) 자동 탐지
+    # file 이 있으면 cookies_from_browser 는 무시(engine 에서도 동일).
+    from ycollector.cookies import default_cookies_path, is_cookies_present
+    cookies_file: Path | None = args.cookies
+    if cookies_file is None and settings.cookies_file:
+        cookies_file = Path(settings.cookies_file)
+    if cookies_file is None:
+        auto = default_cookies_path()
+        if is_cookies_present(auto):
+            cookies_file = auto
+            print(f"[i] cookies.txt 자동 감지: {auto}", file=sys.stderr)
+    if cookies_file is not None and not cookies_file.is_file():
+        print(
+            f"[!] --cookies 경로가 파일이 아님: {cookies_file}\n"
+            f"     무시하고 진행. 생성: uv run ycollector-login",
+            file=sys.stderr,
+        )
+        cookies_file = None
+    if cookies_file is not None:
+        print(f"cookies: {cookies_file}", file=sys.stderr)
 
     if args.format is None:
         choice = FormatChoice(
@@ -371,6 +414,7 @@ def main(argv: list[str] | None = None) -> int:
                     write_subs=not args.no_subs,
                     sub_langs=args.sub_langs.split(",") if args.sub_langs else (),
                     cookies_from_browser=args.cookies_from_browser,
+                    cookies_file=cookies_file,
                     socket_timeout=args.socket_timeout,
                     retries=args.retries,
                     fragment_retries=args.fragment_retries,
@@ -422,6 +466,21 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 hinted.add("js-runtime")
+            elif err.category == "cookies-locked" and "cookies-locked" not in hinted:
+                print(
+                    "\n  💡 브라우저가 실행 중이라 쿠키 DB 에 락이 걸려있습니다(이슈 #7271).\n"
+                    "     해결 셋 중 하나:\n"
+                    "       1) 해당 브라우저를 시스템 트레이까지 완전 종료 후 재시도.\n"
+                    "       2) 다른 브라우저로 전환:\n"
+                    "          --cookies-from-browser firefox  (또는 brave)\n"
+                    "       3) 가상 Chromium 으로 한 번 로그인 → cookies.txt 영구 사용:\n"
+                    "          uv sync --extra cookies-headed\n"
+                    "          uv run playwright install chromium    # 1회\n"
+                    "          uv run ycollector-login               # 한 번 로그인\n"
+                    "          uv run ycollector --yes-playlist \"<URL>\"   # 이후 자동",
+                    file=sys.stderr,
+                )
+                hinted.add("cookies-locked")
         return 1 if len(failures) < len(urls) else 2
     return 0
 

@@ -49,3 +49,18 @@ ycollector.log
 # --- Whisper model cache (D6) ---
 models/
 *.bin
+
+# --- Secrets / env ---
+.env
+.env.local
+.env.*.local
+*.pem
+
+# --- Node / frontend / Tauri (방어적 — 각 서브트리에 .gitignore 도 있음) ---
+node_modules/
+.vite/
+*.local
+# src-tauri/ 산출물
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/binaries/

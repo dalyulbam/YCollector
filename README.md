@@ -1,13 +1,154 @@
 # YCollector
 
-YouTube 영상을 손쉽게 다운로드하기 위한 데스크톱 도구. **yt-dlp** 코어 + **PySide6** UI.
+YouTube 영상을 손쉽게 다운로드하기 위한 데스크톱 도구. **yt-dlp** 코어 + **Tauri + React + shadcn/ui** UI (신규) / **PySide6** UI (legacy).
 
 > **Phase 0 — Day 1**: 단일 URL CLI/GUI가 동작하는 최소 스캐폴딩.
+> **Frontend r1 (2026-05-16)**: Tauri + React 웹 프런트로 전환 진행 중 ([계획](docs/plan/youtube_downloader_frontend_plan_260516.md)).
 > 자세한 설계는 [`docs/`](docs/) 또는 [`docs/index.html`](docs/index.html) 참고.
 
 ---
 
-## 빠른 시작
+## 새 데스크톱 앱 (Tauri + React)
+
+URL 붙여넣기 → 버튼 한 번으로 다운로드. 설정은 우측 슬라이드 패널, 완료 항목은 라이브러리 탭에서 검색. 시각 가이드는 [`README.html`](README.html)을 브라우저에서 열어보세요.
+
+### 1) 사전 요구사항
+
+| 도구 | 버전 | 설치 |
+|---|---|---|
+| **Python** | 3.11+ (3.13 권장) | [python.org](https://www.python.org/) |
+| **uv** | 최신 | `winget install astral-sh.uv` |
+| **Node.js** | 18+ | [nodejs.org](https://nodejs.org/) |
+| **pnpm** | 9+ (npm으로도 OK) | `npm i -g pnpm` |
+| **Rust** | 1.77+ | `winget install Rustlang.Rustup` 후 `rustup default stable` |
+| **WebView2 Runtime** | 시스템 동봉 | Windows 11은 기본 포함, 10은 [Edge 페이지](https://developer.microsoft.com/microsoft-edge/webview2/)에서 |
+| **FFmpeg** | 시스템 PATH | `winget install Gyan.FFmpeg` (DASH 머지에 필수) |
+
+> Windows 외 OS는 현재 1차 타깃이 아닙니다. 동작은 하지만 인스톨러 빌드(`scripts/build_tauri.ps1`)는 PowerShell 전용.
+
+### 2) 5분 설치 (한 번만)
+
+```powershell
+# 저장소 클론 + 진입
+git clone https://github.com/dalyulbam/YCollector.git
+cd YCollector
+
+# Python sidecar
+uv sync
+
+# 프런트엔드
+pnpm --dir frontend install
+#  └─ pnpm 없으면:  cd frontend ; npm install ; cd ..
+```
+
+### 3) 개발 모드 (HMR 가동)
+
+dev 모드는 **터미널 1개**로 충분합니다. Tauri가 Vite를 자기 자식으로 띄우고, Rust가 PATH의 `ycollector`를 sidecar로 spawn합니다.
+
+```powershell
+# uv sync 가 만든 .venv 가 활성화돼있는 셸에서:
+cd src-tauri
+cargo tauri dev
+```
+
+처음 가동 시 Cargo 의존성 컴파일에 5~10분 걸립니다(정상). 두 번째부터는 수 초.
+
+**확인 포인트**:
+- 창 우상단에 `yt-dlp <버전>` 표시 → sidecar 가동 OK
+- URL 붙여넣고 Enter → 잠시 후 썸네일/제목이 나타나면 NDJSON 왕복 OK
+- ⚙ 설정 → 화질 변경 → 저장 → CLI에서 `uv run ycollector ...`도 같은 설정 사용 (`%APPDATA%\YCollector\settings.ini` 공유)
+
+### 4) 프로덕션 빌드 (.msi / .exe 인스톨러)
+
+```powershell
+.\scripts\build_tauri.ps1
+# 산출물: src-tauri/target/release/bundle/{msi,nsis}/
+```
+
+스크립트가 자동으로:
+1. **Nuitka**로 `ycollector` CLI를 빌드 (`uv run python scripts/build_exe.py --target cli`)
+2. 산출물을 `src-tauri/binaries/ycollector-x86_64-pc-windows-msvc.exe`로 복사 (Tauri sidecar 네이밍 규칙)
+3. `pnpm --dir frontend build` 또는 `npm run build`로 Vite 산출
+4. `cargo tauri build` → `.msi` (Windows Installer) + `.exe` (NSIS)
+
+옵션:
+- `-SkipSidecar` — 이미 `src-tauri/binaries/`에 sidecar가 있으면 1~2단계 스킵
+- `-Triple <triple>` — 기본 `x86_64-pc-windows-msvc`. arm64 등 크로스 빌드 시.
+
+### 비공개·멤버십·연령제한 영상 (쿠키 로그인)
+
+메인 Chrome을 종료할 수 없거나, `Could not copy Chrome cookie database` 에러를 만났다면 **가상 Chromium 한 번 로그인 → cookies.txt 영구 사용** 흐름을 권장합니다.
+
+```powershell
+# 한 번만:
+uv sync --extra cookies-headed
+uv run playwright install chromium    # Chromium 다운로드 (~150MB, 1회)
+
+# 별 Chromium 창이 뜸 → YouTube 로그인 → 자동 감지 후 창이 닫힘 + 쿠키 저장
+uv run ycollector-login
+#  → 저장: %APPDATA%\YCollector\cookies.txt
+
+# 이후엔 그냥 받으면 됨 — ycollector 가 위 경로를 자동 탐지
+uv run ycollector --yes-playlist "https://www.youtube.com/watch?v=...&list=PL..."
+```
+
+특징:
+- 메인 Chrome은 평생 켜둔 채로 OK (Playwright는 별 user-data-dir).
+- 프로필이 `%APPDATA%\YCollector\pw-profile\` 에 영속 → 재로그인 불필요.
+- `--cookies <FILE>` 로 명시 경로도 가능. settings.ini의 `cookies_file =` 로 영구.
+- 자세한 동작은 `src/ycollector/cookies.py` docstring.
+
+### 5) 트러블슈팅
+
+| 증상 | 원인 / 해결 |
+|---|---|
+| `cargo: command not found` | Rust 미설치 → `winget install Rustlang.Rustup ; rustup default stable` 후 새 터미널 |
+| `Could not copy Chrome cookie database` | Chrome 실행 중 락. 위 §"비공개… (쿠키 로그인)" 의 `ycollector-login` 흐름 권장 |
+| `tauri: command not found` (cargo는 있음) | tauri-cli 미설치 → `cargo install tauri-cli --version "^2.0"` |
+| `cargo tauri dev`에서 sidecar spawn 실패 | venv 미활성화 → 같은 터미널에서 `uv sync` 했는지 확인. 또는 `uv pip install -e .`로 PATH 등록 |
+| 창은 뜨지만 `yt-dlp <버전>` 표시 없음 | sidecar가 죽음. DevTools(F12) → Console에서 `job:log` 이벤트 / 시스템에 yt-dlp 또는 FFmpeg가 없는지 확인 |
+| 한글 제목이 깨짐 | Windows cp949 콘솔 문제. cli.py와 sidecar가 자체적으로 UTF-8 강제하므로 최신 커밋 사용 |
+| `pnpm install` 시 `error EPERM` | OneDrive 등 동기화 폴더와 충돌. node_modules는 동기화 제외 또는 저장소를 동기화 밖으로 이동 |
+| Nuitka가 MinGW를 받겠다고 함 | 한 번 `Y`로 수락하면 됨. MSVC가 있으면 그쪽을 자동 선택 |
+| 다운로드가 "준비 중…"에서 멈춤 | yt-dlp가 deno(JS 런타임)를 기다림 → `winget install DenoLand.Deno` 후 새 터미널 |
+
+### 6) 한눈에 보는 아키텍처
+
+```
+ ┌──────────────────────────────────────────────────────┐
+ │  Tauri Window (WebView2)                             │
+ │  React + shadcn/ui                                   │
+ │  ┌────────────────────────────────────────────────┐  │
+ │  │ <UrlPasteBar/>  <SettingsSheet/>  <JobList/>   │  │
+ │  │ <LibraryTab/>                                  │  │
+ │  └────────────────────────────────────────────────┘  │
+ └──────────────┬───────────────────────────────────────┘
+                │  invoke(...)  +  listen('job:*')
+ ┌──────────────▼───────────────────────────────────────┐
+ │  Rust shell  (src-tauri/src/main.rs + sidecar.rs)    │
+ │  • commands: probe / start_job / cancel / settings / │
+ │    pick_folder / open_path / list_library            │
+ │  • NDJSON 펌프 (stdout → emit, stderr → log)         │
+ └──────────────┬───────────────────────────────────────┘
+                │  NDJSON over stdin/stdout
+ ┌──────────────▼───────────────────────────────────────┐
+ │  Python sidecar  (ycollector --json)                 │
+ │  src/ycollector/sidecar.py                           │
+ │  • _Worker queue + _JobRegistry (취소 핸들)          │
+ └──────────────┬───────────────────────────────────────┘
+                │  Popen
+ ┌──────────────▼───────────────────────────────────────┐
+ │  yt-dlp  +  FFmpeg                                   │
+ └──────────────────────────────────────────────────────┘
+```
+
+추가 시각 자료 (스택, 빌드 파이프라인, 번들 크기 비교, 마일스톤 타임라인)는 [`README.html`](README.html)을 브라우저로 열면 SVG로 볼 수 있습니다.
+
+---
+
+## CLI / Legacy GUI 빠른 시작
+
+새 데스크톱 앱이 기능 패리티에 도달하기 전까지 병존합니다. CLI는 자동화/배치에 계속 권장.
 
 요구사항:
 - **Python 3.11+** (3.13 권장 — `.python-version` 참고)
@@ -33,8 +174,11 @@ uv run ycollector --from urls.txt
 # 6. CLI — stdin 파이프
 Get-Content urls.txt | uv run ycollector -
 
-# 7. GUI (radio 버튼 + "가용 포맷 보기" 다이얼로그)
+# 7. GUI (legacy PySide6 — 신규 Tauri UI로 대체 예정. 위 §"새 데스크톱 앱" 참고)
 uv run ycollector-gui
+
+# 8. JSON sidecar 모드 (Tauri UI 가 spawn) — stdin NDJSON / stdout NDJSON
+uv run ycollector --json
 ```
 
 > 기본값은 저장소의 [`settings.ini`](settings.ini)에 모여 있습니다. 화질/포맷/멈춤 대응(`throttled_rate = 100K` 등)을 한곳에서 조정 가능. 자세히는 [사용설명서 §8.5](docs/howToUse/user_manual_260513.md#85-설정-파일-settingsini).
@@ -84,14 +228,23 @@ YCollector/
 │   ├── plan/                  ← 설계 계획 v1.2
 │   ├── motif/                 ← 경쟁 / 모티프 조사
 │   └── _build_html.py         ← .md → .html 빌드 스크립트
-└── src/ycollector/
-    ├── __init__.py
-    ├── __main__.py            ← `python -m ycollector` 진입
-    ├── cli.py                 ← CLI 진입 (argparse)
-    ├── gui.py                 ← PySide6 메인 윈도우
-    └── engine/
-        ├── __init__.py
-        └── ytdlp.py           ← subprocess 래퍼 + 진행률 파서 + 에러 분류
+├── src/ycollector/
+│   ├── __init__.py
+│   ├── __main__.py            ← `python -m ycollector` 진입
+│   ├── cli.py                 ← CLI 진입 (argparse) — `--json` 시 sidecar 라우팅
+│   ├── sidecar.py             ← NDJSON sidecar (Tauri UI 가 spawn)
+│   ├── gui.py                 ← PySide6 메인 윈도우 (legacy)
+│   ├── config.py              ← settings.ini 로더/타입
+│   └── engine/
+│       ├── __init__.py
+│       └── ytdlp.py           ← subprocess 래퍼 + 진행률 파서 + 에러 분류
+├── frontend/                  ← Tauri 웹뷰용 React + Vite + Tailwind + shadcn/ui
+│   ├── package.json, vite.config.ts, tailwind.config.ts, components.json
+│   ├── index.html
+│   └── src/{App.tsx, components/, lib/{ipc,types,utils}, store/jobs}
+└── src-tauri/                 ← Tauri 쉘 (Rust)
+    ├── Cargo.toml, tauri.conf.json, build.rs
+    └── src/{main.rs, sidecar.rs, settings.rs, jobs.rs}
 ```
 
 향후 모듈 추가 (plan §12 참고):

@@ -1,0 +1,6 @@
+# Cargo
+target/
+# Tauri 생성물
+gen/schemas/
+# 빌드 시 채워지는 sidecar 바이너리
+binaries/

@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — 설치 & 실행 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #0f172a;
+    --fg-muted: #475569;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: #4f46e5;          /* indigo-600 */
+    --accent-2: #06b6d4;        /* cyan-500 */
+    --accent-3: #f59e0b;        /* amber-500 */
+    --accent-4: #10b981;        /* emerald-500 */
+    --accent-5: #ef4444;        /* red-500 */
+    --accent-soft: #eef2ff;
+    --code-bg: #f1f5f9;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 8px 24px rgb(15 23 42 / 0.06);
+    --shadow-lg: 0 24px 60px rgb(15 23 42 / 0.10);
+    --radius: 14px;
+    --radius-sm: 8px;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #0a0f1d;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: #1a1f3a;
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+        --shadow-lg: 0 24px 60px rgb(0 0 0 / 0.55);
+    }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+        'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+code, pre, .mono { font-family: 'JetBrains Mono', Consolas, monospace; }
+
+/* ── Topbar ────────────────────────────────────────────────────── */
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px;
+    display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .logo { font-weight: 800; letter-spacing: -0.02em; font-size: 18px; }
+.topbar .logo .dot { color: var(--accent); }
+.topbar nav { display: flex; gap: 20px; font-size: 14px; }
+.topbar nav a {
+    color: var(--fg-muted); text-decoration: none; transition: color 0.15s;
+}
+.topbar nav a:hover { color: var(--accent); }
+.topbar .spacer { flex: 1; }
+.topbar .badge {
+    font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); font-weight: 600;
+}
+
+/* ── Layout ────────────────────────────────────────────────────── */
+main { max-width: 1100px; margin: 0 auto; padding: 0 24px 100px; }
+section { padding: 64px 0 16px; }
+section + section { border-top: 1px solid var(--border-soft); }
+
+h1 {
+    font-size: clamp(36px, 5vw, 56px);
+    line-height: 1.1; letter-spacing: -0.03em; margin: 0 0 16px;
+    font-weight: 800;
+}
+h1 .grad {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+h2 {
+    font-size: 28px; letter-spacing: -0.02em; margin: 0 0 8px;
+    font-weight: 700;
+}
+h2 .num {
+    display: inline-block; width: 32px; height: 32px;
+    background: var(--accent); color: white; border-radius: 8px;
+    text-align: center; line-height: 32px; font-size: 16px; font-weight: 700;
+    margin-right: 12px; vertical-align: 2px;
+}
+h3 { font-size: 18px; margin: 24px 0 8px; font-weight: 600; }
+p.lead { color: var(--fg-muted); font-size: 18px; margin: 0 0 24px; max-width: 720px; }
+
+/* ── Hero ──────────────────────────────────────────────────────── */
+.hero { padding: 80px 0 48px; text-align: left; }
+.hero .meta { color: var(--fg-soft); font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 16px; }
+.hero .cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+.btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 20px; border-radius: var(--radius-sm);
+    font-weight: 600; font-size: 14px; text-decoration: none;
+    transition: transform 0.1s, box-shadow 0.2s;
+}
+.btn-primary { background: var(--accent); color: white; box-shadow: 0 4px 12px rgb(79 70 229 / 0.3); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgb(79 70 229 / 0.4); }
+.btn-outline { border: 1px solid var(--border); color: var(--fg); background: var(--bg-card); }
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Cards ─────────────────────────────────────────────────────── */
+.grid { display: grid; gap: 16px; }
+.grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 760px) {
+    .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+}
+.card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+    box-shadow: var(--shadow-sm);
+}
+.card .icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: var(--accent-soft); color: var(--accent);
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-bottom: 12px;
+}
+.card .icon svg { width: 20px; height: 20px; }
+.card h4 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.card p { margin: 0; color: var(--fg-muted); font-size: 13.5px; }
+
+/* ── Code blocks ───────────────────────────────────────────────── */
+pre {
+    background: var(--code-bg); color: var(--code-fg);
+    padding: 16px 18px; border-radius: var(--radius-sm);
+    overflow-x: auto; font-size: 13.5px; line-height: 1.6;
+    border: 1px solid var(--border);
+}
+pre .c { color: var(--fg-soft); }    /* comment */
+pre .k { color: var(--accent); }      /* keyword (cmd) */
+pre .s { color: var(--accent-4); }    /* string */
+pre .n { color: var(--accent-3); }    /* number / flag */
+code:not(pre code) {
+    padding: 2px 6px; background: var(--code-bg); border-radius: 4px;
+    font-size: 0.9em; border: 1px solid var(--border-soft);
+}
+
+/* ── Tables ────────────────────────────────────────────────────── */
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-weight: 600; color: var(--fg-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--bg-soft); }
+tbody tr:hover { background: var(--bg-soft); }
+
+/* ── SVG containers ────────────────────────────────────────────── */
+.figure {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px;
+    box-shadow: var(--shadow); margin: 24px 0;
+    overflow-x: auto;
+}
+.figure svg { display: block; max-width: 100%; height: auto; }
+.figure .caption { color: var(--fg-soft); font-size: 12.5px; margin-top: 12px; text-align: center; }
+
+/* ── Steps ─────────────────────────────────────────────────────── */
+.steps { counter-reset: step; display: grid; gap: 12px; }
+.step {
+    display: grid; grid-template-columns: 36px 1fr; gap: 16px;
+    padding: 16px; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.step::before {
+    counter-increment: step;
+    content: counter(step);
+    width: 32px; height: 32px;
+    background: var(--accent); color: white;
+    border-radius: 8px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+}
+.step .title { font-weight: 600; margin-bottom: 4px; }
+.step .desc { color: var(--fg-muted); font-size: 14px; margin-bottom: 8px; }
+
+/* ── Trouble cards ─────────────────────────────────────────────── */
+.trouble { display: grid; gap: 12px; }
+.trouble .row {
+    display: grid; grid-template-columns: 1fr 2fr; gap: 16px;
+    padding: 16px; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.trouble .symptom { font-weight: 600; }
+.trouble .symptom .pill { display: inline-block; padding: 2px 8px; background: color-mix(in srgb, var(--accent-5) 12%, transparent); color: var(--accent-5); border-radius: 4px; font-size: 11px; margin-right: 6px; font-weight: 600; }
+.trouble .fix { color: var(--fg-muted); font-size: 14px; }
+@media (max-width: 760px) {
+    .trouble .row { grid-template-columns: 1fr; }
+}
+
+footer {
+    text-align: center; color: var(--fg-soft); font-size: 13px;
+    padding: 48px 24px 24px; border-top: 1px solid var(--border-soft);
+    max-width: 1100px; margin: 0 auto;
+}
+footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<!-- ── Topbar ──────────────────────────────────────────────────── -->
+<div class="topbar">
+    <span class="logo">YCollector<span class="dot">.</span></span>
+    <nav>
+        <a href="#prerequisites">사전 요구사항</a>
+        <a href="#install">설치</a>
+        <a href="#dev">개발 모드</a>
+        <a href="#build">빌드</a>
+        <a href="#trouble">트러블슈팅</a>
+        <a href="#arch">아키텍처</a>
+    </nav>
+    <span class="spacer"></span>
+    <span class="badge">Frontend r1 · 2026-05-16</span>
+</div>
+
+<main>
+
+<!-- ── Hero ────────────────────────────────────────────────────── -->
+<section class="hero">
+    <p class="meta">설치 &amp; 실행 가이드</p>
+    <h1>URL 붙여넣고 <span class="grad">다운로드 버튼</span><br>한 번이면 끝.</h1>
+    <p class="lead">
+        YCollector는 <strong>yt-dlp</strong> 코어 위에 <strong>Tauri + React + shadcn/ui</strong> 데스크톱 앱을 올린
+        YouTube 다운로더입니다. URL을 붙여넣고, 설정은 우측 슬라이드 패널에서 버튼으로,
+        완료 항목은 라이브러리 탭에서 검색하세요.
+    </p>
+    <div class="cta">
+        <a href="#install" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            5분 설치로 가기
+        </a>
+        <a href="docs/plan/youtube_downloader_frontend_plan_260516.md" class="btn btn-outline">설계 계획 (frontend r1)</a>
+        <a href="docs/index.html" class="btn btn-outline">설계 문서 인덱스</a>
+    </div>
+
+    <!-- 한 줄 스택 표시 -->
+    <div class="figure" style="margin-top: 40px;">
+        <svg viewBox="0 0 1000 220" role="img" aria-label="YCollector 스택 한눈에">
+            <defs>
+                <linearGradient id="gWeb" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#4f46e5"/>
+                    <stop offset="100%" stop-color="#06b6d4"/>
+                </linearGradient>
+                <linearGradient id="gRust" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#f59e0b"/>
+                    <stop offset="100%" stop-color="#ef4444"/>
+                </linearGradient>
+                <linearGradient id="gPy" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#10b981"/>
+                    <stop offset="100%" stop-color="#06b6d4"/>
+                </linearGradient>
+            </defs>
+            <!-- WebView 박스 -->
+            <rect x="40" y="20" width="220" height="180" rx="14" fill="url(#gWeb)" opacity="0.12"/>
+            <rect x="40" y="20" width="220" height="180" rx="14" fill="none" stroke="url(#gWeb)" stroke-width="2"/>
+            <text x="150" y="55" text-anchor="middle" font-family="Inter" font-weight="700" font-size="16" fill="#4f46e5">WebView2</text>
+            <text x="150" y="80" text-anchor="middle" font-family="Inter" font-size="12" fill="var(--fg-muted)" style="fill:#64748b;">React 18 + Vite</text>
+            <text x="150" y="100" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">TypeScript</text>
+            <text x="150" y="120" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">Tailwind CSS</text>
+            <text x="150" y="140" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">shadcn/ui (Radix)</text>
+            <text x="150" y="160" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">zustand</text>
+            <text x="150" y="186" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">frontend/</text>
+
+            <!-- 화살표 1 -->
+            <path d="M270 110 L350 110" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrowSm)"/>
+            <text x="310" y="100" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">invoke</text>
+            <text x="310" y="125" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">events</text>
+
+            <!-- Rust 박스 -->
+            <rect x="360" y="20" width="220" height="180" rx="14" fill="url(#gRust)" opacity="0.10"/>
+            <rect x="360" y="20" width="220" height="180" rx="14" fill="none" stroke="url(#gRust)" stroke-width="2"/>
+            <text x="470" y="55" text-anchor="middle" font-family="Inter" font-weight="700" font-size="16" fill="#ea580c">Tauri 2 (Rust)</text>
+            <text x="470" y="82" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">invoke handlers</text>
+            <text x="470" y="102" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">NDJSON pump</text>
+            <text x="470" y="122" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">settings.ini I/O</text>
+            <text x="470" y="142" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">library.json</text>
+            <text x="470" y="186" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">src-tauri/</text>
+
+            <!-- 화살표 2 -->
+            <path d="M590 110 L670 110" stroke="#94a3b8" stroke-width="2" fill="none" marker-end="url(#arrowSm)"/>
+            <text x="630" y="100" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">stdin</text>
+            <text x="630" y="125" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">stdout</text>
+
+            <!-- Python 박스 -->
+            <rect x="680" y="20" width="280" height="180" rx="14" fill="url(#gPy)" opacity="0.10"/>
+            <rect x="680" y="20" width="280" height="180" rx="14" fill="none" stroke="url(#gPy)" stroke-width="2"/>
+            <text x="820" y="55" text-anchor="middle" font-family="Inter" font-weight="700" font-size="16" fill="#059669">Python sidecar</text>
+            <text x="820" y="82" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">ycollector --json (sidecar.py)</text>
+            <text x="820" y="102" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">engine/ytdlp.py</text>
+            <text x="820" y="122" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">config.py / format_spec.py</text>
+            <text x="820" y="142" text-anchor="middle" font-family="Inter" font-size="12" fill="#64748b">→ yt-dlp + FFmpeg</text>
+            <text x="820" y="186" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">src/ycollector/</text>
+
+            <defs>
+                <marker id="arrowSm" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/>
+                </marker>
+            </defs>
+        </svg>
+        <div class="caption">3개 레이어 · 1개 사이드카 · 0개의 마이크로서비스</div>
+    </div>
+</section>
+
+<!-- ── 사전 요구사항 ─────────────────────────────────────────────── -->
+<section id="prerequisites">
+    <h2><span class="num">0</span>사전 요구사항</h2>
+    <p class="lead">Windows 11 기준. 모든 도구는 winget 한 줄로 설치할 수 있습니다.</p>
+
+    <div class="grid cols-3">
+        <div class="card">
+            <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
+            </div>
+            <h4>Python 3.11+</h4>
+            <p>uv가 .venv를 자동 생성합니다. 3.13 권장.</p>
+            <pre style="margin-top:8px"><span class="c"># winget</span>
+<span class="k">winget install</span> Python.Python.3.13</pre>
+        </div>
+
+        <div class="card">
+            <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+            </div>
+            <h4>uv (Python 패키지 매니저)</h4>
+            <p>pip보다 10~50배 빠릅니다.</p>
+            <pre style="margin-top:8px"><span class="k">winget install</span> astral-sh.uv</pre>
+        </div>
+
+        <div class="card">
+            <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            </div>
+            <h4>Node.js 18+ &amp; pnpm</h4>
+            <p>프런트엔드 빌드용. npm으로도 OK.</p>
+            <pre style="margin-top:8px"><span class="k">winget install</span> OpenJS.NodeJS.LTS
+<span class="k">npm</span> i -g pnpm</pre>
+        </div>
+
+        <div class="card">
+            <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </div>
+            <h4>Rust 1.77+</h4>
+            <p>Tauri 쉘 컴파일용. 첫 빌드는 5~10분.</p>
+            <pre style="margin-top:8px"><span class="k">winget install</span> Rustlang.Rustup
+<span class="k">rustup</span> default stable</pre>
+        </div>
+
+        <div class="card">
+            <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <h4>WebView2 Runtime</h4>
+            <p>Windows 11은 기본 포함. 10은 Edge 페이지에서.</p>
+            <pre style="margin-top:8px"><span class="c"># Windows 11 → 이미 있음</span>
+<span class="c"># 확인:</span>
+<span class="k">winget list</span> Microsoft.EdgeWebView2</pre>
+        </div>
+
+        <div class="card">
+            <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+            <h4>FFmpeg</h4>
+            <p>DASH 비디오/오디오 머지에 필수.</p>
+            <pre style="margin-top:8px"><span class="k">winget install</span> Gyan.FFmpeg</pre>
+        </div>
+    </div>
+</section>
+
+<!-- ── 5분 설치 ────────────────────────────────────────────────── -->
+<section id="install">
+    <h2><span class="num">1</span>5분 설치 (한 번만)</h2>
+    <p class="lead">위 도구를 다 설치한 상태에서.</p>
+
+    <div class="steps">
+        <div class="step">
+            <div>
+                <div class="title">저장소 클론</div>
+                <div class="desc">git이 없으면 <code>winget install Git.Git</code>로 먼저 설치.</div>
+                <pre><span class="k">git clone</span> https://github.com/dalyulbam/YCollector.git
+<span class="k">cd</span> YCollector</pre>
+            </div>
+        </div>
+        <div class="step">
+            <div>
+                <div class="title">Python sidecar 의존성</div>
+                <div class="desc">uv가 .venv를 만들고 yt-dlp + ycollector를 설치합니다.</div>
+                <pre><span class="k">uv</span> sync</pre>
+            </div>
+        </div>
+        <div class="step">
+            <div>
+                <div class="title">프런트엔드 의존성</div>
+                <div class="desc">React + Tailwind + shadcn + Tauri-cli. 처음에 100MB 정도 받습니다.</div>
+                <pre><span class="k">pnpm</span> --dir frontend install
+<span class="c"># pnpm 없으면:  cd frontend ; npm install ; cd ..</span></pre>
+            </div>
+        </div>
+        <div class="step">
+            <div>
+                <div class="title">(선택) Tauri CLI 전역 설치</div>
+                <div class="desc">위 pnpm install로 frontend에 이미 들어 있지만, 글로벌 <code>cargo tauri</code>를 쓰고 싶다면.</div>
+                <pre><span class="k">cargo install</span> tauri-cli --version <span class="s">"^2.0"</span></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── 개발 모드 ──────────────────────────────────────────────── -->
+<section id="dev">
+    <h2><span class="num">2</span>개발 모드 (HMR 가동)</h2>
+    <p class="lead">
+        터미널 하나면 됩니다. Tauri가 Vite를 자식으로 띄우고, Rust가 PATH의 <code>ycollector</code>를 sidecar로 spawn합니다.
+    </p>
+
+    <pre><span class="c"># uv sync 가 만든 .venv 가 활성화돼있는 셸에서:</span>
+<span class="k">cd</span> src-tauri
+<span class="k">cargo tauri</span> dev</pre>
+
+    <h3>가동 시퀀스</h3>
+
+    <div class="figure">
+        <svg viewBox="0 0 1000 360" role="img" aria-label="dev 모드 시퀀스">
+            <defs>
+                <marker id="ar" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                    <path d="M0,0 L9,3 L0,6 Z" fill="#4f46e5"/>
+                </marker>
+                <marker id="arG" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                    <path d="M0,0 L9,3 L0,6 Z" fill="#10b981"/>
+                </marker>
+            </defs>
+
+            <!-- swim lanes -->
+            <text x="100" y="30" font-family="Inter" font-weight="700" font-size="13" fill="#0f172a">사용자</text>
+            <text x="320" y="30" font-family="Inter" font-weight="700" font-size="13" fill="#0f172a">Tauri (Rust)</text>
+            <text x="540" y="30" font-family="Inter" font-weight="700" font-size="13" fill="#0f172a">Vite (HMR)</text>
+            <text x="760" y="30" font-family="Inter" font-weight="700" font-size="13" fill="#0f172a">Python sidecar</text>
+
+            <line x1="100" y1="50" x2="100" y2="330" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="4 4"/>
+            <line x1="320" y1="50" x2="320" y2="330" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="4 4"/>
+            <line x1="540" y1="50" x2="540" y2="330" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="4 4"/>
+            <line x1="760" y1="50" x2="760" y2="330" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="4 4"/>
+
+            <!-- step 1: user → tauri -->
+            <line x1="100" y1="80" x2="318" y2="80" stroke="#4f46e5" stroke-width="2" marker-end="url(#ar)"/>
+            <text x="210" y="72" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#4f46e5">cargo tauri dev</text>
+
+            <!-- step 2: tauri → vite -->
+            <line x1="320" y1="130" x2="538" y2="130" stroke="#4f46e5" stroke-width="2" marker-end="url(#ar)"/>
+            <text x="430" y="122" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#4f46e5">spawn pnpm dev</text>
+            <text x="430" y="148" text-anchor="middle" font-family="Inter" font-size="10" fill="#64748b">(beforeDevCommand)</text>
+
+            <!-- step 3: vite serves :1420 -->
+            <rect x="490" y="160" width="100" height="22" rx="11" fill="#10b981" opacity="0.15"/>
+            <text x="540" y="175" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#059669">:1420 ready</text>
+
+            <!-- step 4: tauri opens webview -->
+            <line x1="318" y1="195" x2="100" y2="195" stroke="#10b981" stroke-width="2" marker-end="url(#arG)"/>
+            <text x="210" y="188" text-anchor="middle" font-family="Inter" font-size="11" fill="#059669">WebView 창 표시</text>
+
+            <!-- step 5: tauri → sidecar lazy spawn -->
+            <line x1="320" y1="235" x2="758" y2="235" stroke="#4f46e5" stroke-width="2" marker-end="url(#ar)"/>
+            <text x="540" y="227" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#4f46e5">spawn ycollector --json</text>
+            <text x="540" y="251" text-anchor="middle" font-family="Inter" font-size="10" fill="#64748b">(첫 invoke에서 lazy)</text>
+
+            <!-- step 6: sidecar emits ready -->
+            <line x1="758" y1="285" x2="322" y2="285" stroke="#10b981" stroke-width="2" marker-end="url(#arG)"/>
+            <text x="540" y="277" text-anchor="middle" font-family="JetBrains Mono" font-size="11" fill="#059669">{"event":"ready",...}</text>
+
+            <!-- step 7: tauri forwards to webview -->
+            <line x1="318" y1="315" x2="100" y2="315" stroke="#10b981" stroke-width="2" marker-end="url(#arG)"/>
+            <text x="210" y="308" text-anchor="middle" font-family="Inter" font-size="11" fill="#059669">"yt-dlp 2026.03.17" 배지 표시</text>
+        </svg>
+        <div class="caption">최초 1회: Cargo 의존성 컴파일 ~5–10분. 이후는 수 초.</div>
+    </div>
+
+    <h3>확인 포인트</h3>
+    <ul>
+        <li>창 우상단에 <code>yt-dlp &lt;버전&gt;</code> 표시 → sidecar 가동 OK</li>
+        <li>URL 붙여넣고 Enter → 잠시 후 썸네일/제목이 나타나면 NDJSON 왕복 OK</li>
+        <li>⚙ 설정 → 화질 변경 → 저장 → CLI에서 <code>uv run ycollector ...</code>도 같은 설정 사용 (<code class="mono">%APPDATA%\YCollector\settings.ini</code> 공유)</li>
+    </ul>
+</section>
+
+<!-- ── 빌드 ──────────────────────────────────────────────────── -->
+<section id="build">
+    <h2><span class="num">3</span>프로덕션 빌드 (.msi / .exe 인스톨러)</h2>
+    <p class="lead">한 줄 스크립트로 4단계 자동화.</p>
+
+    <pre><span class="k">.\scripts\build_tauri.ps1</span>
+<span class="c"># 산출물: src-tauri/target/release/bundle/{msi,nsis}/</span></pre>
+
+    <h3>파이프라인</h3>
+    <div class="figure">
+        <svg viewBox="0 0 1000 200" role="img" aria-label="build pipeline">
+            <defs>
+                <linearGradient id="pipe" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#4f46e5"/>
+                    <stop offset="100%" stop-color="#06b6d4"/>
+                </linearGradient>
+                <marker id="arP" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                    <path d="M0,0 L9,3 L0,6 Z" fill="#4f46e5"/>
+                </marker>
+            </defs>
+
+            <!-- backbone -->
+            <line x1="60" y1="100" x2="940" y2="100" stroke="url(#pipe)" stroke-width="3"/>
+
+            <!-- nodes -->
+            <g transform="translate(120 100)">
+                <circle r="34" fill="#fff" stroke="#4f46e5" stroke-width="3"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="20" fill="#4f46e5">1</text>
+                <text y="70" text-anchor="middle" font-family="Inter" font-weight="600" font-size="13" fill="#0f172a">Nuitka CLI</text>
+                <text y="88" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">build_exe.py --target cli</text>
+                <text y="-50" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">~50–80 MB</text>
+            </g>
+
+            <g transform="translate(370 100)">
+                <circle r="34" fill="#fff" stroke="#06b6d4" stroke-width="3"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="20" fill="#06b6d4">2</text>
+                <text y="70" text-anchor="middle" font-family="Inter" font-weight="600" font-size="13" fill="#0f172a">Copy sidecar</text>
+                <text y="88" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">ycollector-x86_64-pc-windows-msvc.exe</text>
+                <text y="-50" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">→ src-tauri/binaries/</text>
+            </g>
+
+            <g transform="translate(620 100)">
+                <circle r="34" fill="#fff" stroke="#10b981" stroke-width="3"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="20" fill="#10b981">3</text>
+                <text y="70" text-anchor="middle" font-family="Inter" font-weight="600" font-size="13" fill="#0f172a">Vite build</text>
+                <text y="88" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">pnpm --dir frontend build</text>
+                <text y="-50" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">~500 KB</text>
+            </g>
+
+            <g transform="translate(870 100)">
+                <circle r="34" fill="#fff" stroke="#f59e0b" stroke-width="3"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="20" fill="#f59e0b">4</text>
+                <text y="70" text-anchor="middle" font-family="Inter" font-weight="600" font-size="13" fill="#0f172a">cargo tauri build</text>
+                <text y="88" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">.msi / .exe (NSIS)</text>
+                <text y="-50" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#64748b">최종 ~55 MB</text>
+            </g>
+        </svg>
+        <div class="caption">build_tauri.ps1이 위 4단계를 직렬 실행.</div>
+    </div>
+
+    <h3>옵션</h3>
+    <table>
+        <thead><tr><th>플래그</th><th>설명</th></tr></thead>
+        <tbody>
+            <tr><td><code>-SkipSidecar</code></td><td>이미 <code>src-tauri/binaries/</code>에 sidecar가 있으면 1~2단계 스킵</td></tr>
+            <tr><td><code>-Triple &lt;triple&gt;</code></td><td>기본 <code>x86_64-pc-windows-msvc</code>. arm64 등 크로스 빌드 시</td></tr>
+        </tbody>
+    </table>
+
+    <h3>번들 크기 비교</h3>
+    <div class="figure">
+        <svg viewBox="0 0 900 280" role="img" aria-label="번들 크기 비교">
+            <!-- axes -->
+            <line x1="220" y1="20" x2="220" y2="240" stroke="#e2e8f0" stroke-width="1"/>
+            <line x1="220" y1="240" x2="850" y2="240" stroke="#e2e8f0" stroke-width="1"/>
+
+            <!-- scale -->
+            <text x="220" y="258" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">0</text>
+            <text x="430" y="258" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">50</text>
+            <text x="640" y="258" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">100</text>
+            <text x="850" y="258" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#94a3b8">150 MB</text>
+
+            <!-- bars: width = MB * 4.2 -->
+            <!-- Tauri + Python sidecar : ~55 MB -->
+            <g transform="translate(0 40)">
+                <text x="210" y="14" text-anchor="end" font-family="Inter" font-size="13" font-weight="600" fill="#0f172a">Tauri + Python sidecar</text>
+                <rect x="220" y="0" width="231" height="22" rx="4" fill="#10b981"/>
+                <text x="460" y="16" font-family="JetBrains Mono" font-size="11" fill="#059669" font-weight="600">~55 MB</text>
+                <text x="210" y="34" text-anchor="end" font-family="Inter" font-size="11" fill="#64748b">신규 (이 프로젝트)</text>
+            </g>
+
+            <!-- PySide6 + Nuitka : ~120 MB -->
+            <g transform="translate(0 110)">
+                <text x="210" y="14" text-anchor="end" font-family="Inter" font-size="13" font-weight="600" fill="#0f172a">PySide6 + Nuitka</text>
+                <rect x="220" y="0" width="504" height="22" rx="4" fill="#f59e0b"/>
+                <text x="730" y="16" font-family="JetBrains Mono" font-size="11" fill="#b45309" font-weight="600">~120 MB</text>
+                <text x="210" y="34" text-anchor="end" font-family="Inter" font-size="11" fill="#64748b">legacy GUI</text>
+            </g>
+
+            <!-- Electron + Python : ~150 MB -->
+            <g transform="translate(0 180)">
+                <text x="210" y="14" text-anchor="end" font-family="Inter" font-size="13" font-weight="600" fill="#0f172a">Electron + Python</text>
+                <rect x="220" y="0" width="630" height="22" rx="4" fill="#ef4444" opacity="0.85"/>
+                <text x="850" y="16" text-anchor="end" font-family="JetBrains Mono" font-size="11" fill="#ffffff" font-weight="600">~150 MB</text>
+                <text x="210" y="34" text-anchor="end" font-family="Inter" font-size="11" fill="#64748b">검토했으나 채택 X</text>
+            </g>
+        </svg>
+        <div class="caption">대략적 추정. WebView2 런타임은 OS 제공이라 별도 다운로드 없음.</div>
+    </div>
+</section>
+
+<!-- ── 트러블슈팅 ─────────────────────────────────────────────── -->
+<section id="trouble">
+    <h2><span class="num">4</span>트러블슈팅</h2>
+    <p class="lead">자주 만나는 7가지 함정.</p>
+
+    <div class="trouble">
+        <div class="row">
+            <div class="symptom"><span class="pill">CMD</span><code>cargo: command not found</code></div>
+            <div class="fix">Rust 미설치. <code>winget install Rustlang.Rustup</code> 후 새 터미널에서 <code>rustup default stable</code>.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">CMD</span><code>tauri: command not found</code> (cargo는 있음)</div>
+            <div class="fix">tauri-cli 미설치. <code>cargo install tauri-cli --version "^2.0"</code> 또는 <code>pnpm --dir frontend install</code> 후 <code>pnpm --dir frontend tauri dev</code>.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">SPAWN</span>sidecar spawn 실패</div>
+            <div class="fix">venv 미활성화. 같은 터미널에서 <code>uv sync</code> 했는지 확인하거나 <code>uv pip install -e .</code>로 PATH 등록.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">UI</span>창은 뜨지만 yt-dlp 버전 배지 없음</div>
+            <div class="fix">sidecar가 죽음. F12 DevTools → Console에서 <code>job:log</code> 이벤트 추적. 시스템에 yt-dlp 또는 FFmpeg가 없는지 확인.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">ENC</span>한글 제목이 ❑로 깨짐</div>
+            <div class="fix">Windows cp949 콘솔 문제. cli.py와 sidecar가 UTF-8 강제하므로 최신 커밋 사용. 그래도 깨지면 <code>chcp 65001</code>.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">NPM</span><code>EPERM</code> on pnpm install</div>
+            <div class="fix">OneDrive 등 동기화 폴더와 충돌. node_modules를 동기화 제외하거나 저장소를 동기화 밖으로 이동.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">HANG</span>다운로드가 "준비 중…"에서 멈춤</div>
+            <div class="fix">yt-dlp가 deno(JS 런타임) 대기. <code>winget install DenoLand.Deno</code> 후 새 터미널. 이미 winget으로 설치했어도 PATH가 누락된 경우, sidecar가 자동 fallback 폴더를 검색합니다.</div>
+        </div>
+    </div>
+</section>
+
+<!-- ── 아키텍처 깊이 ─────────────────────────────────────────── -->
+<section id="arch">
+    <h2><span class="num">5</span>한눈에 보는 아키텍처</h2>
+    <p class="lead">URL 한 줄이 파일로 떨어지기까지.</p>
+
+    <div class="figure">
+        <svg viewBox="0 0 1000 460" role="img" aria-label="full architecture">
+            <defs>
+                <marker id="arA" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                    <path d="M0,0 L9,3 L0,6 Z" fill="#4f46e5"/>
+                </marker>
+            </defs>
+
+            <!-- 1) Tauri Window -->
+            <rect x="100" y="30" width="800" height="100" rx="14" fill="#eef2ff" stroke="#4f46e5" stroke-width="2"/>
+            <text x="120" y="58" font-family="Inter" font-weight="700" font-size="14" fill="#4f46e5">Tauri Window (WebView2)</text>
+            <text x="120" y="80" font-family="Inter" font-size="12" fill="#475569">React 18 + shadcn/ui</text>
+            <g font-family="JetBrains Mono" font-size="11" fill="#0f172a">
+                <rect x="120" y="92" width="140" height="26" rx="4" fill="#fff" stroke="#c7d2fe"/>
+                <text x="190" y="110" text-anchor="middle">&lt;UrlPasteBar/&gt;</text>
+                <rect x="270" y="92" width="160" height="26" rx="4" fill="#fff" stroke="#c7d2fe"/>
+                <text x="350" y="110" text-anchor="middle">&lt;SettingsSheet/&gt;</text>
+                <rect x="440" y="92" width="120" height="26" rx="4" fill="#fff" stroke="#c7d2fe"/>
+                <text x="500" y="110" text-anchor="middle">&lt;JobList/&gt;</text>
+                <rect x="570" y="92" width="160" height="26" rx="4" fill="#fff" stroke="#c7d2fe"/>
+                <text x="650" y="110" text-anchor="middle">&lt;LibraryTab/&gt;</text>
+            </g>
+
+            <!-- arrow down -->
+            <line x1="500" y1="140" x2="500" y2="170" stroke="#4f46e5" stroke-width="2" marker-end="url(#arA)"/>
+            <text x="510" y="158" font-family="JetBrains Mono" font-size="10" fill="#4f46e5">invoke() · listen('job:*')</text>
+
+            <!-- 2) Rust shell -->
+            <rect x="100" y="180" width="800" height="100" rx="14" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/>
+            <text x="120" y="208" font-family="Inter" font-weight="700" font-size="14" fill="#b45309">Rust shell  ·  src-tauri/src/</text>
+            <text x="120" y="228" font-family="Inter" font-size="12" fill="#475569">7개 invoke handlers · NDJSON 펌프</text>
+            <g font-family="JetBrains Mono" font-size="10" fill="#0f172a">
+                <text x="120" y="252">probe</text>
+                <text x="180" y="252">start_job</text>
+                <text x="260" y="252">cancel</text>
+                <text x="320" y="252">load_settings</text>
+                <text x="430" y="252">save_settings</text>
+                <text x="540" y="252">pick_folder</text>
+                <text x="630" y="252">open_path</text>
+                <text x="720" y="252">list_library</text>
+            </g>
+            <text x="120" y="272" font-family="JetBrains Mono" font-size="10" fill="#64748b">→ emit('job:meta' | 'job:progress' | 'job:done' | 'job:error' | 'job:log')</text>
+
+            <!-- arrow down -->
+            <line x1="500" y1="290" x2="500" y2="320" stroke="#4f46e5" stroke-width="2" marker-end="url(#arA)"/>
+            <text x="510" y="308" font-family="JetBrains Mono" font-size="10" fill="#4f46e5">NDJSON · stdin/stdout</text>
+
+            <!-- 3) Python sidecar -->
+            <rect x="100" y="330" width="800" height="100" rx="14" fill="#d1fae5" stroke="#10b981" stroke-width="2"/>
+            <text x="120" y="358" font-family="Inter" font-weight="700" font-size="14" fill="#047857">Python sidecar  ·  ycollector --json</text>
+            <text x="120" y="378" font-family="Inter" font-size="12" fill="#475569">한 프로세스 · 직렬 워커 · job_id 별 Popen 레지스트리 (취소용)</text>
+            <g font-family="JetBrains Mono" font-size="10" fill="#0f172a">
+                <text x="120" y="402">sidecar.py</text>
+                <text x="220" y="402">→ engine/ytdlp.py</text>
+                <text x="380" y="402">→ subprocess(yt-dlp)</text>
+                <text x="550" y="402">→ FFmpeg (DASH merge)</text>
+                <text x="120" y="420" fill="#64748b">settings.ini · format_spec.py · classify_error()</text>
+            </g>
+        </svg>
+        <div class="caption">하향식 데이터 흐름. 이벤트는 Python → Rust → React로 역방향 전파.</div>
+    </div>
+
+    <h3>NDJSON 프로토콜 — 한 라인이 곧 하나의 사건</h3>
+    <div class="grid cols-2">
+        <div>
+            <h4 style="margin-top:0">Rust → Python (stdin)</h4>
+            <pre><span class="c">// 새 작업 시작</span>
+{<span class="s">"op"</span>:<span class="s">"download"</span>,
+ <span class="s">"job_id"</span>:<span class="s">"j_01"</span>,
+ <span class="s">"url"</span>:<span class="s">"https://..."</span>,
+ <span class="s">"settings"</span>:{<span class="s">"quality"</span>:<span class="s">"1080p"</span>,...}}
+
+<span class="c">// 메타만 빠르게</span>
+{<span class="s">"op"</span>:<span class="s">"probe"</span>,
+ <span class="s">"job_id"</span>:<span class="s">"j_02"</span>,
+ <span class="s">"url"</span>:<span class="s">"https://..."</span>}
+
+<span class="c">// 진행 중인 작업 취소</span>
+{<span class="s">"op"</span>:<span class="s">"cancel"</span>,
+ <span class="s">"job_id"</span>:<span class="s">"j_01"</span>}</pre>
+        </div>
+        <div>
+            <h4 style="margin-top:0">Python → Rust (stdout)</h4>
+            <pre><span class="c">// 가동 인사</span>
+{<span class="s">"event"</span>:<span class="s">"ready"</span>,
+ <span class="s">"yt_dlp"</span>:<span class="s">"2026.03.17"</span>,
+ <span class="s">"defaults"</span>:{...}}
+
+<span class="c">// 진행 프레임</span>
+{<span class="s">"event"</span>:<span class="s">"progress"</span>,
+ <span class="s">"job_id"</span>:<span class="s">"j_01"</span>,
+ <span class="s">"phase"</span>:<span class="s">"download"</span>,
+ <span class="s">"percent"</span>:<span class="n">42.1</span>,
+ <span class="s">"speed"</span>:<span class="n">3300000</span>,
+ <span class="s">"eta"</span>:<span class="n">58</span>}
+
+<span class="c">// 완료</span>
+{<span class="s">"event"</span>:<span class="s">"done"</span>,
+ <span class="s">"job_id"</span>:<span class="s">"j_01"</span>,
+ <span class="s">"filepath"</span>:<span class="s">"D:\\...mp4"</span>}</pre>
+        </div>
+    </div>
+</section>
+
+<!-- ── 마일스톤 ──────────────────────────────────────────────── -->
+<section id="milestones">
+    <h2><span class="num">6</span>마일스톤 진척</h2>
+    <p class="lead">frontend r1 계획 §3 에 정의된 6개 마일스톤.</p>
+
+    <div class="figure">
+        <svg viewBox="0 0 1000 220" role="img" aria-label="milestones">
+            <!-- track -->
+            <line x1="80" y1="100" x2="920" y2="100" stroke="#e2e8f0" stroke-width="3"/>
+            <!-- completed portion (M0–M4) -->
+            <line x1="80" y1="100" x2="720" y2="100" stroke="#10b981" stroke-width="3"/>
+
+            <!-- nodes -->
+            <g transform="translate(80 100)">
+                <circle r="20" fill="#10b981"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="14" fill="white">M0</text>
+                <text y="-32" text-anchor="middle" font-family="Inter" font-weight="600" font-size="12" fill="#0f172a">스캐폴딩</text>
+                <text y="48" text-anchor="middle" font-family="Inter" font-size="11" fill="#10b981" font-weight="600">완료</text>
+            </g>
+            <g transform="translate(240 100)">
+                <circle r="20" fill="#10b981"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="14" fill="white">M1</text>
+                <text y="-32" text-anchor="middle" font-family="Inter" font-weight="600" font-size="12" fill="#0f172a">NDJSON 사이드카</text>
+                <text y="48" text-anchor="middle" font-family="Inter" font-size="11" fill="#10b981" font-weight="600">완료</text>
+            </g>
+            <g transform="translate(400 100)">
+                <circle r="20" fill="#10b981"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="14" fill="white">M2</text>
+                <text y="-32" text-anchor="middle" font-family="Inter" font-weight="600" font-size="12" fill="#0f172a">다운로드+진행률</text>
+                <text y="48" text-anchor="middle" font-family="Inter" font-size="11" fill="#10b981" font-weight="600">코드 완료</text>
+            </g>
+            <g transform="translate(560 100)">
+                <circle r="20" fill="#10b981"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="14" fill="white">M3</text>
+                <text y="-32" text-anchor="middle" font-family="Inter" font-weight="600" font-size="12" fill="#0f172a">Settings UI</text>
+                <text y="48" text-anchor="middle" font-family="Inter" font-size="11" fill="#10b981" font-weight="600">코드 완료</text>
+            </g>
+            <g transform="translate(720 100)">
+                <circle r="20" fill="#10b981"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="14" fill="white">M4</text>
+                <text y="-32" text-anchor="middle" font-family="Inter" font-weight="600" font-size="12" fill="#0f172a">Library 토대</text>
+                <text y="48" text-anchor="middle" font-family="Inter" font-size="11" fill="#10b981" font-weight="600">코드 완료</text>
+            </g>
+            <g transform="translate(880 100)">
+                <circle r="20" fill="#fff" stroke="#94a3b8" stroke-width="3" stroke-dasharray="3 3"/>
+                <text y="6" text-anchor="middle" font-family="Inter" font-weight="700" font-size="14" fill="#94a3b8">M5</text>
+                <text y="-32" text-anchor="middle" font-family="Inter" font-weight="600" font-size="12" fill="#0f172a">인스톨러</text>
+                <text y="48" text-anchor="middle" font-family="Inter" font-size="11" fill="#94a3b8" font-weight="600">스크립트 준비</text>
+            </g>
+        </svg>
+        <div class="caption">M2~M4는 코드는 완성, 실제 실행 검증은 cargo + pnpm 환경 부재로 보류. M5는 사용자 머신에서 <code>build_tauri.ps1</code> 실행으로 통과.</div>
+    </div>
+</section>
+
+</main>
+
+<footer>
+    <p>
+        YCollector · yt-dlp 기반 데스크톱 다운로더 · <a href="docs/index.html">설계 문서</a> ·
+        <a href="docs/plan/youtube_downloader_frontend_plan_260516.md">frontend r1 계획</a> ·
+        <a href="README.md">README.md</a>
+    </p>
+    <p style="font-size: 11px; color: var(--fg-soft); margin-top: 8px;">
+        본 도구는 자기 콘텐츠, 공개도메인, CC 라이선스, 또는 명시적 권한이 있는 콘텐츠 다운로드를 위한 것입니다.
+    </p>
+</footer>
+
+<script>
+// 다크 모드: docs/index.html과 톤 맞춤 — 시스템 설정 자동, 별도 토글 없음.
+// 스크롤 인터섹션으로 SVG 페이드인 (의존성 없는 vanilla).
+const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+        if (e.isIntersecting) {
+            e.target.style.opacity = '1';
+            e.target.style.transform = 'translateY(0)';
+            io.unobserve(e.target);
+        }
+    });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.figure').forEach((f) => {
+    f.style.opacity = '0';
+    f.style.transform = 'translateY(12px)';
+    f.style.transition = 'opacity 0.5s ease-out, transform 0.5s ease-out';
+    io.observe(f);
+});
+</script>
+
+</body>
+</html>
