@@ -39,6 +39,29 @@ _API_BASE = "https://api.openai.com/v1"
 _REF_CACHE_DIR = Path(tempfile.gettempdir()) / "ycollector-refs"
 
 
+# ── TLS 신뢰저장소 ───────────────────────────────────────────────────────
+_tls_injected = False
+
+
+def _ensure_native_tls() -> None:
+    """백신/프록시가 TLS 를 가로채는 환경(주로 Windows)에서 certifi 만으로는
+    인증서 검증이 실패한다(UnknownIssuer). OS 인증서 저장소를 쓰도록 truststore 를
+    1회 주입. truststore 가 없으면 조용히 통과(기존 certifi 경로 유지).
+
+    참고: uv 설치 자체도 같은 이유로 막히면 `uv pip install --native-tls ...`
+    또는 환경변수 UV_NATIVE_TLS=1 을 쓴다.
+    """
+    global _tls_injected
+    if _tls_injected:
+        return
+    _tls_injected = True
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+    except Exception:
+        pass
+
+
 # ── 에러 분류 ─────────────────────────────────────────────────────────────
 _SORA_ERROR_PATTERNS: dict[str, str] = {
     "content-policy":   r"content policy|moderation|unsafe|disallowed",
@@ -110,6 +133,7 @@ def _fetch_reference(url: str, out_dir: Path) -> Path:
       3. youtube/youtu.be URL  → yt-dlp 로 thumbnail 추출
       4. 그 외 http(s) URL     → httpx GET, content-type image/* 검증
     """
+    _ensure_native_tls()
     out_dir.mkdir(parents=True, exist_ok=True)
     raw = url.strip()
     low = raw.lower()
@@ -205,6 +229,7 @@ class SoraProvider(Provider):
         return {"Authorization": f"Bearer {self.api_key}"}
 
     def _client(self):  # type: ignore[no-untyped-def]
+        _ensure_native_tls()
         try:
             import httpx
         except ImportError as exc:
