@@ -36,6 +36,23 @@ gui-legacy = [
 cookies-headed = [
     "playwright>=1.50.0",
 ]
+# Sora 2 Pro (OpenAI Videos API) 등 비디오 생성 어댑터.
+# .env 자동 로드용 python-dotenv 포함. httpx 는 SSE / multipart 처리에 사용.
+# 주의: OpenAI Videos API 는 2026-09-24 sunset 공지. 본 어댑터는 provider 추상화로
+# 후속 모델(Veo/Runway/Pika 등)로 교체 용이.
+video-gen = [
+    "openai>=1.50.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    "pillow>=10.0.0",
+]
+# 브라우저 UI 로컬 서버. FastAPI + Uvicorn + SSE.
+web = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "sse-starlette>=2.1.0",
+    "python-multipart>=0.0.9",
+]
 transcribe = [
     "faster-whisper>=1.0.0",
 ]
@@ -56,6 +73,8 @@ dev = [
 [project.scripts]
 ycollector = "ycollector.cli:main"
 ycollector-login = "ycollector.cookies:main"
+ycollector-generate = "ycollector.generator.cli:main"
+ycollector-server = "ycollector.server:main"
 
 [project.gui-scripts]
 ycollector-gui = "ycollector.gui:main"
@@ -71,6 +90,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ycollector"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+# webui/ 정적 파일은 패키지에 동봉.
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/ycollector/webui" = "ycollector/webui"
 
 [tool.ruff]
 line-length = 100

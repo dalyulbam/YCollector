@@ -146,6 +146,72 @@ uv run ycollector --yes-playlist "https://www.youtube.com/watch?v=...&list=PL...
 
 ---
 
+## 로컬 서버 — 브라우저에서 바로 (Tauri 불필요)
+
+Tauri/Rust 없이 한 줄로 가동되는 로컬 웹 UI. FastAPI + SSE 백엔드 + 단일 HTML.
+URL 붙여넣고 다운로드, 그리고 **참조 영상 URL과 프롬프트를 리스트로 쌓아 Sora 2 Pro 영상 생성**까지 한 페이지에서.
+
+### 사전 요구사항
+
+- 위 §사전 요구사항의 Python/uv/FFmpeg
+- **OpenAI API 키** — `.env`의 `OPENAI_API_KEY=sk-...` (자동 로드)
+
+### 가동
+
+```powershell
+# 한 번만:
+uv sync --extra web --extra video-gen
+
+# 가동 (브라우저 자동 오픈):
+uv run ycollector-server
+# → http://127.0.0.1:8765/
+```
+
+UI 구성:
+
+1. **YouTube 다운로드** — URL 붙여넣고 Enter. 진행률은 SSE로 실시간.
+2. **영상 생성** — Sora 2 Pro
+   - **① 참고할 video URL** — 입력창 + `+` 버튼. YouTube면 thumbnail 자동 추출, 일반 이미지 URL도 OK.
+   - **② 프롬프트 문장** — 입력창 + `+` 버튼. 여러 줄을 누적 → 호출 시 한 문장으로 합쳐 전송.
+   - 옵션: model(sora-2-pro / sora-2), size(720p/1024p/1080p), seconds(8/12/16/20).
+   - **예상 비용** 실시간 표시(references 수만큼 곱). 클릭 직전 confirm.
+   - references N개 × prompts 1개 → **N개 잡으로 분할** → 한 prompt 의 N개 변주를 한 번에.
+3. **작업 목록** — 다운로드/생성이 같은 카드 UI. SSE 진행률 바.
+
+상세 시각화는 [`README.html`](README.html) §7~§8.
+
+---
+
+## 영상 생성 CLI (`ycollector-generate`)
+
+자동화·배치·CI용 단축 진입점.
+
+```powershell
+uv run ycollector-generate "고양이가 비를 맞으며 우산을 들고 걷는 장면, 영화적 톤" `
+  --references "C:\Users\user\Pictures\ref.jpg" `
+  --references "https://www.youtube.com/watch?v=Y0913p-bfqY" `
+  --references "https://example.com/photo.jpg" `
+  --model sora-2-pro --size 1280x720 --seconds 8 `
+  --out generated/cat.mp4 --budget-usd 5
+```
+
+플래그:
+- `--references REF` (반복) — **로컬 이미지 파일 경로**(예: `C:\img\ref.jpg`, `./ref.png`, `~/ref.jpg`), 이미지 URL, 또는 YouTube URL(thumbnail 자동 추출). N번 주면 N개 잡으로 분할 → `cat-01.mp4`, `cat-02.mp4`, …
+- `--model {sora-2, sora-2-pro}` (기본 `sora-2-pro`)
+- `--size {1280x720, 1024x1792, 1792x1024, 1920x1080}`
+- `--seconds {8, 12, 16, 20}`
+- `--budget-usd 5` — 잡 1개 예상이 한도 초과면 실행 거부 (가격 함정 방지)
+- `--dry-run` — 견적·계획만 출력, API 호출 X
+
+가격(2026-05 기준): sora-2 720p **$0.10/s**, sora-2-pro 720p **$0.30/s**, 1024p **$0.50/s**, 1080p **$0.70/s**.
+8초 1080p Pro = $5.60. 일별·월별 가드는 settings.ini 향후 추가 예정.
+
+> ⚠ **OpenAI Videos API 는 2026-09-24 sunset 공지**. 본 통합은 `Provider` 추상화(`src/ycollector/generator/base.py`)로 만들어 후속 모델(Veo/Runway/Pika 등) 어댑터 추가가 1파일 변경입니다.
+
+생성된 영상은 자동으로 **라이브러리 manifest**에 `source: "generated"` 표지로 등록되어 Tauri UI / 로컬 서버 라이브러리 탭에서 다운로드한 영상과 같이 검색됩니다.
+
+---
+
 ## CLI / Legacy GUI 빠른 시작
 
 새 데스크톱 앱이 기능 패리티에 도달하기 전까지 병존합니다. CLI는 자동화/배치에 계속 권장.
