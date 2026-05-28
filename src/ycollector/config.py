@@ -122,6 +122,105 @@ def load_settings(explicit: Path | None = None) -> tuple[Settings, Path | None]:
     return s, source
 
 
+def save_settings(s: Settings, path: Path | None = None) -> Path:
+    """Persist *s* to INI.  Returns the path written."""
+    dest = path or (user_config_dir() / _CFG_FILENAME)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    parser = configparser.ConfigParser(interpolation=None)
+    parser["defaults"] = {
+        "quality": s.quality, "codec": s.codec,
+        "audio": s.audio, "container": s.container,
+    }
+    parser["output"] = {
+        "output_dir": s.output_dir,
+        "embed_subs": str(s.embed_subs).lower(),
+        "sub_langs": ",".join(s.sub_langs),
+        "cookies_from_browser": s.cookies_from_browser or "",
+        "cookies_file": s.cookies_file or "",
+    }
+    parser["playlist"] = {
+        "mode": s.playlist_mode,
+        "max_downloads": str(s.max_downloads) if s.max_downloads else "",
+        "items": s.playlist_items or "",
+    }
+    parser["network"] = {
+        "socket_timeout": str(s.socket_timeout),
+        "retries": str(s.retries),
+        "fragment_retries": str(s.fragment_retries),
+        "throttled_rate": s.throttled_rate or "",
+    }
+    with open(dest, "w", encoding="utf-8") as f:
+        parser.write(f)
+    return dest
+
+
+def settings_to_dict(s: Settings) -> dict[str, object]:
+    """Settings → JSON-friendly dict (React/web UI 와 호환)."""
+    return {
+        "quality": s.quality, "codec": s.codec, "audio": s.audio,
+        "container": s.container, "output_dir": s.output_dir,
+        "embed_subs": s.embed_subs, "sub_langs": ",".join(s.sub_langs),
+        "cookies_from_browser": s.cookies_from_browser or "",
+        "playlist_mode": s.playlist_mode,
+        "max_downloads": str(s.max_downloads) if s.max_downloads else "",
+        "playlist_items": s.playlist_items or "",
+        "socket_timeout": s.socket_timeout, "retries": s.retries,
+        "fragment_retries": s.fragment_retries,
+        "throttled_rate": s.throttled_rate or "",
+    }
+
+
+def settings_from_dict(d: dict[str, object]) -> Settings:
+    """JSON dict → Settings dataclass."""
+    s = Settings()
+    if "quality" in d:
+        s.quality = str(d["quality"])
+    if "codec" in d:
+        s.codec = str(d["codec"])
+    if "audio" in d:
+        s.audio = str(d["audio"])
+    if "container" in d:
+        s.container = str(d["container"])
+    if "output_dir" in d:
+        s.output_dir = str(d["output_dir"])
+    if "embed_subs" in d:
+        v = d["embed_subs"]
+        s.embed_subs = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
+    if "sub_langs" in d:
+        raw = d["sub_langs"]
+        if isinstance(raw, list):
+            s.sub_langs = [x for x in raw if x]
+        else:
+            s.sub_langs = [x.strip() for x in str(raw).split(",") if x.strip()]
+    if "cookies_from_browser" in d:
+        cb = str(d["cookies_from_browser"]).strip()
+        s.cookies_from_browser = cb or None
+    if "playlist_mode" in d:
+        s.playlist_mode = str(d["playlist_mode"])
+    if "max_downloads" in d:
+        v = d["max_downloads"]
+        if v in (None, "", "null"):
+            s.max_downloads = None
+        else:
+            try:
+                s.max_downloads = int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                pass
+    if "playlist_items" in d:
+        pi = str(d.get("playlist_items") or "").strip()
+        s.playlist_items = pi or None
+    if "socket_timeout" in d:
+        s.socket_timeout = _int_or_default(str(d["socket_timeout"]), s.socket_timeout)
+    if "retries" in d:
+        s.retries = _int_or_default(str(d["retries"]), s.retries)
+    if "fragment_retries" in d:
+        s.fragment_retries = _int_or_default(str(d["fragment_retries"]), s.fragment_retries)
+    if "throttled_rate" in d:
+        tr = str(d["throttled_rate"]).strip()
+        s.throttled_rate = tr or None
+    return s
+
+
 def write_default_config(path: Path) -> None:
     """Write a fully-commented template INI to ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,7 +232,7 @@ def _resolve_path(explicit: Path | None) -> Path | None:
     if explicit is not None:
         return explicit if explicit.exists() else None
     for c in (
-        _user_config_dir() / _CFG_FILENAME,
+        user_config_dir() / _CFG_FILENAME,
         Path.cwd() / _CFG_FILENAME,
     ):
         if c.exists():
@@ -141,7 +240,7 @@ def _resolve_path(explicit: Path | None) -> Path | None:
     return None
 
 
-def _user_config_dir() -> Path:
+def user_config_dir() -> Path:
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or str(Path.home())
         return Path(base) / "YCollector"

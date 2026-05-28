@@ -324,6 +324,7 @@ class YtdlpEngine:
         yes_playlist: bool = False,
         max_downloads: int | None = None,
         playlist_items: str | None = None,
+        download_archive: Path | None = None,
         extra_args: list[str] | None = None,
         on_progress: Callable[[ProgressEvent], None] | None = None,
         on_log: Callable[[str], None] | None = None,
@@ -390,6 +391,9 @@ class YtdlpEngine:
             cmd += ["--max-downloads", str(max_downloads)]
         if playlist_items:
             cmd += ["--playlist-items", playlist_items]
+        if download_archive is not None:
+            download_archive.parent.mkdir(parents=True, exist_ok=True)
+            cmd += ["--download-archive", str(download_archive)]
         if write_subs and sub_langs:
             cmd += [
                 "--write-subs",

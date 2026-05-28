@@ -1,90 +1,23 @@
 // `cargo run --release` 빌드에서 콘솔 창이 뜨지 않도록.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod jobs;
-mod settings;
-mod sidecar;
+// sidecar 프로토콜 제거: FastAPI HTTP API로 통일.
+// mod jobs;     — 작업 레지스트리는 FastAPI 서버가 관리.
+// mod settings; — 설정 R/W는 /api/settings가 담당.
+// mod sidecar;  — NDJSON sidecar는 더 이상 사용 안 함.
 
-use std::sync::Arc;
+use std::process::Stdio;
 
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
-use crate::jobs::JobRegistry;
-use crate::sidecar::SidecarHandle;
-
-/// Tauri 전역 상태: sidecar 핸들 + job 레지스트리.
+/// Tauri 전역 상태: FastAPI 서버 URL.
 pub struct AppState {
-    pub sidecar: tokio::sync::Mutex<Option<SidecarHandle>>,
-    pub jobs: Arc<JobRegistry>,
+    pub api_base: String,
 }
 
 #[tauri::command]
-async fn probe(
-    url: String,
-    state: tauri::State<'_, AppState>,
-    app: tauri::AppHandle,
-) -> Result<String, String> {
-    let job_id = uuid::Uuid::new_v4().to_string();
-    let mut guard = state.sidecar.lock().await;
-    let handle = ensure_sidecar(&mut guard, &app).map_err(|e| e.to_string())?;
-    handle
-        .send_op(serde_json::json!({
-            "op": "probe",
-            "job_id": job_id,
-            "url": url,
-        }))
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(job_id)
-}
-
-#[tauri::command]
-async fn start_job(
-    url: String,
-    settings: serde_json::Value,
-    state: tauri::State<'_, AppState>,
-    app: tauri::AppHandle,
-) -> Result<String, String> {
-    let job_id = uuid::Uuid::new_v4().to_string();
-    state.jobs.register(&job_id, &url);
-    let mut guard = state.sidecar.lock().await;
-    let handle = ensure_sidecar(&mut guard, &app).map_err(|e| e.to_string())?;
-    handle
-        .send_op(serde_json::json!({
-            "op": "download",
-            "job_id": job_id,
-            "url": url,
-            "settings": settings,
-        }))
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(job_id)
-}
-
-#[tauri::command]
-async fn cancel(
-    job_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    let guard = state.sidecar.lock().await;
-    if let Some(handle) = guard.as_ref() {
-        handle
-            .send_op(serde_json::json!({"op": "cancel", "job_id": job_id}))
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    state.jobs.mark_cancelled(&job_id);
-    Ok(())
-}
-
-#[tauri::command]
-fn load_settings() -> Result<serde_json::Value, String> {
-    settings::load().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn save_settings(settings: serde_json::Value) -> Result<(), String> {
-    settings::save(&settings).map_err(|e| e.to_string())
+fn get_api_base(state: tauri::State<'_, AppState>) -> String {
+    state.api_base.clone()
 }
 
 #[tauri::command]
@@ -112,20 +45,31 @@ fn open_path(path: String, app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn list_library() -> Result<serde_json::Value, String> {
-    crate::jobs::library::read_manifest().map_err(|e| e.to_string())
+fn pick_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap_or(18765)
 }
 
-fn ensure_sidecar(
-    guard: &mut tokio::sync::MutexGuard<'_, Option<SidecarHandle>>,
-    app: &tauri::AppHandle,
-) -> anyhow::Result<&mut SidecarHandle> {
-    if guard.is_none() {
-        let handle = SidecarHandle::spawn(app.clone())?;
-        **guard = Some(handle);
+fn resolve_server_command() -> Option<std::process::Command> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    let name = if cfg!(windows) { "ycollector-server.exe" } else { "ycollector-server" };
+    if let Some(p) = exe_dir.as_ref().map(|d| d.join(name)).filter(|p| p.exists()) {
+        return Some(std::process::Command::new(p));
     }
-    Ok(guard.as_mut().unwrap())
+    // PATH fallback
+    if std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).map(|p| p.join(name)).find(|p| p.is_file())
+    }).is_some() {
+        return Some(std::process::Command::new("ycollector-server"));
+    }
+    // uv run fallback (dev)
+    let mut cmd = std::process::Command::new("uv");
+    cmd.args(["run", "ycollector-server"]);
+    Some(cmd)
 }
 
 fn main() {
@@ -136,28 +80,37 @@ fn main() {
         )
         .init();
 
+    let port = pick_free_port();
+    let api_base = format!("http://127.0.0.1:{port}");
+
+    // FastAPI 서버를 백그라운드로 spawn.
+    if let Some(mut cmd) = resolve_server_command() {
+        cmd.args(["--no-browser", "--port", &port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit());
+        match cmd.spawn() {
+            Ok(child) => {
+                std::mem::forget(child);
+                tracing::info!("FastAPI server spawned on {api_base}");
+            }
+            Err(e) => {
+                tracing::error!("server spawn 실패: {e}");
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
-            let state = AppState {
-                sidecar: tokio::sync::Mutex::new(None),
-                jobs: Arc::new(JobRegistry::default()),
-            };
-            app.manage(state);
-            // 부팅 직후 sidecar는 lazy spawn. 첫 invoke에서 띄움.
-            let _ = app.emit("app:ready", serde_json::json!({"ok": true}));
+        .setup(move |app| {
+            app.manage(AppState { api_base });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            probe,
-            start_job,
-            cancel,
-            load_settings,
-            save_settings,
+            get_api_base,
             pick_folder,
             open_path,
-            list_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running YCollector app");

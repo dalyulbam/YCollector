@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — FastAPI 공유 백엔드 통일 + 재생목록 전체 다운로드</title>
+<meta name="description" content="구현 기록 · 2026-05-25">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #4f46e5; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px; display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.topbar .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.topbar .meta { margin-left: auto; font-size: 0.85rem; color: var(--fg-muted); }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+h1 { font-size: 1.8rem; font-weight: 800; margin: 0 0 8px; }
+h2 { font-size: 1.25rem; font-weight: 700; margin: 40px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: var(--accent); }
+.subtitle { color: var(--fg-muted); margin: 0 0 32px; font-size: 0.95rem; }
+
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code, p code { background: var(--code-bg); color: var(--code-fg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85em; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow-sm); }
+.card h3 { margin-top: 0; }
+
+pre { background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 16px; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge.new { background: #dcfce7; color: #166534; }
+.badge.changed { background: #fef3c7; color: #92400e; }
+.badge.removed { background: #fee2e2; color: #991b1b; }
+@media (prefers-color-scheme: dark) {
+    .badge.new { background: #14532d; color: #86efac; }
+    .badge.changed { background: #78350f; color: #fde68a; }
+    .badge.removed { background: #7f1d1d; color: #fca5a5; }
+}
+
+ul { padding-left: 20px; }
+li { margin: 4px 0; }
+
+.diagram {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 20px; margin: 16px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.82rem;
+    line-height: 1.6; white-space: pre; overflow-x: auto;
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand">YCollector<span class="dot"></span></div>
+    <div class="meta">구현 기록 &middot; 2026-05-25</div>
+</div>
+
+<div class="wrap">
+
+<h1>FastAPI 공유 백엔드 통일 + 재생목록 전체 다운로드</h1>
+<p class="subtitle">
+    기존에 분리되어 있던 Tauri sidecar(NDJSON) 백엔드와 FastAPI 서버를 FastAPI 하나로 통일.<br>
+    동시에, 재생목록 전체 다운로드 토글을 web UI와 React 프론트엔드 양쪽에 구현.
+</p>
+
+<!-- ── 배경 ──────────────────────────────────────────────────────── -->
+<h2>1. 배경: 왜 통일이 필요했나</h2>
+
+<div class="card">
+<p>프로젝트에 두 개의 프론트엔드가 별개로 존재했다:</p>
+<table>
+<tr><th></th><th>Tauri + React (5/21~)</th><th>FastAPI web UI (5/24~)</th></tr>
+<tr><td>통신</td><td>NDJSON sidecar (stdin/stdout)</td><td>HTTP REST + SSE</td></tr>
+<tr><td>진입점</td><td><code>src-tauri/</code> + <code>frontend/</code></td><td><code>src/ycollector/server.py</code> + <code>webui/</code></td></tr>
+<tr><td>Sora 생성</td><td>미구현</td><td>지원</td></tr>
+<tr><td>설정 UI</td><td>SettingsSheet (17 항목)</td><td>없음</td></tr>
+</table>
+<p><strong>핵심 문제:</strong> 기능 추가 시 양쪽 모두 수정 필요 (코드 중복). 재생목록 토글 추가 시 이 문제가 표면화.</p>
+</div>
+
+<!-- ── Before / After ────────────────────────────────────────────── -->
+<h2>2. Before / After 아키텍처</h2>
+
+<h3>Before (이중 백엔드)</h3>
+<div class="diagram">┌─────────────┐        NDJSON stdin/stdout        ┌────────────────┐
+│ Tauri (Rust) │ ─────────────────────────────────▶ │ sidecar.py     │
+│  + React     │ ◀───────────────────────────────── │ (yt-dlp only)  │
+└─────────────┘                                    └────────────────┘
+
+┌─────────────┐        HTTP REST + SSE            ┌────────────────┐
+│ Browser      │ ─────────────────────────────────▶ │ server.py      │
+│ (vanilla JS) │ ◀───────────────────────────────── │ (yt-dlp+Sora)  │
+└─────────────┘                                    └────────────────┘</div>
+
+<h3>After (FastAPI 단일 백엔드)</h3>
+<div class="diagram">┌─────────────┐
+│ Tauri (Rust) │──spawn──▶ ┌────────────────────┐
+│  + React     │           │                    │
+│  (ipc.ts)    │──HTTP────▶│  server.py         │
+└─────────────┘           │  (FastAPI)          │
+                           │                    │
+┌─────────────┐           │  yt-dlp + Sora     │
+│ Browser      │──HTTP────▶│  /api/settings     │
+│ (vanilla JS) │           │  /api/download     │
+└─────────────┘           │  /api/generate     │
+                           │  /api/jobs/…/events│
+                           └────────────────────┘
+
+Tauri 네이티브 기능 (pick_folder, open_path)만 Rust에 유지.
+나머지 모든 명령은 HTTP API로 통일.</div>
+
+<!-- ── 변경 파일 ─────────────────────────────────────────────────── -->
+<h2>3. 변경된 파일</h2>
+
+<h3>Python 백엔드</h3>
+<table>
+<tr><th>파일</th><th>변경</th><th>요약</th></tr>
+<tr>
+    <td><code>src/ycollector/config.py</code></td>
+    <td><span class="badge new">NEW</span> 3개 함수</td>
+    <td>
+        <code>save_settings()</code> — Settings → INI 저장<br>
+        <code>settings_to_dict()</code> — Settings → JSON dict<br>
+        <code>settings_from_dict()</code> — JSON dict → Settings
+    </td>
+</tr>
+<tr>
+    <td><code>src/ycollector/server.py</code></td>
+    <td><span class="badge changed">CHANGED</span></td>
+    <td>
+        <code>GET /api/settings</code> — 현재 설정 반환<br>
+        <code>POST /api/settings</code> — 설정 저장<br>
+        <code>POST /api/download</code> — <code>settings</code> dict 수용 (merge with defaults)<br>
+        CORS middleware 추가<br>
+        <code>_run_download()</code> — full settings override 지원
+    </td>
+</tr>
+</table>
+
+<h3>Web UI (vanilla JS)</h3>
+<table>
+<tr><th>파일</th><th>변경</th><th>요약</th></tr>
+<tr>
+    <td><code>src/ycollector/webui/index.html</code></td>
+    <td><span class="badge new">NEW</span> 버튼</td>
+    <td>재생목록 전체 다운로드 토글 버튼 (ListVideo 아이콘 + 「단일/전체」 라벨)</td>
+</tr>
+<tr>
+    <td><code>src/ycollector/webui/app.js</code></td>
+    <td><span class="badge changed">CHANGED</span></td>
+    <td>토글 상태 관리 + <code>playlist_mode: "expand"</code> 전달</td>
+</tr>
+<tr>
+    <td><code>src/ycollector/webui/styles.css</code></td>
+    <td><span class="badge new">NEW</span> 클래스</td>
+    <td><code>.btn-active</code> 스타일 (보라색 배경, 흰색 텍스트)</td>
+</tr>
+</table>
+
+<h3>React 프론트엔드 (Tauri)</h3>
+<table>
+<tr><th>파일</th><th>변경</th><th>요약</th></tr>
+<tr>
+    <td><code>frontend/src/lib/ipc.ts</code></td>
+    <td><span class="badge changed">CHANGED</span> 전면 재작성</td>
+    <td>
+        Tauri invoke → HTTP fetch 전환<br>
+        Tauri listen → SSE (EventSource) per-job 전환<br>
+        <code>pick_folder</code>, <code>open_path</code>만 Tauri 유지<br>
+        <code>setApiBase()</code>로 서버 URL 설정 가능
+    </td>
+</tr>
+<tr>
+    <td><code>frontend/src/components/UrlPasteBar.tsx</code></td>
+    <td><span class="badge new">NEW</span> 버튼</td>
+    <td>재생목록 토글 (ListVideo 아이콘, ON 시 <code>playlist_mode: "expand"</code> override)</td>
+</tr>
+</table>
+
+<h3>Tauri (Rust)</h3>
+<table>
+<tr><th>파일</th><th>변경</th><th>요약</th></tr>
+<tr>
+    <td><code>src-tauri/src/main.rs</code></td>
+    <td><span class="badge changed">CHANGED</span> 대폭 간소화</td>
+    <td>
+        sidecar spawn 제거 → FastAPI 서버 spawn<br>
+        8개 Tauri 커맨드 → 3개로 축소: <code>get_api_base</code>, <code>pick_folder</code>, <code>open_path</code><br>
+        <code>AppState</code>: sidecar handle → api_base URL
+    </td>
+</tr>
+<tr>
+    <td><code>src-tauri/src/sidecar.rs</code></td>
+    <td><span class="badge removed">UNUSED</span></td>
+    <td>NDJSON sidecar pump — 더 이상 import하지 않음 (파일은 보존)</td>
+</tr>
+<tr>
+    <td><code>src-tauri/src/settings.rs</code></td>
+    <td><span class="badge removed">UNUSED</span></td>
+    <td>Rust INI 파싱 — <code>/api/settings</code>로 대체</td>
+</tr>
+<tr>
+    <td><code>src-tauri/src/jobs.rs</code></td>
+    <td><span class="badge removed">UNUSED</span></td>
+    <td>Rust 작업 레지스트리 — FastAPI <code>_ServerState</code>로 대체</td>
+</tr>
+</table>
+
+<!-- ── API 레퍼런스 ──────────────────────────────────────────────── -->
+<h2>4. 통합 API 레퍼런스</h2>
+
+<table>
+<tr><th>Method</th><th>Endpoint</th><th>Request Body</th><th>Response</th></tr>
+<tr><td>GET</td><td><code>/api/health</code></td><td>—</td><td><code>{ok, openai_api_key, cookies_present, ...}</code></td></tr>
+<tr><td>GET</td><td><code>/api/settings</code></td><td>—</td><td><code>{quality, codec, ..., _source}</code></td></tr>
+<tr><td>POST</td><td><code>/api/settings</code></td><td><code>{quality?, codec?, ...}</code></td><td><code>{ok, path}</code></td></tr>
+<tr>
+    <td>POST</td><td><code>/api/download</code></td>
+    <td><code>{url, settings?: {...}, playlist_mode?: "expand"}</code></td>
+    <td><code>{job_id}</code></td>
+</tr>
+<tr><td>POST</td><td><code>/api/generate</code></td><td><code>{prompts, references?, model?, size?, seconds?}</code></td><td><code>{job_ids}</code></td></tr>
+<tr><td>GET</td><td><code>/api/jobs</code></td><td>—</td><td><code>{items: [...]}</code></td></tr>
+<tr><td>GET</td><td><code>/api/jobs/{id}</code></td><td>—</td><td><code>{id, status, progress, ...}</code></td></tr>
+<tr><td>POST</td><td><code>/api/jobs/{id}/cancel</code></td><td>—</td><td><code>{ok}</code></td></tr>
+<tr><td>GET</td><td><code>/api/jobs/{id}/events</code></td><td>—</td><td>SSE stream</td></tr>
+<tr><td>GET</td><td><code>/api/library</code></td><td>—</td><td><code>{version, items: [...]}</code></td></tr>
+</table>
+
+<!-- ── 재생목록 다운로드 ─────────────────────────────────────────── -->
+<h2>5. 재생목록 전체 다운로드 흐름</h2>
+
+<div class="card">
+<h3>사용자 경험</h3>
+<ul>
+    <li>URL 입력 바 옆에 토글 버튼 (기본: 「단일」, 클릭 시: 「전체」로 전환 + 보라색 활성화)</li>
+    <li>「전체」 상태에서 다운로드 시 재생목록의 모든 영상을 받음</li>
+    <li>설정의 <code>playlist_mode</code> 를 바꾸지 않음 (per-download override)</li>
+</ul>
+
+<h3>데이터 흐름</h3>
+<pre><code>1. [UI] 토글 ON → playlist_mode = "expand"
+2. [UI] 다운로드 클릭
+3. [HTTP] POST /api/download {url, settings: {playlist_mode: "expand", ...}}
+          또는 {url, playlist_mode: "expand"} (web UI 호환)
+4. [서버] _run_download() → settings merge → s.playlist_mode == "expand"
+5. [서버] yt-dlp --yes-playlist → 재생목록 전체 다운로드
+</code></pre>
+</div>
+
+<!-- ── 제거된 것 ─────────────────────────────────────────────────── -->
+<h2>6. 제거 / 비활성화된 것</h2>
+
+<table>
+<tr><th>항목</th><th>상태</th><th>이유</th></tr>
+<tr><td>NDJSON sidecar 프로토콜</td><td>비활성 (파일 보존)</td><td>HTTP API로 대체</td></tr>
+<tr><td>Rust settings.rs INI 파싱</td><td>비활성</td><td><code>/api/settings</code> 가 Python config.py 사용</td></tr>
+<tr><td>Rust jobs.rs 작업 레지스트리</td><td>비활성</td><td>FastAPI <code>_ServerState.jobs</code>가 관리</td></tr>
+<tr><td>Tauri 커맨드 5개</td><td>제거</td><td><code>probe</code>, <code>start_job</code>, <code>cancel</code>, <code>load_settings</code>, <code>save_settings</code>, <code>list_library</code> → HTTP</td></tr>
+<tr><td>mock-ipc.ts</td><td>더 이상 사용되지 않음</td><td>ipc.ts가 HTTP 직접 호출 (서버 미접속 시 retry 후 무시)</td></tr>
+</table>
+
+<!-- ── 검증 ───────────────────────────────────────────────────────── -->
+<h2>7. 검증</h2>
+
+<div class="card">
+<h3>확인된 사항</h3>
+<ul>
+    <li>TypeScript 컴파일 통과 (<code>tsc --noEmit</code>)</li>
+    <li><code>GET /api/settings</code> — 15개 설정 필드 + <code>_source</code> 정상 반환</li>
+    <li><code>POST /api/download {url, playlist_mode: "expand"}</code> — job 생성 + yt-dlp <code>[youtube:tab]</code> extractor 사용 확인 (= <code>--yes-playlist</code> 동작)</li>
+    <li>SSL 오류는 TLS 가로채기 환경 문제 (코드 문제 아님)</li>
+</ul>
+
+<h3>서버 실행</h3>
+<pre><code>uv run ycollector-server
+# → http://127.0.0.1:8765/</code></pre>
+</div>
+
+</div>
+</body>
+</html>

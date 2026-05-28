@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ClipboardPaste, Download, Loader2 } from "lucide-react";
+import { ClipboardPaste, Download, Loader2, ListVideo } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/lib/ipc";
@@ -15,6 +15,7 @@ const URL_RE = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)\//i
 export function UrlPasteBar({ settings }: Props) {
   const [value, setValue] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [playlistAll, setPlaylistAll] = React.useState(false);
   const addJob = useJobs((s) => s.addJob);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -25,19 +26,21 @@ export function UrlPasteBar({ settings }: Props) {
       // 부드러운 검증 — 비 YouTube URL도 yt-dlp가 지원할 수 있으니 막진 않고 경고만.
       // (yt-dlp는 1000+ 사이트 지원)
     }
+    const effective: Settings = playlistAll
+      ? { ...settings, playlist_mode: "expand" }
+      : settings;
     setBusy(true);
     try {
-      const jobId = await ipc.startJob(url, settings);
+      const jobId = await ipc.startJob(url, effective);
       addJob(jobId, url);
       setValue("");
-      // 다음 항목을 받을 수 있도록 포커스 유지.
       inputRef.current?.focus();
     } catch (e) {
       console.error("startJob 실패:", e);
     } finally {
       setBusy(false);
     }
-  }, [value, settings, addJob]);
+  }, [value, settings, playlistAll, addJob]);
 
   const pasteFromClipboard = React.useCallback(async () => {
     try {
@@ -64,6 +67,16 @@ export function UrlPasteBar({ settings }: Props) {
         className="font-mono text-sm"
         autoFocus
       />
+      <Button
+        type="button"
+        variant={playlistAll ? "default" : "outline"}
+        size="icon"
+        onClick={() => setPlaylistAll((v) => !v)}
+        title={playlistAll ? "재생목록 전체 받기 (ON)" : "단일 영상만 (OFF)"}
+        aria-pressed={playlistAll}
+      >
+        <ListVideo className="h-4 w-4" />
+      </Button>
       <Button
         type="button"
         variant="outline"
