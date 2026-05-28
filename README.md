@@ -171,11 +171,11 @@ UI 구성:
 
 1. **YouTube 다운로드** — URL 붙여넣고 Enter. 진행률은 SSE로 실시간.
 2. **영상 생성** — Sora 2 Pro
-   - **① 참고할 video URL** — 입력창 + `+` 버튼. YouTube면 thumbnail 자동 추출, 일반 이미지 URL도 OK.
+   - **① 참고 이미지/영상** — **로컬 파일 업로드**(드래그드롭, 이미지·영상) 또는 URL. YouTube면 thumbnail, 영상 파일은 **첫 프레임**을 앵커로. 출력 size에 맞게 자동 리사이즈.
    - **② 프롬프트 문장** — 입력창 + `+` 버튼. 여러 줄을 누적 → 호출 시 한 문장으로 합쳐 전송.
-   - 옵션: model(sora-2-pro / sora-2), size(720p/1024p/1080p), seconds(8/12/16/20).
+   - 옵션: model(sora-2-pro / sora-2), size(가로 1280×720·1792×1024 / 세로 720×1280·1024×1792), seconds(4/8/12).
    - **예상 비용** 실시간 표시(references 수만큼 곱). 클릭 직전 confirm.
-   - references N개 × prompts 1개 → **N개 잡으로 분할** → 한 prompt 의 N개 변주를 한 번에.
+   - 프롬프트 **1개** → 단일 영상. **프롬프트 2개 이상**(또는 reference 2개 이상) → **연속형**: 각 장면을 **last-frame chaining**(직전 클립의 마지막 프레임을 다음 앵커로)으로 이어 **1개 연속 영상**. 첫 reference가 시작 앵커, 비용은 세그먼트 수만큼.
 3. **작업 목록** — 다운로드/생성이 같은 카드 UI. SSE 진행률 바.
 
 상세 시각화는 [`README.html`](README.html) §7~§8.
@@ -198,13 +198,12 @@ uv run ycollector-generate "고양이가 비를 맞으며 우산을 들고 걷�
 플래그:
 - `--references REF` (반복) — **로컬 이미지 파일 경로**(예: `C:\img\ref.jpg`, `./ref.png`, `~/ref.jpg`), 이미지 URL, 또는 YouTube URL(thumbnail 자동 추출). N번 주면 N개 잡으로 분할 → `cat-01.mp4`, `cat-02.mp4`, …
 - `--model {sora-2, sora-2-pro}` (기본 `sora-2-pro`)
-- `--size {1280x720, 1024x1792, 1792x1024, 1920x1080}`
-- `--seconds {8, 12, 16, 20}`
+- `--size {1280x720, 1792x1024, 720x1280, 1024x1792}`
+- `--seconds {4, 8, 12}` (단일 생성 최대 12초)
 - `--budget-usd 5` — 잡 1개 예상이 한도 초과면 실행 거부 (가격 함정 방지)
 - `--dry-run` — 견적·계획만 출력, API 호출 X
 
-가격(2026-05 기준): sora-2 720p **$0.10/s**, sora-2-pro 720p **$0.30/s**, 1024p **$0.50/s**, 1080p **$0.70/s**.
-8초 1080p Pro = $5.60. 일별·월별 가드는 settings.ini 향후 추가 예정.
+가격(추정 — 생성 전 확인창에 표시): sora-2 720p ≈ **$0.10/s**, sora-2-pro 720p ≈ **$0.30/s**, 고해상(1792×1024 등) ≈ $0.50–0.70/s. 정확한 단가는 OpenAI 요금표 기준이며, 단일 생성은 최대 12초입니다.
 
 > ⚠ **OpenAI Videos API 는 2026-09-24 sunset 공지**. 본 통합은 `Provider` 추상화(`src/ycollector/generator/base.py`)로 만들어 후속 모델(Veo/Runway/Pika 등) 어댑터 추가가 1파일 변경입니다.
 

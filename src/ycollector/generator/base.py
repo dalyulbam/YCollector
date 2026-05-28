@@ -112,6 +112,10 @@ class Provider(abc.ABC):
         """provider 가 지원하면 override. 기본은 unsupported."""
         return False
 
+    def extend(self, prev_video: Path, prompt: str, seconds: int, model: str) -> VideoJob:
+        """완성된 영상 파일을 이어서 연장(지원하는 provider 만 override). 기본은 미지원."""
+        raise ProviderError("이 provider 는 extend 를 지원하지 않습니다.", category="invalid-input")
+
     def poll_until_done(
         self,
         job: VideoJob,

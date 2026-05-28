@@ -32,6 +32,12 @@
     <p class="lead">URL을 붙여넣고 Enter 또는 다운로드 버튼.</p>
     <div class="row">
         <input id="dl-url" type="url" placeholder="https://www.youtube.com/watch?v=..." spellcheck="false" autocomplete="off">
+        <button id="dl-playlist" class="btn btn-outline" title="클릭하면 재생목록 전체 다운로드" aria-pressed="false" aria-label="재생목록 전체 다운로드">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/><path d="m16 12 5 3-5 3v-6Z"/>
+            </svg>
+            <span id="dl-playlist-label">단일</span>
+        </button>
         <button id="dl-paste" class="btn btn-outline" title="클립보드에서 붙여넣기" aria-label="paste">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="8" y="2" width="8" height="4" rx="1"/>
@@ -53,30 +59,39 @@
 <section class="panel">
     <h2><span class="num">2</span>영상 생성 — Sora 2 Pro</h2>
     <p class="lead">
-        참조 영상/이미지 URL과 프롬프트 문장을 쌓아두고 한 번에 생성합니다.
-        references N개 × prompts 1개로 묶어 N개 잡으로 실행 — 한 prompt 의 여러 변주를 한 번에.
+        이미지/영상 reference로 시작 장면을 앵커하고, 프롬프트를 여러 개 넣으면 각 장면을 이어 <b>1개 연속 영상</b>을 만듭니다
+        (last-frame chaining). 프롬프트 1개면 단일 영상.
     </p>
 
     <div class="gen-grid">
-        <!-- (1) 참조 URL 리스트 -->
+        <!-- (1) 참조 리스트: 파일 업로드 + URL -->
         <div class="gen-col">
-            <h3>① 참고할 video URL <span class="counter" id="ref-count">0</span></h3>
-            <p class="hint">YouTube면 thumbnail을 자동 추출. 일반 이미지 URL도 가능.</p>
+            <h3>① 참고 이미지/영상 <span class="counter" id="ref-count">0</span></h3>
+            <p class="hint">로컬 파일(이미지·영상) 업로드 또는 URL. <b>첫 1개가 시작 앵커</b>(연속형의 출발 장면). 영상은 첫 프레임을 사용.</p>
             <div class="row tight">
-                <input id="ref-input" type="url" placeholder="https://www.youtube.com/watch?v=...">
-                <button id="ref-add" class="btn btn-outline btn-square" title="추가">
+                <input id="ref-input" type="text" placeholder="이미지/YouTube URL 붙여넣기" spellcheck="false" autocomplete="off">
+                <button id="ref-add" class="btn btn-outline btn-square" title="URL 추가">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
                         <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                     </svg>
                 </button>
             </div>
-            <ul class="chip-list" id="ref-list" aria-label="reference URLs"></ul>
+            <div id="ref-drop" class="dropzone" tabindex="0" role="button" aria-label="파일 선택 또는 끌어다 놓기">
+                <input id="ref-file" type="file" accept="image/*,video/*" multiple hidden>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>파일을 끌어다 놓거나 <span class="linklike">선택</span> — 이미지·영상</span>
+            </div>
+            <ul class="chip-list" id="ref-list" aria-label="references"></ul>
+            <div id="chain-note" class="chain-note" hidden></div>
         </div>
 
         <!-- (2) 프롬프트 문장 리스트 -->
         <div class="gen-col">
             <h3>② 프롬프트 문장 <span class="counter" id="prompt-count">0</span></h3>
-            <p class="hint">여러 줄로 누적 가능. 호출 시 한 문장으로 합쳐서 전송.</p>
+            <p class="hint"><b>여러 개 넣으면 각 줄이 한 장면(세그먼트)으로 이어집니다(연속형).</b> 1개면 단일 영상.</p>
             <div class="row tight">
                 <input id="prompt-input" type="text" placeholder="고양이가 비를 맞으며 우산을 들고 걷는 장면, 영화적 톤">
                 <button id="prompt-add" class="btn btn-outline btn-square" title="추가">
@@ -101,18 +116,18 @@
         <label>
             <span>Size</span>
             <select id="gen-size">
-                <option value="1280x720">1280×720 (720p)</option>
-                <option value="1792x1024">1792×1024</option>
-                <option value="1920x1080">1920×1080 (1080p)</option>
+                <option value="1280x720">1280×720 (가로)</option>
+                <option value="1792x1024">1792×1024 (가로·고해상)</option>
+                <option value="720x1280">720×1280 (세로)</option>
+                <option value="1024x1792">1024×1792 (세로·고해상)</option>
             </select>
         </label>
         <label>
             <span>Seconds</span>
             <select id="gen-seconds">
+                <option value="4">4s</option>
                 <option value="8" selected>8s</option>
                 <option value="12">12s</option>
-                <option value="16">16s</option>
-                <option value="20">20s</option>
             </select>
         </label>
         <label>

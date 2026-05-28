@@ -110,6 +110,23 @@ def _validate_local_image(path: Path) -> Path:
     return path
 
 
+def _resolve_local(path: Path, out_dir: Path) -> Path:
+    """로컬 파일 → 앵커 이미지 경로. 비디오면 첫 프레임 추출, 이미지면 검증."""
+    if not path.is_file():
+        raise ProviderError(f"로컬 reference 파일이 없습니다: {path}", category="invalid-input")
+    from . import media
+    if media.is_video(path):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        frame = out_dir / f"{path.stem}_frame.jpg"
+        try:
+            return media.extract_first_frame(path, frame)
+        except media.MediaError as exc:
+            raise ProviderError(
+                f"비디오 reference 의 프레임 추출 실패: {exc}", category="invalid-input"
+            ) from exc
+    return _validate_local_image(path)
+
+
 def _file_uri_to_path(uri: str) -> Path:
     """file:// URI → 로컬 경로. Windows 드라이브레터/UNC 보정."""
     from urllib.parse import unquote, urlparse
@@ -139,16 +156,16 @@ def _fetch_reference(url: str, out_dir: Path) -> Path:
     low = raw.lower()
 
     if low.startswith("file://"):
-        return _validate_local_image(_file_uri_to_path(raw))
+        return _resolve_local(_file_uri_to_path(raw), out_dir)
 
     if not low.startswith(("http://", "https://")):
-        # http(s) 가 아니면 로컬 파일 경로로 간주.
+        # http(s) 가 아니면 로컬 파일 경로(이미지 또는 비디오)로 간주.
         p = Path(raw).expanduser()
         if p.is_file():
-            return _validate_local_image(p)
+            return _resolve_local(p, out_dir)
         raise ProviderError(
             f"reference 를 해석할 수 없습니다: {raw!r}\n"
-            "  존재하는 로컬 이미지 파일 경로이거나 http(s):// URL 이어야 합니다.",
+            "  존재하는 로컬 이미지/비디오 파일 경로이거나 http(s):// URL 이어야 합니다.",
             category="invalid-input",
         )
 
@@ -208,172 +225,153 @@ def _fetch_image_url(url: str, out_dir: Path) -> Path:
         return out_path
 
 
-# ── SoraProvider ──────────────────────────────────────────────────────────
+def _dump(v: Any) -> dict[str, Any]:
+    try:
+        return v.model_dump()
+    except Exception:
+        return {}
+
+
+# ── SoraProvider (OpenAI SDK 기반) ──────────────────────────────────────────
 class SoraProvider(Provider):
     name = "sora"
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not self.api_key:
-            # 지연 — 실제 호출 직전에 다시 확인.
-            pass
 
-    # ── 공통 헤더 ────────────────────────────────────────────────────────
-    def _headers(self) -> dict[str, str]:
+    def _client(self):  # type: ignore[no-untyped-def]
+        _ensure_native_tls()
         if not self.api_key:
             raise ProviderError(
                 "OPENAI_API_KEY 가 설정되지 않았습니다. "
                 ".env 또는 환경변수에 OPENAI_API_KEY=sk-... 를 추가하세요.",
                 category="auth",
             )
-        return {"Authorization": f"Bearer {self.api_key}"}
-
-    def _client(self):  # type: ignore[no-untyped-def]
-        _ensure_native_tls()
         try:
-            import httpx
+            from openai import OpenAI
         except ImportError as exc:
             raise ProviderError(
-                "httpx 가 없습니다. `uv sync --extra video-gen`.",
+                "openai SDK 가 없습니다. `uv sync --extra video-gen`.",
                 category="invalid-input",
             ) from exc
-        return httpx.Client(base_url=_API_BASE, headers=self._headers(), timeout=60.0)
+        return OpenAI(api_key=self.api_key)
+
+    def _prepare_reference(self, req: VideoRequest) -> Path | None:
+        """references[0] → 앵커 이미지(비디오면 첫 프레임) → 출력 size 로 리사이즈."""
+        if not req.references:
+            return None
+        ref = _fetch_reference(req.references[0], _REF_CACHE_DIR)
+        from . import media
+        return media.resize_cover(ref, req.size, _REF_CACHE_DIR)
 
     # ── 잡 생성 ──────────────────────────────────────────────────────────
     def create(self, req: VideoRequest) -> VideoJob:
-        # reference 1개만 사용 (Sora input_reference 슬롯 1개). 여러 개를 받았다면
-        # 호출자(cli/server)가 reference 당 1잡으로 분할해야 함 — 여기선 단일.
-        ref_local: Path | None = None
-        if req.references:
-            ref_local = _fetch_reference(req.references[0], _REF_CACHE_DIR)
-
-        # request body. Videos API 는 multipart/form-data 권장 (input_reference 가
-        # 파일 업로드면). JSON 으로도 가능하나 input_reference 가 있을 땐 multipart.
-        data = {
+        client = self._client()
+        ref_local = self._prepare_reference(req)
+        kwargs: dict[str, Any] = {
             "model": req.model,
             "prompt": req.prompt,
+            "seconds": str(req.seconds),  # API: '4'|'8'|'12' (문자열)
             "size": req.size,
-            "seconds": str(req.seconds),
         }
-        if req.seed is not None:
-            data["seed"] = str(req.seed)
-
-        with self._client() as client:
-            try:
-                if ref_local is not None and ref_local.is_file():
-                    with ref_local.open("rb") as f:
-                        mime = _guess_image_mime(ref_local)
-                        files = {"input_reference": (ref_local.name, f, mime)}
-                        r = client.post("/videos", data=data, files=files)
-                else:
-                    r = client.post("/videos", json=data)
-            except Exception as exc:
-                raise ProviderError(f"Sora create 네트워크 오류: {exc}", category="network") from exc
-
-        if r.status_code >= 400:
-            raise self._raise_for(r)
-        body = r.json()
-        job_id = body.get("id")
-        if not job_id:
-            raise ProviderError(f"Sora 응답에 id 없음: {body}", category="server")
-
+        try:
+            if ref_local is not None and ref_local.is_file():
+                with ref_local.open("rb") as f:
+                    v = client.videos.create(
+                        input_reference=(ref_local.name, f, _guess_image_mime(ref_local)),
+                        **kwargs,
+                    )
+            else:
+                v = client.videos.create(**kwargs)
+        except Exception as exc:
+            raise self._map_exc(exc, "create") from exc
         return VideoJob(
-            id=job_id,
-            provider=self.name,
-            model=req.model,
-            request=req,
-            reference_local=ref_local,
-            raw=body,
+            id=v.id, provider=self.name, model=req.model, request=req,
+            reference_local=ref_local, raw=_dump(v),
         )
+
+    # ── 확장(extend): 완성된 영상 파일을 이어 연장 ────────────────────────
+    def extend(self, prev_video: Path, prompt: str, seconds: int, model: str) -> VideoJob:
+        client = self._client()
+        prev = Path(prev_video)
+        try:
+            with prev.open("rb") as f:
+                v = client.videos.extend(
+                    video=(prev.name, f, "video/mp4"),
+                    prompt=prompt, seconds=str(seconds),
+                )
+        except Exception as exc:
+            raise self._map_exc(exc, "extend") from exc
+        req = VideoRequest(prompt=prompt, seconds=seconds, model=model)
+        return VideoJob(id=v.id, provider=self.name, model=model, request=req, raw=_dump(v))
 
     # ── 폴링 ────────────────────────────────────────────────────────────
     def poll(self, job: VideoJob) -> JobStatus:
-        with self._client() as client:
-            try:
-                r = client.get(f"/videos/{job.id}")
-            except Exception as exc:
-                # 일시적 네트워크 오류 — 호출자가 재시도하도록 in_progress 로 흘림.
-                return JobStatus(status="in_progress", progress=0.0,
-                                 message=f"poll 네트워크 오류: {exc}")
-        if r.status_code >= 400:
-            raise self._raise_for(r)
-        body = r.json()
-        status_raw = (body.get("status") or "queued").lower()
-        status_map = {
-            "queued": "queued",
-            "in_progress": "in_progress",
-            "processing": "in_progress",
-            "completed": "completed",
-            "failed": "failed",
-            "canceled": "cancelled",
-            "cancelled": "cancelled",
-        }
-        mapped = status_map.get(status_raw, "in_progress")
-        progress_raw = body.get("progress")
-        if isinstance(progress_raw, (int, float)):
-            progress = float(progress_raw) / 100.0 if progress_raw > 1 else float(progress_raw)
-        else:
-            progress = 0.0 if mapped == "queued" else (1.0 if mapped == "completed" else 0.5)
+        client = self._client()
+        try:
+            v = client.videos.retrieve(job.id)
+        except Exception as exc:
+            import openai
+            if isinstance(exc, openai.APIConnectionError):
+                # 일시적 네트워크 — 재시도하도록 in_progress 로 흘림.
+                return JobStatus("in_progress", 0.0, f"poll 네트워크 재시도: {exc}")
+            raise self._map_exc(exc, "poll") from exc
+        status_map = {"queued": "queued", "in_progress": "in_progress",
+                      "completed": "completed", "failed": "failed"}
+        mapped = status_map.get(str(v.status), "in_progress")
+        progress = float(v.progress or 0) / 100.0
         err_msg = ""
         err_cat = None
         if mapped == "failed":
-            err = body.get("error") or {}
-            err_msg = err.get("message") or "unknown failure"
+            err = v.error
+            err_msg = (getattr(err, "message", None) or "unknown failure") if err else "unknown failure"
             err_cat = _classify(err_msg)
-        # raw 업데이트(다음 호출자가 cost/eta 등 보고 싶을 수 있음).
-        job.raw = body
+        job.raw = _dump(v)
         return JobStatus(
             status=mapped,  # type: ignore[arg-type]
             progress=max(0.0, min(1.0, progress)),
-            message=err_msg or body.get("status_message", ""),
+            message=err_msg,
             error_category=err_cat,
         )
 
     # ── 다운로드 ────────────────────────────────────────────────────────
     def download(self, job: VideoJob, out_path: Path) -> Path:
+        client = self._client()
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._client() as client:
-            try:
-                with client.stream("GET", f"/videos/{job.id}/content") as r:
-                    if r.status_code >= 400:
-                        # body 가 small 이므로 read 후 raise.
-                        r.read()
-                        raise self._raise_for(r)
-                    with out_path.open("wb") as f:
-                        for chunk in r.iter_bytes(chunk_size=1024 * 64):
-                            f.write(chunk)
-            except ProviderError:
-                raise
-            except Exception as exc:
-                raise ProviderError(f"download 네트워크 오류: {exc}", category="network") from exc
+        try:
+            content = client.videos.download_content(job.id)
+            content.write_to_file(str(out_path))
+        except Exception as exc:
+            raise self._map_exc(exc, "download") from exc
         job.output_path = out_path
         return out_path
 
-    # ── 취소 ────────────────────────────────────────────────────────────
-    def cancel(self, job: VideoJob) -> bool:
-        with self._client() as client:
+    # ── openai 예외 → ProviderError (실제 코드/메시지 노출) ────────────────
+    def _map_exc(self, exc: Exception, where: str) -> ProviderError:
+        if isinstance(exc, ProviderError):
+            return exc
+        import openai
+        if isinstance(exc, openai.APIStatusError):
+            code = getattr(exc, "status_code", 0)
+            msg = ""
             try:
-                r = client.post(f"/videos/{job.id}/cancel")
+                body = exc.response.json()
+                err = body.get("error") if isinstance(body, dict) else None
+                msg = (err.get("message") if isinstance(err, dict) else None) or str(body)
             except Exception:
-                return False
-        return r.status_code < 400
-
-    # ── 에러 매핑 헬퍼 ──────────────────────────────────────────────────
-    def _raise_for(self, r: Any) -> ProviderError:
-        try:
-            body = r.json()
-        except Exception:
-            body = {"raw_text": r.text[:400]}
-        msg = ""
-        if isinstance(body, dict):
-            err = body.get("error") or {}
-            if isinstance(err, dict):
-                msg = err.get("message") or str(err)
+                msg = getattr(exc, "message", "") or str(exc)
+            if code == 429:
+                cat = "rate-limit"
+            elif code in (401, 403):
+                cat = "auth"
+            elif code >= 500:
+                cat = "server"
             else:
-                msg = str(err)
-        if not msg:
-            msg = f"HTTP {r.status_code}"
-        return ProviderError(msg, category=_classify(msg + f" HTTP {r.status_code}"))
+                cat = _classify(f"{msg} HTTP {code}")
+            return ProviderError(f"[{where}] HTTP {code}: {msg}", category=cat)
+        if isinstance(exc, openai.APIConnectionError):
+            return ProviderError(f"[{where}] 네트워크 오류: {exc}", category="network")
+        return ProviderError(f"[{where}] {exc}", category=_classify(str(exc)))
 
 
 # 모듈 단독 실행 시 — 환경/키 확인 진단.

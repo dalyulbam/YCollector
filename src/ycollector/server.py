@@ -10,11 +10,14 @@ uv run ycollector-server
     GET  /                       → webui/index.html
     GET  /webui/{path}           → webui/ 정적 (app.js, styles.css)
     GET  /api/health             → 키 보유 여부 등
-    POST /api/download           → {"url": "..."} → job_id
+    GET  /api/settings           → 현재 설정 (JSON)
+    POST /api/settings           → 설정 저장
+    POST /api/download           → {"url", "settings"?: {...}} → job_id
     POST /api/generate           → {"prompt", "size", "seconds", "model", "references": [...]} → job_id (또는 [job_id, ...])
     GET  /api/jobs/{job_id}      → 현재 상태
     POST /api/jobs/{job_id}/cancel → 취소
     GET  /api/jobs/{job_id}/events → SSE 진행률 스트림
+    GET  /api/jobs               → 전체 작업 목록
     GET  /api/library            → manifest 전체
 """
 
@@ -24,8 +27,10 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import socket
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -33,6 +38,14 @@ import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+
+# `from __future__ import annotations` 로 라우트 어노테이션이 문자열이라,
+# FastAPI(get_type_hints)가 모듈 전역에서 'UploadFile' 을 해석할 수 있어야 한다.
+# fastapi 부재 시엔 _build_app() 가 더 친절한 설치 안내를 먼저 낸다.
+try:
+    from fastapi import UploadFile
+except ImportError:
+    UploadFile = object  # type: ignore[assignment,misc]
 
 # ── 지연 import 들 ────────────────────────────────────────────────────────
 # 메인 모듈 로드 시 OpenAI/Sora 의존성을 강제하지 않도록 함수 내부에서 import.
@@ -138,8 +151,8 @@ def _library_read() -> dict[str, Any]:
 
 
 # ── download 워커 (yt-dlp via existing engine) ──────────────────────────
-def _run_download(job: _JobRow, url: str) -> None:
-    from ycollector.config import load_settings
+def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | None = None) -> None:
+    from ycollector.config import load_settings, settings_from_dict, user_config_dir
     from ycollector.cookies import default_cookies_path, is_cookies_present
     from ycollector.engine import (
         AudioPref, CodecPref, Container, FormatChoice, Quality,
@@ -147,7 +160,14 @@ def _run_download(job: _JobRow, url: str) -> None:
     )
     from ycollector.engine.ytdlp import is_ambiguous_playlist_url
 
-    s, _ = load_settings(None)
+    base, _ = load_settings(None)
+    if settings_override:
+        from ycollector.config import settings_to_dict
+        merged = {**settings_to_dict(base), **{k: v for k, v in settings_override.items() if v is not None}}
+        s = settings_from_dict(merged)
+    else:
+        s = base
+
     engine = YtdlpEngine()
     fmt = compose_format_spec(FormatChoice(
         quality=Quality(s.quality), container=Container(s.container),
@@ -161,12 +181,12 @@ def _run_download(job: _JobRow, url: str) -> None:
     if cookies_file is not None and not cookies_file.is_file():
         cookies_file = None
 
-    if is_ambiguous_playlist_url(url):
-        no_pl, yes_pl = True, False
-    elif s.playlist_mode == "single":
+    if s.playlist_mode == "single":
         no_pl, yes_pl = True, False
     elif s.playlist_mode == "expand":
         no_pl, yes_pl = False, True
+    elif is_ambiguous_playlist_url(url):
+        no_pl, yes_pl = True, False
     else:
         no_pl, yes_pl = False, False
 
@@ -187,6 +207,7 @@ def _run_download(job: _JobRow, url: str) -> None:
     job.status = "preparing"
     job.emit_sync("status", status="preparing")
     try:
+        archive_path = user_config_dir() / "archive.txt"
         path = engine.download(
             url, format=fmt, output_dir=Path(s.output_dir),
             merge_format=s.container, write_subs=s.embed_subs,
@@ -197,6 +218,7 @@ def _run_download(job: _JobRow, url: str) -> None:
             fragment_retries=s.fragment_retries, throttled_rate=s.throttled_rate,
             no_playlist=no_pl, yes_playlist=yes_pl,
             max_downloads=s.max_downloads, playlist_items=s.playlist_items,
+            download_archive=archive_path,
             on_progress=on_progress, on_meta=on_meta,
         )
     except DownloadError as exc:
@@ -293,10 +315,117 @@ def _run_generate(job: _JobRow, prompt: str, references: list[str],
     })
 
 
+# ── 연속형(A) 워커: last-frame chaining + concat ────────────────────────────
+# extend API 는 현재 SDK/서버 간 파라미터 불일치(HTTP 400)로 사용 불가하여,
+# 검증된 create 만으로 연속성을 만든다: 각 세그먼트는 직전 세그먼트의 '마지막
+# 프레임'을 input_reference 로 받아 그 지점에서 이어 시작 → concat.
+def _run_generate_continuous(job: _JobRow, prompts: list[str], references: list[str],
+                             model: str, size: str, seconds: int, seed: int | None) -> None:
+    from ycollector.generator import (
+        ProviderError, VideoRequest, estimate_cost_usd, get_provider, media,
+    )
+
+    provider = get_provider("sora")
+    out_dir = Path("generated")
+    work = out_dir / f"_chain_{job.id}"
+    work.mkdir(parents=True, exist_ok=True)
+
+    combined = " ".join(prompts)
+    # 세그먼트: 프롬프트 2개 이상이면 프롬프트별 장면, 아니면 references 수만큼 공통 프롬프트.
+    seg_prompts = prompts if len(prompts) >= 2 else [combined] * max(1, len(references))
+    n = len(seg_prompts)
+    anchor = references[0] if references else None
+
+    per = estimate_cost_usd(VideoRequest(prompt=combined, size=size, seconds=seconds, model=model))
+    total_cost = per * n
+    job.cost_usd = total_cost
+    job.emit_sync("estimate", cost_usd=total_cost)
+
+    clips: list[Path] = []
+    prev_lastframe: Path | None = None
+    for i, sp in enumerate(seg_prompts):
+        shot = i + 1
+        job.status = "generating"
+        job.emit_sync("status", status="generating", message=f"segment {shot}/{n} 생성 시작")
+        # 1번 세그먼트는 사용자 reference, 이후는 직전 클립의 마지막 프레임을 앵커로(연속성).
+        seg_ref = anchor if i == 0 else (str(prev_lastframe) if prev_lastframe else None)
+        req = VideoRequest(
+            prompt=sp, size=size, seconds=seconds, model=model, seed=seed,
+            references=[seg_ref] if seg_ref else [], output_dir=work,
+        )
+        try:
+            v_job = provider.create(req)
+        except ProviderError as exc:
+            job.status = "failed"
+            job.error = {"category": exc.category, "message": str(exc)}
+            job.emit_sync("error", category=exc.category, message=f"segment {shot}/{n}: {exc}")
+            return
+
+        try:
+            for st in provider.poll_until_done(v_job, interval_sec=4.0, timeout_sec=1800.0):
+                job.status = "generating"
+                job.progress = (i + st.progress) / n * 0.92
+                job.emit_sync("progress", progress=job.progress, status="generating",
+                              message=f"segment {shot}/{n} · {int(st.progress * 100)}%")
+                if st.status in ("failed", "cancelled"):
+                    job.status = "failed"
+                    job.error = {"category": st.error_category or "unknown", "message": st.message}
+                    job.emit_sync("error", category=job.error["category"],
+                                  message=f"segment {shot}/{n}: {st.message}")
+                    return
+        except ProviderError as exc:
+            job.status = "failed"
+            job.error = {"category": exc.category, "message": str(exc)}
+            job.emit_sync("error", category=exc.category, message=f"segment {shot}/{n}: {exc}")
+            return
+
+        clip = work / f"seg{shot:02d}.mp4"
+        try:
+            provider.download(v_job, clip)
+        except ProviderError as exc:
+            job.status = "failed"
+            job.error = {"category": exc.category, "message": str(exc)}
+            job.emit_sync("error", category=exc.category, message=f"segment {shot}/{n} 다운로드: {exc}")
+            return
+        clips.append(clip)
+        if shot < n:  # 다음 세그먼트 앵커용 마지막 프레임
+            try:
+                prev_lastframe = media.extract_last_frame(clip, work / f"lf{shot:02d}.jpg")
+            except media.MediaError:
+                prev_lastframe = None  # 추출 실패 시 다음 세그먼트는 텍스트만으로
+
+    job.status = "stitching"
+    job.emit_sync("status", status="stitching", message=f"{n}개 세그먼트 이어붙이는 중")
+    final = out_dir / f"chain_{job.id}.mp4"
+    try:
+        media.concat_videos(clips, final)
+    except media.MediaError as exc:
+        job.status = "failed"
+        job.error = {"category": "ffmpeg", "message": str(exc)}
+        job.emit_sync("error", category="ffmpeg", message=str(exc))
+        return
+
+    tot = seconds * n
+    job.status = "done"
+    job.progress = 1.0
+    job.out_path = str(final)
+    job.emit_sync("done", out_path=str(final), cost_usd=total_cost)
+    _library_append({
+        "job_id": job.id, "url": "",
+        "title": (combined[:80] + "…") if len(combined) > 80 else combined,
+        "channel": f"(generated · {model} · 연속 ×{n})",
+        "duration": f"{tot // 60}:{tot % 60:02d}",
+        "video_id": job.id, "thumbnail": "",
+        "filepath": str(final), "finished_at": int(time.time() * 1000),
+        "source": "generated", "cost_usd": total_cost,
+    })
+
+
 # ── FastAPI app ───────────────────────────────────────────────────────────
 def _build_app():  # type: ignore[no-untyped-def]
     try:
-        from fastapi import FastAPI, HTTPException
+        from fastapi import FastAPI, File, HTTPException
+        from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as exc:
@@ -323,6 +452,12 @@ def _build_app():  # type: ignore[no-untyped-def]
         _state.loop = None
 
     app = FastAPI(title="YCollector", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     webui_dir = Path(__file__).parent / "webui"
 
@@ -351,48 +486,106 @@ def _build_app():  # type: ignore[no-untyped-def]
             "library": str(_library_path()),
         }
 
+    @app.get("/api/settings")
+    def get_settings() -> dict[str, Any]:
+        from ycollector.config import load_settings, settings_to_dict
+        s, src = load_settings(None)
+        d = settings_to_dict(s)
+        d["_source"] = str(src) if src else None
+        return d
+
+    @app.post("/api/settings")
+    def post_settings(payload: dict[str, Any]) -> dict[str, Any]:
+        from ycollector.config import load_settings, save_settings, settings_from_dict, settings_to_dict
+        base, _ = load_settings(None)
+        merged = {**settings_to_dict(base), **{k: v for k, v in payload.items() if k != "_source"}}
+        s = settings_from_dict(merged)
+        dest = save_settings(s)
+        return {"ok": True, "path": str(dest)}
+
     @app.post("/api/download")
-    def start_download(payload: dict[str, str]) -> dict[str, Any]:
+    def start_download(payload: dict[str, Any]) -> dict[str, Any]:
         url = (payload.get("url") or "").strip()
         if not url:
             raise HTTPException(400, "url 비어있음")
+        settings_dict = payload.get("settings") or {}
+        if payload.get("playlist_mode"):
+            settings_dict.setdefault("playlist_mode", payload["playlist_mode"])
         jid = uuid.uuid4().hex[:12]
         row = _JobRow(jid, "download", url)
         _state.jobs[jid] = row
-        threading.Thread(target=_run_download, args=(row, url), daemon=True).start()
+        threading.Thread(
+            target=_run_download,
+            args=(row, url, settings_dict or None),
+            daemon=True,
+        ).start()
         return {"job_id": jid}
+
+    @app.post("/api/upload")
+    async def upload_reference(file: UploadFile = File(...)) -> dict[str, Any]:
+        """이미지/영상 reference 파일을 받아 temp 에 저장 → 서버 경로 반환.
+
+        반환 path 를 그대로 /api/generate 의 references 에 넣으면 된다.
+        """
+        from ycollector.generator import media
+        uploads = Path(tempfile.gettempdir()) / "ycollector-uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", file.filename or "ref")[-64:] or "ref"
+        dest = uploads / f"{uuid.uuid4().hex[:8]}_{safe}"
+        size_bytes = 0
+        with dest.open("wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                size_bytes += len(chunk)
+        kind = "video" if media.is_video(dest) else "image"
+        return {"path": str(dest), "name": file.filename, "kind": kind, "bytes": size_bytes}
 
     @app.post("/api/generate")
     def start_generate(payload: dict[str, Any]) -> dict[str, Any]:
         prompts = payload.get("prompts") or []
-        if not isinstance(prompts, list) or not prompts:
-            raise HTTPException(400, "prompts (리스트) 비어있음")
-        prompt = " ".join(str(x).strip() for x in prompts if str(x).strip())
-        if not prompt:
-            raise HTTPException(400, "프롬프트 본문이 비어있음")
+        if not isinstance(prompts, list):
+            raise HTTPException(400, "prompts 는 리스트여야 함")
+        prompts_clean = [str(x).strip() for x in prompts if str(x).strip()]
+        if not prompts_clean:
+            raise HTTPException(400, "프롬프트를 1개 이상 넣으세요")
+        combined = " ".join(prompts_clean)
         references = payload.get("references") or []
         if not isinstance(references, list):
             raise HTTPException(400, "references 는 리스트여야 함")
+        refs: list[str] = [str(x).strip() for x in references if str(x).strip()]
         model = str(payload.get("model") or "sora-2-pro")
         size = str(payload.get("size") or "1280x720")
         seconds = int(payload.get("seconds") or 8)
         seed = payload.get("seed")
         seed_i = int(seed) if seed is not None else None
-        # reference 1개당 1잡. 없으면 1잡(no reference).
-        targets: list[str | None] = list(references) if references else [None]  # type: ignore[list-item]
-        ids: list[str] = []
-        for ref in targets:
+
+        # 연속형(chain): 프롬프트 2개 이상(장면별) 또는 reference 2개 이상이면
+        # last-frame chaining 으로 세그먼트를 이어 1개 영상 생성.
+        if len(prompts_clean) >= 2 or len(refs) >= 2:
             jid = uuid.uuid4().hex[:12]
-            row = _JobRow(jid, "generate", prompt)
+            row = _JobRow(jid, "generate", combined)
             _state.jobs[jid] = row
-            refs_list = [ref] if ref else []
             threading.Thread(
-                target=_run_generate,
-                args=(row, prompt, refs_list, model, size, seconds, seed_i),
+                target=_run_generate_continuous,
+                args=(row, prompts_clean, refs, model, size, seconds, seed_i),
                 daemon=True,
             ).start()
-            ids.append(jid)
-        return {"job_ids": ids}
+            return {"job_ids": [jid], "chain": True}
+
+        # 단일 생성(프롬프트 1개 + reference 0~1개).
+        jid = uuid.uuid4().hex[:12]
+        row = _JobRow(jid, "generate", combined)
+        _state.jobs[jid] = row
+        ref0 = refs[0] if refs else None
+        threading.Thread(
+            target=_run_generate,
+            args=(row, combined, [ref0] if ref0 else [], model, size, seconds, seed_i),
+            daemon=True,
+        ).start()
+        return {"job_ids": [jid], "chain": False}
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:

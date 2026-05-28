@@ -108,8 +108,8 @@ def main(argv: list[str] | None = None) -> int:
                         "있고 reference 1개당 1잡 → 다중이면 N개 영상 생성.")
     p.add_argument("--model", default="sora-2-pro", choices=["sora-2", "sora-2-pro"])
     p.add_argument("--size", default="1280x720",
-                   help="WxH (sora-2: 1280x720 only. sora-2-pro: 1280x720|1024x1792|1792x1024|1920x1080)")
-    p.add_argument("--seconds", type=int, default=8, choices=[8, 12, 16, 20])
+                   help="WxH. 허용: 1280x720 | 1792x1024 | 720x1280 | 1024x1792")
+    p.add_argument("--seconds", type=int, default=8, choices=[4, 8, 12])
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--provider", default="sora", help="provider 어댑터 (지금은 sora 만).")
     p.add_argument("--out", type=Path, default=None,

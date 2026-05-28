@@ -41,8 +41,9 @@ function perSecond(model, size) {
 
 // ── DOM refs ────────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
-const dlUrl = $("dl-url"), dlGo = $("dl-go"), dlPaste = $("dl-paste");
+const dlUrl = $("dl-url"), dlGo = $("dl-go"), dlPaste = $("dl-paste"), dlPlaylist = $("dl-playlist");
 const refInput = $("ref-input"), refAdd = $("ref-add"), refList = $("ref-list"), refCount = $("ref-count");
+const refDrop = $("ref-drop"), refFile = $("ref-file"), chainNote = $("chain-note");
 const promptInput = $("prompt-input"), promptAdd = $("prompt-add"), promptList = $("prompt-list"), promptCount = $("prompt-count");
 const genModel = $("gen-model"), genSize = $("gen-size"), genSeconds = $("gen-seconds");
 const genEst = $("gen-est"), genEstDetail = $("gen-est-detail"), genGo = $("gen-go"), genWarn = $("gen-warn");
@@ -73,11 +74,13 @@ refreshHealth();
 // ── lists rendering ────────────────────────────────────────────────────
 function renderRefs() {
     refList.innerHTML = "";
-    refs.forEach((url, i) => {
+    refs.forEach((r, i) => {
+        const kindLabel = r.kind === "video" ? "영상" : r.kind === "image" ? "이미지" : "URL";
         const li = document.createElement("li");
         li.innerHTML = `
             <span class="idx">${i + 1}</span>
-            <span class="text" title="${escapeHtml(url)}">${escapeHtml(url)}</span>
+            <span class="kmini">${kindLabel}</span>
+            <span class="text" title="${escapeHtml(r.value || r.label)}">${escapeHtml(r.label)}</span>
             <button class="btn-danger-ghost" data-i="${i}" aria-label="제거" title="제거">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
                     <line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/>
@@ -113,16 +116,24 @@ function renderPrompts() {
 }
 
 function updateEstimate() {
-    const n = Math.max(1, refs.length);    // refs 0 이면 1잡.
-    const per = perSecond(genModel.value, genSize.value) * parseInt(genSeconds.value, 10);
+    const secs = parseInt(genSeconds.value, 10);
+    const chain = (prompts.length >= 2) || (refs.length >= 2);
+    const n = (prompts.length >= 2) ? prompts.length : Math.max(1, refs.length);
+    const per = perSecond(genModel.value, genSize.value) * secs;
     const total = per * n;
     genEst.textContent = `$${total.toFixed(2)}`;
-    genEstDetail.textContent = `${n} × $${per.toFixed(2)}`;
+    genEstDetail.textContent = chain ? `${n} 세그먼트 × $${per.toFixed(2)} → 1 영상` : `1 × $${per.toFixed(2)}`;
+    if (chainNote) {
+        chainNote.hidden = !chain;
+        if (chain) chainNote.textContent = `연속형 ON — ${n}개 세그먼트를 이어 1개 영상(약 ${n * secs}초). 첫 reference가 시작 앵커.`;
+    }
     const hasPrompt = prompts.length > 0;
-    genGo.disabled = !hasPrompt;
-    genWarn.textContent = hasPrompt
-        ? (total > 5 ? `⚠ 견적 $${total.toFixed(2)} — 확인 후 진행됩니다.` : "")
-        : "프롬프트를 1개 이상 추가하세요.";
+    const pending = refs.some(r => !r.value);
+    genGo.disabled = !hasPrompt || pending;
+    genWarn.textContent = !hasPrompt
+        ? "프롬프트를 1개 이상 추가하세요."
+        : pending ? "업로드 진행 중…"
+        : (total > 5 ? `⚠ 견적 $${total.toFixed(2)} — 확인 후 진행됩니다.` : "");
 }
 [genModel, genSize, genSeconds].forEach(el => el.addEventListener("change", updateEstimate));
 
@@ -130,9 +141,32 @@ function updateEstimate() {
 function addRef() {
     const v = refInput.value.trim();
     if (!v) return;
-    if (!/^https?:\/\//i.test(v)) { refInput.focus(); return; }
-    refs.push(v); refInput.value = ""; renderRefs(); updateEstimate();
+    refs.push({ value: v, label: v, kind: "url" });
+    refInput.value = ""; renderRefs(); updateEstimate();
     refInput.focus();
+}
+
+// 로컬 파일 업로드 → /api/upload → refs 에 서버 경로로 추가.
+async function uploadFiles(fileList) {
+    for (const file of Array.from(fileList || [])) {
+        const item = {
+            value: "", label: `${file.name} (업로드 중…)`,
+            kind: (file.type || "").startsWith("video") ? "video" : "image",
+        };
+        refs.push(item); renderRefs(); updateEstimate();
+        try {
+            const fd = new FormData(); fd.append("file", file);
+            const r = await fetch("/api/upload", { method: "POST", body: fd });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const j = await r.json();
+            item.value = j.path; item.label = j.name || file.name; item.kind = j.kind;
+        } catch (e) {
+            const idx = refs.indexOf(item);
+            if (idx >= 0) refs.splice(idx, 1);
+            alert(`업로드 실패 (${file.name}): ${e.message}`);
+        }
+        renderRefs(); updateEstimate();
+    }
 }
 function addPrompt() {
     const v = promptInput.value.trim();
@@ -145,7 +179,28 @@ promptAdd.addEventListener("click", addPrompt);
 refInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addRef(); } });
 promptInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addPrompt(); } });
 
+// 파일 업로드 (선택 + 드래그드롭)
+refDrop.addEventListener("click", () => refFile.click());
+refDrop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); refFile.click(); } });
+refFile.addEventListener("change", () => { uploadFiles(refFile.files); refFile.value = ""; });
+["dragenter", "dragover"].forEach(ev => refDrop.addEventListener(ev, e => { e.preventDefault(); refDrop.classList.add("drag"); }));
+refDrop.addEventListener("dragleave", e => { e.preventDefault(); refDrop.classList.remove("drag"); });
+refDrop.addEventListener("drop", e => {
+    e.preventDefault(); refDrop.classList.remove("drag");
+    if (e.dataTransfer && e.dataTransfer.files) uploadFiles(e.dataTransfer.files);
+});
+
 // ── download ───────────────────────────────────────────────────────────
+let playlistAll = false;
+const dlPlaylistLabel = $("dl-playlist-label");
+dlPlaylist.addEventListener("click", () => {
+    playlistAll = !playlistAll;
+    dlPlaylist.setAttribute("aria-pressed", String(playlistAll));
+    dlPlaylist.classList.toggle("btn-active", playlistAll);
+    dlPlaylist.classList.toggle("btn-outline", !playlistAll);
+    dlPlaylist.title = playlistAll ? "재생목록 전체 받기 (ON)" : "클릭하면 재생목록 전체 다운로드";
+    dlPlaylistLabel.textContent = playlistAll ? "전체" : "단일";
+});
 dlPaste.addEventListener("click", async () => {
     try {
         const t = await navigator.clipboard.readText();
@@ -155,11 +210,13 @@ dlPaste.addEventListener("click", async () => {
 async function startDownload() {
     const url = dlUrl.value.trim();
     if (!url) return;
+    const body = { url };
+    if (playlistAll) body.playlist_mode = "expand";
     try {
         const r = await fetch("/api/download", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url }),
+            body: JSON.stringify(body),
         });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = await r.json();
@@ -175,17 +232,22 @@ dlUrl.addEventListener("keydown", e => { if (e.key === "Enter") startDownload();
 // ── generate ───────────────────────────────────────────────────────────
 genGo.addEventListener("click", async () => {
     if (prompts.length === 0) return;
-    const total = perSecond(genModel.value, genSize.value) * parseInt(genSeconds.value, 10) * Math.max(1, refs.length);
-    if (total > 1) {
-        if (!confirm(`예상 비용 $${total.toFixed(2)} 진행하시겠습니까?`)) return;
-    }
+    if (refs.some(r => !r.value)) { alert("업로드가 끝나지 않은 reference 가 있습니다. 잠시 후 다시 시도하세요."); return; }
+    const secs = parseInt(genSeconds.value, 10);
+    const chain = (prompts.length >= 2) || (refs.length >= 2);
+    const n = (prompts.length >= 2) ? prompts.length : Math.max(1, refs.length);
+    const total = perSecond(genModel.value, genSize.value) * secs * n;
+    const msg = chain
+        ? `연속형: ${n}개 세그먼트를 이어 1개 영상(약 ${n * secs}초).\n예상 $${total.toFixed(2)} 진행할까요?`
+        : `예상 $${total.toFixed(2)} 진행할까요?`;
+    if (total > 1 && !confirm(msg)) return;
     try {
         const r = await fetch("/api/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 prompts,
-                references: refs,
+                references: refs.map(x => x.value),
                 model: genModel.value,
                 size: genSize.value,
                 seconds: parseInt(genSeconds.value, 10),
@@ -197,9 +259,13 @@ genGo.addEventListener("click", async () => {
         }
         const j = await r.json();
         const combinedPrompt = prompts.join(" ");
-        j.job_ids.forEach((id, i) => {
-            trackJob(id, "generate", combinedPrompt + (refs[i] ? `  (ref: ${refs[i]})` : ""));
-        });
+        if (j.chain) {
+            trackJob(j.job_ids[0], "generate", `${combinedPrompt}  (chain ×${refs.length})`);
+        } else {
+            j.job_ids.forEach((id, i) => {
+                trackJob(id, "generate", combinedPrompt + (refs[i] ? `  (ref: ${refs[i].label})` : ""));
+            });
+        }
     } catch (e) {
         alert(`생성 시작 실패: ${e.message}`);
     }
@@ -249,6 +315,7 @@ function trackJob(jobId, kind, label) {
             const parts = [];
             if (msg.speed) parts.push(humanBytes(msg.speed) + "/s");
             if (msg.eta != null) parts.push("ETA " + msg.eta + "s");
+            if (msg.message) parts.push(msg.message);
             if (parts.length) mid.textContent = parts.join(" · ");
         } else if (e === "estimate") {
             mid.textContent = `예상 $${(msg.cost_usd || 0).toFixed(2)}`;
