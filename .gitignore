@@ -37,6 +37,7 @@ desktop.ini
 
 # --- YCollector runtime artifacts ---
 downloads/
+download
 generated/
 *.part
 *.ytdl
@@ -65,3 +66,4 @@ node_modules/
 src-tauri/target/
 src-tauri/gen/schemas/
 src-tauri/binaries/
+

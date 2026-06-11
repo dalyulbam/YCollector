@@ -28,6 +28,8 @@ URL 붙여넣기 → 버튼 한 번으로 다운로드. 설정은 우측 슬라�
 
 ### 2) 5분 설치 (한 번만)
 
+> ⚠️ **백신·사내 프록시가 TLS 를 가로채는 환경**이라면 — 설치 중 `CERTIFICATE_VERIFY_FAILED` 가 나거나, 받은 패키지가 깨져 나중에 `module … has no attribute …` 가 난다면 해당 — `uv` 가 휠을 절반만 받아 **부분 설치**가 될 수 있습니다. 아래 명령들 **전에** 이 셸에서 한 번 `$env:UV_NATIVE_TLS = "1"` 를 실행하세요. 이 셸의 모든 `uv` 명령이 OS 인증서 저장소를 쓰게 됩니다(영구 적용은 `setx UV_NATIVE_TLS 1` 후 새 터미널, 또는 명령마다 `--native-tls`). 이미 깨졌을 때의 복구는 아래 §5) 트러블슈팅.
+
 ```powershell
 # 저장소 클론 + 진입
 git clone https://github.com/dalyulbam/YCollector.git
@@ -111,6 +113,8 @@ uv run ycollector --yes-playlist "https://www.youtube.com/watch?v=...&list=PL...
 | `pnpm install` 시 `error EPERM` | OneDrive 등 동기화 폴더와 충돌. node_modules는 동기화 제외 또는 저장소를 동기화 밖으로 이동 |
 | Nuitka가 MinGW를 받겠다고 함 | 한 번 `Y`로 수락하면 됨. MSVC가 있으면 그쪽을 자동 선택 |
 | 다운로드가 "준비 중…"에서 멈춤 | yt-dlp가 deno(JS 런타임)를 기다림 → `winget install DenoLand.Deno` 후 새 터미널 |
+| 설치 후 `module 'httptools' has no attribute 'HttpRequestParser'` (또는 다른 패키지의 `has no attribute` / `ImportError`) | 휠이 잘려 받아진 **부분 설치** — 소스 `.py`가 빠진 채 `.pyd`/`__pycache__`만 남음(주로 TLS 가로채기 환경). 해당 패키지만 재설치: `uv pip install --reinstall --no-cache --native-tls httptools`. 광범위하면: `uv sync --reinstall --no-cache --native-tls` |
+| `uv sync`가 `CERTIFICATE_VERIFY_FAILED` / `unable to get local issuer certificate` | 백신·사내 프록시의 TLS 가로채기로 certifi가 CA를 모름. `$env:UV_NATIVE_TLS="1"`(또는 명령마다 `--native-tls`)로 OS 인증서 저장소 사용. Python 코드의 HTTPS 는 `truststore` 사용(이미 `generator/sora.py` 처리) |
 
 ### 6) 한눈에 보는 아키텍처
 
@@ -166,6 +170,8 @@ uv sync --extra web --extra video-gen
 uv run ycollector-server
 # → http://127.0.0.1:8765/
 ```
+
+> 💡 `ycollector-server` 가 `module 'httptools' has no attribute 'HttpRequestParser'` 로 죽으면 `--extra web` 의존성이 부분 설치된 것입니다(TLS 가로채기 환경에서 흔함). `uv pip install --reinstall --no-cache --native-tls httptools` 로 복구. 예방은 위 §2) 설치의 `UV_NATIVE_TLS` 안내 참고.
 
 UI 구성:
 

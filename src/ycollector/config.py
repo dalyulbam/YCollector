@@ -240,6 +240,15 @@ def _resolve_path(explicit: Path | None) -> Path | None:
     return None
 
 
+def resolve_config_path(explicit: Path | None = None) -> Path | None:
+    """``settings.ini`` 탐색 규칙의 공개 wrapper.
+
+    전사(:mod:`ycollector.transcribe.config`) 등 다른 모듈이 동일한 파일·우선순위
+    (``--config`` > 사용자 config dir > CWD)를 재사용하기 위한 진입점.
+    """
+    return _resolve_path(explicit)
+
+
 def user_config_dir() -> Path:
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or str(Path.home())
@@ -260,7 +269,7 @@ def _int_or_default(raw: str | None, default: int) -> int:
         return default
 
 
-_TEMPLATE = """# YCollector — settings.ini
+_TEMPLATE = r"""# YCollector — settings.ini
 # 모든 항목은 선택입니다. 빠진 키는 코드 기본값을 사용합니다.
 # 우선순위:  CLI 인자  >  --config PATH  >  사용자 config dir  >  이 파일
 
@@ -313,4 +322,28 @@ fragment_retries = 10
 # YouTube의 의도적 단일-연결 throttling 대응에 효과적.
 # 빈 값 = 비활성. 예: 100K (= 100 KB/s), 1M (= 1 MB/s)
 throttled_rate = 100K
+
+[transcribe]
+# 로컬 음성/영상 전사 (faster-whisper). 사용:
+#   uv sync --extra transcribe --native-tls          # 1회 설치
+#   uv run --extra transcribe ycollector transcribe <파일/폴더>
+# 모델 별칭: tiny | base | small | medium | large-v3 | large-v3-turbo | turbo
+# (또는 HuggingFace CT2 repo / 로컬 경로). 최초 1회 자동 다운로드.
+model = large-v3-turbo
+# 언어 코드(ko|en|fr|ja …) 또는 비움/auto = 자동 감지
+language =
+# transcribe = 원어 그대로, translate = 영어로 번역
+task = transcribe
+# 출력 포맷: txt | srt | vtt | json
+output_format = txt
+# 결과 저장 폴더(상대/절대)
+output_dir = transcripts
+# 추론 장치: auto(가능하면 CUDA) | cpu | cuda
+device = auto
+# 양자화: auto(cpu→int8, cuda→float16) | int8 | int8_float16 | float16 | float32
+compute_type = auto
+# 디코딩 beam size
+beam_size = 5
+# VAD(무음 구간 제거) 필터
+vad_filter = true
 """

@@ -315,6 +315,23 @@ def main(argv: list[str] | None = None) -> int:
         from ycollector.sidecar import run as sidecar_run
         return sidecar_run()
 
+    # `ycollector transcribe ...` — 로컬 음성/영상 전사 서브커맨드.
+    # 본 다운로드 파서는 positional 이 URL 이므로, 서브커맨드는 파서 진입 전에
+    # 선분기한다(위 `--json` sidecar 분기와 동일한 패턴).
+    if raw_argv and raw_argv[0] == "transcribe":
+        from ycollector.transcribe.cli import main as transcribe_main
+        return transcribe_main(raw_argv[1:])
+
+    # `ycollector analyze ...` — 전사 + 대본 + 요약 파이프라인(LilysAI 류).
+    if raw_argv and raw_argv[0] == "analyze":
+        from ycollector.transcribe.analyze import main as analyze_main
+        return analyze_main(raw_argv[1:])
+
+    # `ycollector album ...` — 장면 캡쳐 + 대화 HTML 앨범북.
+    if raw_argv and raw_argv[0] == "album":
+        from ycollector.transcribe.album import main as album_main
+        return album_main(raw_argv[1:])
+
     settings, settings_path = load_settings(_preparse_config(argv))
     parser = _build_parser(settings)
     args = parser.parse_args(argv)

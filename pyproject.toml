@@ -56,7 +56,35 @@ web = [
     "python-multipart>=0.0.9",
 ]
 transcribe = [
-    "faster-whisper>=1.0.0",
+    "faster-whisper>=1.1.0",
+    # TLS 가로채기 환경에서 HuggingFace 모델 다운로드 시 OS 신뢰 저장소 사용
+    # (certifi UnknownIssuer 회피). video-gen extra 와 동일 전략.
+    "truststore>=0.9.0",
+]
+# GPU(CUDA 12) 추론용 런타임 라이브러리. CTranslate2 가 cublas64_12.dll /
+# cudnn_*64_9.dll 을 요구. 미설치 시 엔진은 자동으로 CPU(int8) 폴백.
+# 사용:  uv sync --extra transcribe --extra transcribe-cuda --native-tls
+transcribe-cuda = [
+    "nvidia-cublas-cu12>=12.3; sys_platform != 'darwin'",
+    "nvidia-cudnn-cu12>=9.0; sys_platform != 'darwin'",
+]
+# 전사록 → 구조화 요약(전체 요약 + 핵심 파트 + 시간대). Anthropic Claude API.
+# .env 의 ANTHROPIC_API_KEY 사용. truststore 로 TLS 가로채기 환경 대응.
+summarize = [
+    "anthropic>=0.50.0",
+    "python-dotenv>=1.0.0",
+    "truststore>=0.9.0",
+]
+# 화자 분리(diarization) — 토큰 불필요. pyannote(게이트 모델) 대신 공개 speechbrain
+# ECAPA 임베딩 + 응집형 클러스터링으로 '이름 없이 화자만 구분'. torch 필요(대용량).
+# 사용:  uv sync --extra diarize --native-tls
+#        ycollector-diarize --analysis-dir <_analysis 폴더>
+diarize = [
+    "speechbrain>=1.0.0",
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
+    "scikit-learn>=1.3.0",
+    "soundfile>=0.12.0",
 ]
 build = [
     # legacy GUI 빌드에 PySide6 필요. CLI(sidecar)만 빌드할 때도
@@ -76,6 +104,10 @@ dev = [
 ycollector = "ycollector.cli:main"
 ycollector-login = "ycollector.cookies:main"
 ycollector-generate = "ycollector.generator.cli:main"
+ycollector-transcribe = "ycollector.transcribe.cli:main"
+ycollector-analyze = "ycollector.transcribe.analyze:main"
+ycollector-diarize = "ycollector.transcribe.diarize:main"
+ycollector-album = "ycollector.transcribe.album:main"
 ycollector-server = "ycollector.server:main"
 
 [project.gui-scripts]

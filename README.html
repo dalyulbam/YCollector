@@ -201,6 +201,21 @@ tbody tr:hover { background: var(--bg-soft); }
 .step .title { font-weight: 600; margin-bottom: 4px; }
 .step .desc { color: var(--fg-muted); font-size: 14px; margin-bottom: 8px; }
 
+/* ── Callout ───────────────────────────────────────────────────── */
+.callout {
+    display: flex; gap: 12px; padding: 16px 18px; margin: 20px 0;
+    background: color-mix(in srgb, var(--accent-3) 9%, var(--bg-card));
+    border: 1px solid color-mix(in srgb, var(--accent-3) 35%, var(--border));
+    border-left: 3px solid var(--accent-3);
+    border-radius: var(--radius-sm);
+}
+.callout .ico { flex-shrink: 0; font-size: 18px; line-height: 1.5; }
+.callout .body { font-size: 14px; color: var(--fg-muted); line-height: 1.6; }
+.callout .body strong { color: var(--fg); }
+.callout .body code { font-size: 0.88em; }
+.callout pre { margin: 10px 0 0; }
+.callout .body a, .trouble .fix a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
 /* ── Trouble cards ─────────────────────────────────────────────── */
 .trouble { display: grid; gap: 12px; }
 .trouble .row {
@@ -401,6 +416,15 @@ footer a { color: var(--accent); text-decoration: none; }
 <section id="install">
     <h2><span class="num">1</span>5분 설치 (한 번만)</h2>
     <p class="lead">위 도구를 다 설치한 상태에서.</p>
+
+    <div class="callout">
+        <span class="ico">⚠️</span>
+        <div class="body">
+            <strong>백신·사내 프록시가 TLS 를 가로채는 환경</strong>이면 <code>uv</code> 가 인증서를 거부(<code>CERTIFICATE_VERIFY_FAILED</code>)하거나, <strong>휠을 절반만 받아 부분 설치</strong>(나중에 <code>module … has no attribute …</code> 로 표면화)가 될 수 있습니다. 아래 명령들 <strong>전에</strong> 이 셸에서 한 번 설정하면 모든 <code>uv</code> 명령이 OS 인증서 저장소를 씁니다.
+            <pre><span class="k">$env:UV_NATIVE_TLS</span> = <span class="s">"1"</span>   <span class="c"># 영구 적용: setx UV_NATIVE_TLS 1 후 새 터미널 (또는 명령마다 --native-tls)</span></pre>
+            이미 깨졌다면 → <a href="#trouble">§4 트러블슈팅</a>의 재설치 명령.
+        </div>
+    </div>
 
     <div class="steps">
         <div class="step">
@@ -626,7 +650,7 @@ footer a { color: var(--accent); text-decoration: none; }
 <!-- ── 트러블슈팅 ─────────────────────────────────────────────── -->
 <section id="trouble">
     <h2><span class="num">4</span>트러블슈팅</h2>
-    <p class="lead">자주 만나는 7가지 함정.</p>
+    <p class="lead">자주 만나는 9가지 함정.</p>
 
     <div class="trouble">
         <div class="row">
@@ -656,6 +680,14 @@ footer a { color: var(--accent); text-decoration: none; }
         <div class="row">
             <div class="symptom"><span class="pill">HANG</span>다운로드가 "준비 중…"에서 멈춤</div>
             <div class="fix">yt-dlp가 deno(JS 런타임) 대기. <code>winget install DenoLand.Deno</code> 후 새 터미널. 이미 winget으로 설치했어도 PATH가 누락된 경우, sidecar가 자동 fallback 폴더를 검색합니다.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">INSTALL</span>설치 후 <code>module 'httptools' has no attribute 'HttpRequestParser'</code> (또는 다른 패키지의 <code>has no attribute</code> / <code>ImportError</code>)</div>
+            <div class="fix">휠이 잘려 받아진 <strong>부분 설치</strong> — 소스 <code>.py</code>가 빠진 채 <code>.pyd</code>/<code>__pycache__</code>만 남은 상태(주로 TLS 가로채기 환경). 해당 패키지만 재설치: <code>uv pip install --reinstall --no-cache --native-tls httptools</code>. 광범위하면 <code>uv sync --reinstall --no-cache --native-tls</code>.</div>
+        </div>
+        <div class="row">
+            <div class="symptom"><span class="pill">TLS</span><code>uv sync</code>가 <code>CERTIFICATE_VERIFY_FAILED</code> / <code>unable to get local issuer</code></div>
+            <div class="fix">백신·사내 프록시의 TLS 가로채기로 certifi가 CA를 모름. <code>$env:UV_NATIVE_TLS="1"</code>(또는 명령마다 <code>--native-tls</code>)로 OS 인증서 저장소 사용 → <a href="#install">§1 설치 콜아웃</a>. Python HTTPS 코드는 <code>truststore</code> 사용(이미 처리됨).</div>
         </div>
     </div>
 </section>
@@ -837,6 +869,12 @@ footer a { color: var(--accent); text-decoration: none; }
 <span class="c"># 가동:</span>
 <span class="k">uv run</span> ycollector-server
 <span class="c"># → http://127.0.0.1:8765/  (브라우저 자동 오픈)</span></pre>
+    <div class="callout">
+        <span class="ico">💡</span>
+        <div class="body">
+            <code>ycollector-server</code> 가 <code>module 'httptools' has no attribute 'HttpRequestParser'</code> 로 죽으면 <code>--extra web</code> 의존성이 부분 설치된 것입니다(TLS 가로채기 환경에서 흔함). <code>uv pip install --reinstall --no-cache --native-tls httptools</code> 로 복구하고, 예방은 <a href="#install">§1 설치 콜아웃</a>의 <code>UV_NATIVE_TLS</code> 참고.
+        </div>
+    </div>
 
     <h3>UI 구성 (단일 페이지)</h3>
     <div class="figure">
