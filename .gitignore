@@ -37,7 +37,8 @@ desktop.ini
 
 # --- YCollector runtime artifacts ---
 downloads/
-download
+download/
+reference/
 generated/
 *.part
 *.ytdl
