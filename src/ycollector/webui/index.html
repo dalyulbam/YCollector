@@ -144,9 +144,44 @@
     <p class="warn" id="gen-warn"></p>
 </section>
 
-<!-- ── 3) 작업 목록 ───────────────────────────────────────────── -->
+<!-- ── 3) 전사 · 요약 분석 ────────────────────────────────────── -->
 <section class="panel">
-    <h2><span class="num">3</span>작업 목록</h2>
+    <h2><span class="num">3</span>전사 · 요약 — 분석 보드</h2>
+    <p class="lead">
+        다운로드 폴더의 영상을 <b>전사(faster-whisper)</b> → <b>Claude 요약</b>하고
+        <b>장면 앨범북</b>으로 봅니다. 산출물은 영상 폴더의
+        <code>_analysis/</code> · <code>_album/</code> 에 저장됩니다.
+    </p>
+    <div class="row tight an-opts">
+        <label class="an-opt"><span>언어</span>
+            <select id="an-lang">
+                <option value="ko" selected>한국어 (ko)</option>
+                <option value="auto">자동 감지</option>
+                <option value="en">영어 (en)</option>
+                <option value="ja">일본어 (ja)</option>
+            </select>
+        </label>
+        <label class="an-opt an-check" title="끄면 전사+대본만 (ANTHROPIC_API_KEY 불필요)"><span>Claude 요약</span>
+            <input type="checkbox" id="an-sum" checked>
+        </label>
+        <label class="an-opt"><span>요약 예산 $</span>
+            <input type="number" id="an-budget" value="5" min="1" max="100" step="1">
+        </label>
+        <span class="an-spacer"></span>
+        <button id="an-refresh" class="btn btn-outline" title="폴더 다시 스캔">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>
+            </svg>
+            새로고침
+        </button>
+        <button id="an-go" class="btn btn-primary" disabled>선택 0개 분석</button>
+    </div>
+    <div id="an-board" class="an-board"><p class="empty">분석 보드 불러오는 중…</p></div>
+</section>
+
+<!-- ── 4) 작업 목록 ───────────────────────────────────────────── -->
+<section class="panel">
+    <h2><span class="num">4</span>작업 목록</h2>
     <div id="jobs" class="jobs">
         <p class="empty">아직 작업이 없습니다. 위에서 다운로드하거나 생성하세요.</p>
     </div>
@@ -158,6 +193,18 @@
     <span>YCollector · <a href="/README.html" target="_blank">README.html</a> · <a href="/api/health" target="_blank">/api/health</a></span>
     <span style="opacity:0.6">⚠ OpenAI Videos API sunset: 2026-09-24</span>
 </footer>
+
+<!-- 요약/대본(markdown) 뷰어 모달 -->
+<div id="md-modal" class="md-modal" hidden>
+    <div class="md-box" role="dialog" aria-modal="true" aria-labelledby="md-title">
+        <div class="md-head">
+            <span id="md-title" class="md-title"></span>
+            <a id="md-open" class="btn btn-outline btn-sm" target="_blank" href="#">원본 열기</a>
+            <button id="md-close" class="btn btn-outline btn-sm">닫기 ✕</button>
+        </div>
+        <div id="md-body" class="md-body"></div>
+    </div>
+</div>
 
 <script src="/webui/app.js"></script>
 </body>

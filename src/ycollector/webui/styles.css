@@ -277,3 +277,87 @@ footer a { color: var(--accent); text-decoration: none; }
     background: var(--accent-soft); color: var(--accent);
     font-family: 'JetBrains Mono', monospace; white-space: nowrap;
 }
+
+/* ── 분석(전사·요약) 보드 ──────────────────────────────────── */
+.an-opts { align-items: end; flex-wrap: wrap; margin-bottom: 14px; }
+.an-opt {
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 12px; color: var(--fg-muted); font-weight: 500;
+}
+.an-opt select, .an-opt input[type=number] {
+    height: 40px; padding: 0 10px; flex: none;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--fg); font-size: 14px; outline: none;
+}
+.an-opt input[type=number] { width: 84px; font-family: 'JetBrains Mono', monospace; }
+.an-check { justify-content: flex-end; }
+.an-check input { width: 20px; height: 20px; margin: 10px 4px; accent-color: var(--accent); }
+.an-spacer { flex: 1; }
+.btn-sm { height: 30px; padding: 0 10px; font-size: 12px; text-decoration: none; }
+
+.an-board { display: flex; flex-direction: column; gap: 14px; }
+.an-board .empty { color: var(--fg-soft); font-size: 14px; text-align: center; padding: 24px 0; }
+.an-folder {
+    background: var(--bg-soft); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 12px 14px;
+}
+.an-folder-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.an-folder-head h3 { margin: 0; font-size: 14px; }
+.an-links { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.an-items {
+    list-style: none; margin: 10px 0 0; padding: 0;
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: 320px; overflow-y: auto;
+}
+.an-items li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); font-size: 13px;
+}
+.an-items li .text {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.an-items input[type=checkbox] { width: 16px; height: 16px; flex: none; accent-color: var(--accent); }
+.an-badges { display: flex; gap: 4px; flex: none; }
+.an-doc {
+    height: 24px; padding: 0 10px; font-size: 11px; font-weight: 700;
+    border-radius: 999px; cursor: pointer;
+    background: color-mix(in srgb, var(--accent-3) 14%, transparent);
+    color: var(--accent-3); border: 1px solid color-mix(in srgb, var(--accent-3) 30%, transparent);
+}
+.an-doc:hover { background: color-mix(in srgb, var(--accent-3) 26%, transparent); }
+.an-miss {
+    font-size: 11px; padding: 2px 10px; border-radius: 999px;
+    background: var(--bg-soft); color: var(--fg-soft);
+    font-family: 'JetBrains Mono', monospace;
+}
+.job-card .kind.analyze { background: color-mix(in srgb, var(--accent-2) 14%, transparent); color: var(--accent-2); }
+.job-card .kind.album   { background: color-mix(in srgb, var(--accent-warn) 16%, transparent); color: var(--accent-warn); }
+
+/* ── markdown 뷰어 모달 ────────────────────────────────────── */
+.md-modal {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgb(8 11 22 / 0.55); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.md-modal[hidden] { display: none; }
+.md-box {
+    width: min(860px, 100%); max-height: 86vh;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    display: flex; flex-direction: column; overflow: hidden;
+}
+.md-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.md-title { flex: 1; min-width: 0; font-weight: 700; font-size: 14px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-body { padding: 8px 22px 22px; overflow-y: auto; font-size: 14px; }
+.md-body h1 { font-size: 18px; margin: 16px 0 6px; }
+.md-body h2 { font-size: 15px; margin: 18px 0 6px; color: var(--accent);
+              border-bottom: 1px solid var(--border-soft); padding-bottom: 4px; }
+.md-body h3 { font-size: 14px; margin: 14px 0 4px; }
+.md-body p { margin: 6px 0; }
+.md-body ul { margin: 6px 0; padding-left: 20px; }
+.md-body hr { border: 0; border-top: 1px solid var(--border-soft); margin: 14px 0; }

@@ -19,6 +19,10 @@ uv run ycollector-server
     GET  /api/jobs/{job_id}/events → SSE 진행률 스트림
     GET  /api/jobs               → 전체 작업 목록
     GET  /api/library            → manifest 전체
+    GET  /api/analysis/overview  → 다운로드 루트 스캔(미디어 + _analysis/_album 산출물)
+    POST /api/analyze            → {"root", "files": [...], "language"?, "summarize"?, ...} → job_id
+    POST /api/album              → {"root", "dir", "frames"?} → job_id (장면 앨범북 생성)
+    GET  /files/{root}/{path}    → 다운로드 루트 안의 파일 서빙(요약 md · 앨범 html · 영상)
 """
 
 from __future__ import annotations
@@ -59,7 +63,7 @@ class _JobRow:
 
     def __init__(self, id_: str, kind: str, url_or_prompt: str) -> None:
         self.id = id_
-        self.kind = kind  # "download" | "generate"
+        self.kind = kind  # "download" | "generate" | "analyze" | "album"
         self.url_or_prompt = url_or_prompt
         self.status: str = "queued"
         self.progress: float = 0.0
@@ -421,6 +425,302 @@ def _run_generate_continuous(job: _JobRow, prompts: list[str], references: list[
     })
 
 
+# ── 분석(전사·요약·앨범) — transcribe 파이프라인의 웹 연동 ──────────────────
+# CLI(ycollector-analyze / ycollector-album)와 같은 모듈을 재사용한다.
+# 산출물 규약(analyze CLI 와 동일): 영상 폴더 바로 아래
+#   _analysis/<stem>.srt / .script.md / .summary.md
+#   _album/index.html + bookNN/
+_ANALYSIS_DIRNAME = "_analysis"
+_ALBUM_DIRNAME = "_album"
+
+# /files/{root}/{path} 서빙 시 텍스트 파일의 charset 명시(브라우저 한글 깨짐 방지).
+_TEXT_MEDIA_TYPES = {
+    ".md": "text/plain; charset=utf-8",
+    ".srt": "text/plain; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".vtt": "text/vtt; charset=utf-8",
+}
+
+# /files 가 서빙하는 확장자 화이트리스트 — 미디어 + 분석/앨범 산출물만.
+# (CORS * 환경에서 다운로드 루트에 섞여 있을 수 있는 무관한 파일 노출 방지.)
+_SERVE_EXTRA_EXTENSIONS = (
+    ".html", ".htm", ".md", ".srt", ".vtt", ".txt", ".json",
+    ".jpg", ".jpeg", ".png", ".webp", ".gif",
+)
+
+
+def _media_roots() -> list[tuple[str, Path]]:
+    """분석 보드가 스캔/서빙할 수 있는 루트 폴더 목록 ``[(키, 절대경로)]``.
+
+    키는 URL(``/files/{키}/...``)과 API payload 의 ``root`` 로 쓰인다:
+      * ``out`` — settings.ini ``[output] output_dir``
+      * ``dl`` / ``dls`` — 서버 cwd 의 ``download`` / ``downloads``
+        (과거 산출물 폴더 호환 — 예: 리포의 download/LJM)
+    존재하는 폴더만, 같은 경로면 앞의 키 하나만 남긴다.
+    """
+    from ycollector.config import load_settings
+
+    s, _ = load_settings(None)
+    cands: list[tuple[str, Path]] = [
+        ("out", Path(s.output_dir)),
+        ("dl", Path.cwd() / "download"),
+        ("dls", Path.cwd() / "downloads"),
+    ]
+    roots: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for key, p in cands:
+        try:
+            r = p.resolve()
+            norm = str(r).lower()
+            if r.is_dir() and norm not in seen:
+                seen.add(norm)
+                roots.append((key, r))
+        except OSError:
+            continue
+    return roots
+
+
+def _root_by_key(key: str) -> Path | None:
+    for k, r in _media_roots():
+        if k == key:
+            return r
+    return None
+
+
+def _safe_join(root: Path, rel: str) -> Path | None:
+    """``root`` 바깥으로 나가는 경로(.. / 절대경로 / 드라이브·ADS 콜론)를 차단."""
+    if not rel or rel.startswith(("/", "\\")) or ":" in rel:
+        return None
+    try:
+        target = (root / rel).resolve()
+        if not target.is_relative_to(root):
+            return None
+    except (OSError, ValueError):
+        return None
+    return target
+
+
+def _scan_overview() -> dict[str, Any]:
+    """루트별로 미디어 파일과 분석 산출물(_analysis/_album) 현황을 모은다.
+
+    보드 표시는 루트 직속 + 1단계 하위 폴더까지만 본다(LJM 같은 채널/주제 폴더 구조).
+    """
+    from ycollector.transcribe.config import MEDIA_EXTENSIONS
+
+    roots_out: list[dict[str, Any]] = []
+    for key, root in _media_roots():
+        try:
+            subdirs = [root, *sorted(
+                (p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))),
+                key=lambda p: p.name.lower(),
+            )]
+        except OSError:
+            continue
+        folders: list[dict[str, Any]] = []
+        for d in subdirs:
+            try:
+                children = sorted(d.iterdir())
+            except OSError:
+                continue
+            analysis_dir = d / _ANALYSIS_DIRNAME
+            items: list[dict[str, Any]] = []
+            for f in children:
+                if not (f.is_file() and f.suffix.lower() in MEDIA_EXTENSIONS):
+                    continue
+                try:
+                    size = f.stat().st_size
+                except OSError:
+                    continue  # 스캔 중 삭제/권한 변경 — 이 파일만 건너뜀.
+                summary = analysis_dir / f"{f.stem}.summary.md"
+                script = analysis_dir / f"{f.stem}.script.md"
+                items.append({
+                    "name": f.name,
+                    "rel": f.relative_to(root).as_posix(),
+                    "bytes": size,
+                    "summary": summary.relative_to(root).as_posix() if summary.is_file() else None,
+                    "script": script.relative_to(root).as_posix() if script.is_file() else None,
+                })
+            album_index = d / _ALBUM_DIRNAME / "index.html"
+            standalones = [
+                p.relative_to(root).as_posix()
+                for p in children
+                if p.is_file() and p.name.lower().endswith("_standalone.html")
+            ]
+            if not items and not album_index.is_file() and not standalones:
+                continue  # 보드에 보여줄 게 없는 폴더.
+            folders.append({
+                "name": d.name if d != root else "(루트)",
+                "rel": "" if d == root else d.relative_to(root).as_posix(),
+                "items": items,
+                # analyzed = 산출물이 하나라도 있는 파일 수(전사만 한 것 포함).
+                # summarized = summary.md 가 있는 파일 수 — 앨범 생성 가능 조건.
+                "analyzed": sum(1 for it in items if it["summary"] or it["script"]),
+                "summarized": sum(1 for it in items if it["summary"]),
+                "album": album_index.relative_to(root).as_posix() if album_index.is_file() else None,
+                "standalones": standalones,
+            })
+        roots_out.append({"key": key, "path": str(root), "folders": folders})
+    return {"roots": roots_out}
+
+
+# ── analyze 워커 (faster-whisper 전사 → Claude 요약 → 리포트) ──────────────
+def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
+                 do_summarize: bool, summary_model: str | None, budget_usd: float,
+                 whisper_model: str | None) -> None:
+    from ycollector.transcribe.config import TranscribeConfig, load_transcribe_config
+
+    base_cfg, _src = load_transcribe_config(None)
+    run_cfg = TranscribeConfig(
+        model=whisper_model or base_cfg.model,
+        language=language,
+        task=base_cfg.task,
+        output_format="srt",  # analyze CLI 와 동일 — 타임스탬프 보존.
+        output_dir=str(files[0].parent / _ANALYSIS_DIRNAME),
+        device=base_cfg.device,
+        compute_type=base_cfg.compute_type,
+        beam_size=base_cfg.beam_size,
+        vad_filter=base_cfg.vad_filter,
+    )
+
+    job.status = "loading-model"
+    job.emit_sync("status", status="loading-model",
+                  message=f"Whisper 모델 로드 중 ({run_cfg.model}) — 최초 1회는 다운로드로 오래 걸림")
+    from ycollector.transcribe.whisper import TranscribeEngine, TranscribeError, write_transcript
+
+    try:
+        engine = TranscribeEngine(run_cfg, on_log=lambda m: job.emit_sync("progress", message=m))
+    except TranscribeError as exc:
+        job.status = "failed"
+        job.error = {"category": exc.category, "message": exc.message}
+        job.emit_sync("error", category=exc.category, message=exc.message)
+        return
+
+    summarizer = None
+    if do_summarize:
+        from ycollector.transcribe.summarize import (
+            DEFAULT_SUMMARY_MODEL,
+            SummarizeError,
+            Summarizer,
+        )
+
+        try:
+            summarizer = Summarizer(
+                model=summary_model or DEFAULT_SUMMARY_MODEL,
+                budget_usd=budget_usd,
+                on_log=lambda m: job.emit_sync("progress", message=m),
+            )
+        except SummarizeError as exc:
+            job.emit_sync("progress",
+                          message=f"요약 비활성 — {exc.message.splitlines()[0]} (전사만 진행)")
+
+    from ycollector.transcribe.report import write_reports
+
+    n = len(files)
+    # 파일 1개 안에서의 비중: 요약을 켰으면 전사 85% + 요약 15% (요약이 훨씬 짧다).
+    t_share = 0.85 if summarizer is not None else 1.0
+    failed: list[str] = []
+    summarized = 0
+    for i, src in enumerate(files):
+        out_dir = src.parent / _ANALYSIS_DIRNAME  # 파일이 속한 폴더 기준(여러 폴더 혼합 대비).
+        job.status = "transcribing"
+        job.emit_sync("status", status="transcribing", message=f"[{i + 1}/{n}] {src.name}")
+        last_emit = [0.0]
+
+        def on_seg(seg, duration, *, _i=i, _name=src.name, _last=last_emit):
+            now = time.monotonic()
+            if now - _last[0] < 1.0:  # SSE 폭주 방지 — 초당 1회만.
+                return
+            _last[0] = now
+            frac = min(1.0, seg.end / duration) if duration else 0.0
+            job.progress = (_i + frac * t_share) / n
+            job.emit_sync("progress", progress=job.progress, status="transcribing",
+                          message=f"[{_i + 1}/{n}] 전사 {frac:.0%} · {_name[:48]}")
+
+        try:
+            result = engine.transcribe(src, on_segment=on_seg)
+            write_transcript(result, out_dir, src.stem, run_cfg.output_format)
+        except TranscribeError as exc:
+            failed.append(f"{src.name}: {exc.message}")
+            job.emit_sync("progress", message=f"✗ 전사 실패 — {src.name}: {exc.message}")
+            continue
+
+        summary = None
+        if summarizer is not None:
+            job.status = "summarizing"
+            job.progress = (i + t_share) / n
+            job.emit_sync("progress", progress=job.progress, status="summarizing",
+                          message=f"[{i + 1}/{n}] Claude 요약 중 · {src.name[:48]}")
+            try:
+                summary = summarizer.summarize(result.segments)
+                summarized += 1
+                job.cost_usd = summarizer.budget.spent_usd
+                job.emit_sync("estimate", cost_usd=job.cost_usd)
+            except Exception as exc:
+                from ycollector.transcribe.summarize import BudgetExceeded
+
+                job.emit_sync("progress", message=f"✗ 요약 실패 — {src.name}: {exc}")
+                if isinstance(exc, BudgetExceeded):
+                    summarizer = None  # 예산 소진 — 이후 파일은 전사만.
+
+        write_reports(out_dir, src.stem, result.segments, summary,
+                      title=src.stem, language=result.language, duration=result.duration)
+        job.progress = (i + 1) / n
+        job.emit_sync("progress", progress=job.progress,
+                      message=f"[{i + 1}/{n}] 완료 · {src.name[:48]}")
+
+    if failed and len(failed) == n:
+        job.status = "failed"
+        job.error = {"category": "transcribe", "message": " / ".join(failed)[:500]}
+        job.emit_sync("error", category="transcribe", message=job.error["message"])
+        return
+
+    out_dirs = sorted({str(src.parent / _ANALYSIS_DIRNAME) for src in files})
+    job.status = "done"
+    job.progress = 1.0
+    job.out_path = out_dirs[0] if len(out_dirs) == 1 else f"{len(out_dirs)}개 폴더"
+    job.message = f"전사 {n - len(failed)}/{n} · 요약 {summarized}/{n}"
+    job.emit_sync("done", out_path=job.out_path, message=job.message, cost_usd=job.cost_usd)
+
+
+# ── album 워커 (ffmpeg 장면 캡쳐 + HTML 앨범북) ─────────────────────────────
+def _run_album(job: _JobRow, folder: Path, frames: int) -> None:
+    from ycollector.transcribe import album as album_mod
+
+    job.status = "rendering"
+    job.emit_sync("status", status="rendering",
+                  message="ffmpeg 장면 캡쳐 + 앨범 HTML 생성 중 (몇 분 걸릴 수 있음)")
+    try:
+        # CLI main 재사용 — 진행 로그는 서버 콘솔(stderr)로 나간다.
+        rc = album_mod.main([
+            "--analysis-dir", str(folder / _ANALYSIS_DIRNAME),
+            "--video-dir", str(folder),
+            "--output-dir", str(folder / _ALBUM_DIRNAME),
+            "--frames", str(frames),
+        ])
+    except SystemExit as exc:  # argparse 방어 — 인자는 서버가 만들지만 혹시 모를 종료.
+        # exc.code 는 int|str|None 가능 (sys.exit("메시지") 등) — None 은 성공(0) 의미.
+        rc = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+    except Exception as exc:
+        job.status = "failed"
+        job.error = {"category": "internal", "message": str(exc)}
+        job.emit_sync("error", category="internal", message=str(exc))
+        return
+
+    index = folder / _ALBUM_DIRNAME / "index.html"
+    if rc == 0 and index.is_file():
+        job.status = "done"
+        job.progress = 1.0
+        job.out_path = str(index)
+        job.message = "앨범 생성 완료"
+        job.emit_sync("done", out_path=str(index), message=job.message)
+    else:
+        job.status = "failed"
+        job.error = {"category": "album",
+                     "message": f"앨범 생성 실패 (exit {rc}) — 서버 콘솔 로그를 확인하세요. "
+                                "ffmpeg 미설치면 캡쳐 없이 생성됩니다."}
+        job.emit_sync("error", category="album", message=job.error["message"])
+
+
 # ── FastAPI app ───────────────────────────────────────────────────────────
 def _build_app():  # type: ignore[no-untyped-def]
     try:
@@ -633,6 +933,104 @@ def _build_app():  # type: ignore[no-untyped-def]
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ── 전사 · 요약 분석 (transcribe → summarize → album) ──────────────
+    @app.get("/api/analysis/overview")
+    def analysis_overview() -> dict[str, Any]:
+        """다운로드 루트들을 스캔해 미디어 + 분석 산출물 현황을 돌려준다."""
+        return _scan_overview()
+
+    @app.post("/api/analyze")
+    def start_analyze(payload: dict[str, Any]) -> dict[str, Any]:
+        from ycollector.transcribe.config import MEDIA_EXTENSIONS
+
+        root = _root_by_key(str(payload.get("root") or ""))
+        if root is None:
+            raise HTTPException(400, "root 가 올바르지 않음 (overview 의 key 를 쓰세요)")
+        rels = payload.get("files") or []
+        if not isinstance(rels, list) or not rels:
+            raise HTTPException(400, "files 가 비어 있음")
+        files: list[Path] = []
+        for rel in rels:
+            p = _safe_join(root, str(rel))
+            if p is None or not p.is_file():
+                raise HTTPException(400, f"파일 없음: {rel}")
+            if p.suffix.lower() not in MEDIA_EXTENSIONS:
+                raise HTTPException(400, f"미디어 파일이 아님: {rel}")
+            files.append(p)
+
+        def clean_model(v: Any) -> str | None:
+            s = str(v or "").strip()
+            if not s:
+                return None
+            if len(s) > 120 or not re.fullmatch(r"[A-Za-z0-9._/\-]+", s):
+                raise HTTPException(400, "model 이름 형식이 올바르지 않음")
+            return s
+
+        lang = str(payload.get("language") or "auto").strip().lower()
+        do_sum = bool(payload.get("summarize", True))
+        try:
+            budget = float(payload.get("budget_usd") or 5.0)
+        except (TypeError, ValueError):
+            budget = 5.0
+
+        jid = uuid.uuid4().hex[:12]
+        label = files[0].name if len(files) == 1 else \
+            f"{files[0].parent.name} — {len(files)}개 파일"
+        row = _JobRow(jid, "analyze", label)
+        _state.jobs[jid] = row
+        threading.Thread(
+            target=_run_analyze,
+            args=(row, files),
+            kwargs={
+                "language": None if lang in ("", "auto") else lang,
+                "do_summarize": do_sum,
+                "summary_model": clean_model(payload.get("summary_model")),
+                "budget_usd": budget,
+                "whisper_model": clean_model(payload.get("whisper_model")),
+            },
+            daemon=True,
+        ).start()
+        return {"job_id": jid}
+
+    @app.post("/api/album")
+    def start_album(payload: dict[str, Any]) -> dict[str, Any]:
+        root = _root_by_key(str(payload.get("root") or ""))
+        if root is None:
+            raise HTTPException(400, "root 가 올바르지 않음")
+        rel = str(payload.get("dir") or "").strip()
+        folder = root if rel in ("", ".") else _safe_join(root, rel)
+        if folder is None or not folder.is_dir():
+            raise HTTPException(400, f"폴더 없음: {rel}")
+        if not any((folder / _ANALYSIS_DIRNAME).glob("*.summary.md")):
+            raise HTTPException(400, "_analysis/*.summary.md 가 없습니다. 먼저 분석을 실행하세요.")
+        try:
+            frames = max(1, min(6, int(payload.get("frames") or 3)))
+        except (TypeError, ValueError):
+            frames = 3
+
+        jid = uuid.uuid4().hex[:12]
+        row = _JobRow(jid, "album", folder.name or str(folder))
+        _state.jobs[jid] = row
+        threading.Thread(target=_run_album, args=(row, folder, frames), daemon=True).start()
+        return {"job_id": jid}
+
+    @app.get("/files/{root_key}/{rel:path}")
+    def serve_root_file(root_key: str, rel: str) -> Any:
+        """다운로드 루트 안의 파일 서빙 — 앨범 html 의 상대 링크가 그대로 동작한다."""
+        from ycollector.transcribe.config import MEDIA_EXTENSIONS
+
+        root = _root_by_key(root_key)
+        if root is None:
+            raise HTTPException(404, "unknown root")
+        target = _safe_join(root, rel)
+        if target is None or not target.is_file():
+            raise HTTPException(404, "file not found")
+        suffix = target.suffix.lower()
+        if suffix not in MEDIA_EXTENSIONS and suffix not in _SERVE_EXTRA_EXTENSIONS:
+            raise HTTPException(404, "file not found")  # 화이트리스트 외 — 존재 여부도 숨김.
+        media_type = _TEXT_MEDIA_TYPES.get(suffix)
+        return FileResponse(target, media_type=media_type) if media_type else FileResponse(target)
 
     @app.get("/api/library")
     def library() -> dict[str, Any]:

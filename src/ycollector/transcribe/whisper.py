@@ -230,6 +230,22 @@ class TranscribeEngine:
         except TranscribeError:
             raise
         except Exception as exc:
+            # cublas/cudnn DLL 은 '첫 추론' 때 지연 로드된다 — GPU 가 보이지만
+            # transcribe-cuda extra 가 없으면 모델 로드는 성공하고 여기서 처음
+            # 실패한다. 생성자와 같은 전략으로 CPU(int8) 1회 폴백 후 재시도.
+            if self.device == "cuda" and _is_cuda_lib_error(exc):
+                self._log(
+                    f"CUDA 라이브러리 로드 실패({exc}) → CPU(int8) 폴백. "
+                    "GPU 사용:  uv sync --extra transcribe-cuda --native-tls"
+                )
+                self.device, self.compute_type = "cpu", "int8"
+                try:
+                    self.model = WhisperModel(self.cfg.model, device="cpu", compute_type="int8")
+                except Exception as exc2:
+                    raise TranscribeError(
+                        _friendly_model_error(exc2, self.cfg.model), category="model-load"
+                    ) from exc2
+                return self.transcribe(src, on_segment=on_segment)
             raise TranscribeError(f"전사 실패 ({src.name}): {exc}", category="runtime") from exc
 
         return TranscriptResult(

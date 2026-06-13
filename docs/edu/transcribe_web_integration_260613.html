@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — 전사·요약 파이프라인 웹 보드 연동 가이드 (초보 개발자용)</title>
+<meta name="description" content="교육 가이드 · 2026-06-13">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #0d9488; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --blue: #2563eb;
+    --violet: #7c3aed;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+        --ok: #4ade80;
+        --warn: #fbbf24;
+        --danger: #f87171;
+        --blue: #60a5fa;
+        --violet: #a78bfa;
+    }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px; display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.topbar .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.topbar .meta { margin-left: auto; font-size: 0.85rem; color: var(--fg-muted); }
+
+.wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+
+h1 { font-size: 1.7rem; font-weight: 800; margin: 0 0 8px; line-height: 1.35; }
+h2 { font-size: 1.3rem; font-weight: 700; margin: 48px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h2 .sec { color: var(--accent); margin-right: 8px; font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 28px 0 8px; color: var(--accent); }
+.subtitle { color: var(--fg-muted); margin: 0 0 8px; font-size: 0.95rem; }
+
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.88rem; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code, p code, li code, summary code {
+    background: var(--code-bg); color: var(--code-fg);
+    padding: 2px 6px; border-radius: 4px;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85em;
+    word-break: break-all;
+}
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow-sm); }
+.card h3 { margin-top: 0; }
+.card.tip { border-left: 4px solid var(--ok); }
+.card.warn { border-left: 4px solid var(--warn); }
+.card.why { border-left: 4px solid var(--violet); }
+
+pre {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 16px; overflow-x: auto;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.82rem; line-height: 1.55;
+}
+pre code { background: none; padding: 0; }
+pre .c  { color: var(--fg-soft); }          /* 주석 */
+pre .k  { color: var(--violet); }           /* 키워드 */
+pre .s  { color: var(--ok); }               /* 문자열 */
+pre .f  { color: var(--blue); }             /* 함수/경로 */
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; vertical-align: 1px; }
+.badge.new { background: #dcfce7; color: #166534; }
+.badge.reuse { background: #dbeafe; color: #1e40af; }
+.badge.get  { background: #dbeafe; color: #1e40af; }
+.badge.post { background: #fef3c7; color: #92400e; }
+@media (prefers-color-scheme: dark) {
+    .badge.new { background: #14532d; color: #86efac; }
+    .badge.reuse, .badge.get { background: #1e3a8a; color: #bfdbfe; }
+    .badge.post { background: #78350f; color: #fde68a; }
+}
+
+ul, ol { padding-left: 22px; }
+li { margin: 5px 0; }
+
+.diagram {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 20px; margin: 16px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.8rem;
+    line-height: 1.6; white-space: pre; overflow-x: auto; color: var(--code-fg);
+}
+
+/* ── 흐름(플로) 다이어그램: 카드 + 화살표 ─────────────────────── */
+.flow { display: flex; flex-direction: column; gap: 0; margin: 20px 0; }
+.flow-step {
+    display: grid; grid-template-columns: 44px 1fr; gap: 14px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 18px; box-shadow: var(--shadow-sm);
+}
+.flow-no {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; font-size: 0.9rem;
+}
+.flow-step b { display: block; margin-bottom: 2px; }
+.flow-step .where {
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em;
+    font-family: 'JetBrains Mono', monospace;
+}
+.where.browser { color: var(--blue); }
+.where.server  { color: var(--warn); }
+.where.workerT { color: var(--violet); }
+.flow-step p { margin: 4px 0 0; font-size: 0.9rem; color: var(--fg-muted); }
+.flow-arrow {
+    text-align: center; color: var(--fg-soft); font-size: 1.1rem; line-height: 1;
+    padding: 6px 0;
+}
+.flow-arrow small { display: inline-block; margin-left: 8px; font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+
+/* 비포/애프터 2단 */
+.ba { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+@media (max-width: 720px) { .ba { grid-template-columns: 1fr; } }
+.ba .card { margin: 0; }
+.ba h4 { margin: 0 0 8px; font-size: 0.95rem; }
+
+kbd {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px;
+    font-size: 0.82em; font-family: 'JetBrains Mono', monospace;
+}
+
+details { margin: 10px 0; }
+summary { cursor: pointer; font-weight: 600; }
+
+.toc { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 24px; margin: 24px 0; }
+.toc ol { margin: 8px 0; }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand">YCollector<span class="dot"></span></div>
+    <div class="meta">교육 가이드 &middot; 2026-06-13</div>
+</div>
+
+<main class="wrap">
+
+<h1>전사·요약 파이프라인을 웹 보드에 연동하기<br>— 초보 개발자를 위한 해부 가이드</h1>
+<p class="subtitle">
+    터미널에서만 쓰던 <code>ycollector-transcribe → analyze → album</code> 파이프라인을
+    브라우저 보드(<code>http://127.0.0.1:8765/</code>)에서 클릭으로 실행하고 결과를 보게 만든
+    작업의 전 과정을, 용어·변수 정의와 함께 설명합니다.
+</p>
+
+<div class="toc">
+    <b>목차</b>
+    <ol>
+        <li><a href="#sec1">무엇이 문제였나 — Before / After</a></li>
+        <li><a href="#sec2">용어 정의 (이 문서를 읽기 위한 최소 사전)</a></li>
+        <li><a href="#sec3">코드 배치 — 어떤 파일에 무엇이 들어갔나</a></li>
+        <li><a href="#sec4">동작 원리 — 분석 1건이 흐르는 길 (요청 → 잡 → SSE → 보드)</a></li>
+        <li><a href="#sec5">새 API 4개 레퍼런스</a></li>
+        <li><a href="#sec6">변수·필드 정의</a></li>
+        <li><a href="#sec7">보안 — 경로 탈출은 왜, 어떻게 막았나</a></li>
+        <li><a href="#sec8">직접 해보기 — 실행과 문제 해결</a></li>
+        <li><a href="#sec9">설계 결정 노트 — 왜 이렇게 만들었나</a></li>
+    </ol>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec1"><span class="sec">§1</span>무엇이 문제였나 — Before / After</h2>
+
+<p>
+    YCollector 에는 두 세계가 따로 있었습니다.
+    <b>웹 보드</b>(다운로드·영상 생성)와 <b>CLI 파이프라인</b>(전사·요약·앨범)이
+    서로를 전혀 모르는 상태였죠. 그래서 <code>download/LJM</code> 에서 만든 9권의
+    분석 결과가 보드에는 보이지 않았습니다.
+</p>
+
+<div class="ba">
+    <div class="card">
+        <h4>❌ Before — 두 세계가 단절</h4>
+<div class="diagram">[브라우저 보드 :8765]
+  ├─ ① YouTube 다운로드   ✔
+  ├─ ② 영상 생성(Sora)    ✔
+  └─ ③ 작업 목록          ✔
+      (전사·요약 없음)
+
+[터미널 CLI]                 연결
+  ycollector-transcribe  ←──  없음
+  ycollector-analyze
+  ycollector-album
+  └→ download/LJM/_analysis, _album
+     (파일 탐색기로만 열람)</div>
+    </div>
+    <div class="card">
+        <h4>✅ After — 보드가 파이프라인을 품음</h4>
+<div class="diagram">[브라우저 보드 :8765]
+  ├─ ① YouTube 다운로드
+  ├─ ② 영상 생성(Sora)
+  ├─ ③ 전사·요약 분석 보드  ★새것
+  │    ├ 폴더/파일 스캔 + 체크박스
+  │    ├ [선택 N개 분석] 버튼
+  │    ├ 요약·대본 뷰어(모달)
+  │    └ 앨범 보기/생성 버튼
+  └─ ④ 작업 목록 (분석 진행률도 표시)
+
+서버가 CLI 와 같은 파이썬 모듈을
+직접 호출 — 코드 중복 0</div>
+    </div>
+</div>
+
+<div class="card why">
+    <h3>핵심 아이디어</h3>
+    <p>
+        CLI 명령을 서버가 <code>subprocess</code> 로 실행하는 게 아니라,
+        CLI 가 쓰는 <b>같은 파이썬 함수</b>(<code>TranscribeEngine</code>,
+        <code>Summarizer</code>, <code>write_reports</code>, <code>album.main</code>)를
+        서버 워커가 <b>직접 import 해서 호출</b>합니다.
+        로직은 한 곳(transcribe 모듈)에만 있고, CLI 와 웹은 둘 다 그걸 부르는
+        "껍데기(인터페이스)"일 뿐입니다.
+    </p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec2"><span class="sec">§2</span>용어 정의 — 최소 사전</h2>
+
+<table>
+    <tr><th style="width:170px">용어</th><th>뜻 (이 프로젝트 기준)</th></tr>
+    <tr><td><b>API</b></td><td>프로그램끼리 대화하는 약속된 창구. 여기서는 "브라우저(JS)가 서버(Python)에 일을 시키는 URL 목록".</td></tr>
+    <tr><td><b>엔드포인트</b></td><td>API 의 개별 주소 1개. 예: <code>POST /api/analyze</code>. "메서드 + 경로"의 조합.</td></tr>
+    <tr><td><b>GET / POST</b></td><td>HTTP 메서드. GET = "읽기"(조회), POST = "쓰기/실행"(작업 시작, 설정 저장).</td></tr>
+    <tr><td><b>FastAPI</b></td><td>Python 웹 프레임워크. 함수 위에 <code>@app.get("/경로")</code> 데코레이터를 붙이면 그 함수가 해당 URL 의 처리기가 됨.</td></tr>
+    <tr><td><b>라우트(route)</b></td><td>"이 URL 이 오면 이 함수를 실행하라"는 연결. 위 데코레이터 한 줄이 라우트 등록.</td></tr>
+    <tr><td><b>JSON</b></td><td>브라우저↔서버가 주고받는 데이터 표기법. <code>{"root": "dl", "files": [...]}</code> 형태.</td></tr>
+    <tr><td><b>잡(Job)</b></td><td>오래 걸리는 작업 1건(다운로드 1건, 분석 1건…). 서버는 잡마다 <code>_JobRow</code> 객체 1개를 만들어 상태를 기록.</td></tr>
+    <tr><td><b>워커 스레드</b></td><td>잡의 실제 일(전사 등)을 수행하는 별도 실행 흐름. 메인 서버는 응답만 빨리 돌려주고, 무거운 일은 스레드에 맡김.</td></tr>
+    <tr><td><b>블로킹(blocking)</b></td><td>끝날 때까지 다른 일을 못 하게 막는 호출. faster-whisper 전사는 블로킹이라 메인 서버에서 직접 돌리면 보드 전체가 멈춤 → 그래서 스레드.</td></tr>
+    <tr><td><b>SSE<br>(Server-Sent Events)</b></td><td>서버→브라우저 <b>단방향 실시간 푸시</b>. 브라우저가 연결을 열어두면 서버가 "진행률 37%" 같은 이벤트를 계속 흘려보냄. 양방향인 WebSocket 보다 단순.</td></tr>
+    <tr><td><b>EventSource</b></td><td>SSE 를 받는 브라우저 내장 객체. <code>new EventSource(url)</code> 한 줄이면 끝.</td></tr>
+    <tr><td><b>전사(transcribe)</b></td><td>음성 → 텍스트 변환. 여기서는 faster-whisper(Whisper 모델의 고속 구현)가 로컬에서 수행. 무료, 인터넷 불필요(모델 캐시 후).</td></tr>
+    <tr><td><b>faster-whisper</b></td><td>OpenAI Whisper 를 CTranslate2 엔진으로 다시 구현한 라이브러리. GPU(CUDA) 또는 CPU(int8 양자화)로 추론.</td></tr>
+    <tr><td><b>요약(summarize)</b></td><td>전사록 → 전체 요약 + 핵심 포인트 + 시간대별 핵심 파트. Anthropic Claude API 호출(유료, <code>ANTHROPIC_API_KEY</code> 필요, 예산 상한 지정 가능).</td></tr>
+    <tr><td><b>앨범(album)</b></td><td>요약의 핵심 파트마다 ffmpeg 로 영상 프레임을 캡쳐해 만든 HTML 화보집. <code>_album/index.html</code>.</td></tr>
+    <tr><td><b>정적 파일 서빙</b></td><td>서버가 디스크의 파일(html, jpg, md…)을 그대로 돌려주는 것. 새 라우트 <code>/files/...</code> 가 담당.</td></tr>
+    <tr><td><b>경로 탈출<br>(path traversal)</b></td><td><code>../../비밀파일</code> 처럼 허용된 폴더 밖의 파일을 빼가는 공격. §7 에서 차단 방법 설명.</td></tr>
+    <tr><td><b>CORS</b></td><td>다른 사이트의 JS 가 우리 서버를 호출해도 되는지 정하는 브라우저 규칙. 이 서버는 <code>*</code>(전부 허용)라 경로 검증이 더 중요해짐.</td></tr>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec3"><span class="sec">§3</span>코드 배치 — 어떤 파일에 무엇이 들어갔나</h2>
+
+<div class="diagram">src/ycollector/
+├─ server.py                  ★수정 — 이번 작업의 중심
+│   ├─ (기존) _JobRow, SSE, 다운로드/생성 워커          <span class="c">← 그대로 재사용</span>
+│   ├─ (신규) _media_roots / _root_by_key / _safe_join  <span class="c">← 루트 폴더 + 경로 보안</span>
+│   ├─ (신규) _scan_overview                            <span class="c">← 폴더/산출물 스캔</span>
+│   ├─ (신규) _run_analyze                              <span class="c">← 전사→요약→리포트 워커</span>
+│   ├─ (신규) _run_album                                <span class="c">← 앨범 생성 워커</span>
+│   └─ (신규) 라우트 4개: /api/analysis/overview,
+│             /api/analyze, /api/album, /files/{root}/{rel}
+│
+├─ webui/                     ★수정 — 보드 화면 (빌드 없음, 바닐라)
+│   ├─ index.html             패널 ③(분석 보드) + 문서 뷰어 모달
+│   ├─ app.js                 보드 로직 + markdown 미니 렌더러
+│   └─ styles.css             .an-* / .md-* 스타일
+│
+└─ transcribe/                ☆무수정 재사용 (웹 연동의 재료)
+    ├─ config.py              TranscribeConfig, MEDIA_EXTENSIONS
+    ├─ whisper.py             TranscribeEngine(전사), write_transcript
+    │                         ★1곳 수정: 추론 시점 CUDA→CPU 폴백 (§8 참고)
+    ├─ summarize.py           Summarizer(Claude), Budget(예산)
+    ├─ report.py              write_reports → .script.md / .summary.md
+    └─ album.py               main() → _album/ HTML 앨범북</div>
+
+<h3>호출 관계 — 누가 누구를 부르나</h3>
+<div class="diagram">  webui/app.js ──fetch──▶ server.py 라우트 ──Thread──▶ _run_analyze
+                                                        │
+                              ┌─────────────────────────┼──────────────┐
+                              ▼                         ▼              ▼
+                   whisper.TranscribeEngine    summarize.Summarizer   report.write_reports
+                   (faster-whisper 전사)        (Claude 요약·예산)      (.script.md/.summary.md)
+
+  CLI ycollector-analyze (transcribe/analyze.py) ──▶ <b>위와 똑같은 3개 모듈</b>
+  <span class="c">→ 웹과 CLI 는 "입구"만 다르고 "본체"는 같다. 본체를 고치면 양쪽이 같이 좋아진다.</span></div>
+
+<table>
+    <tr><th>파일</th><th>이번에 들어간 것</th><th>분류</th></tr>
+    <tr><td><code>server.py</code></td><td>분석 헬퍼 4개 + 워커 2개 + 라우트 4개 (~280줄)</td><td><span class="badge new">신규</span></td></tr>
+    <tr><td><code>webui/index.html</code></td><td>패널 ③ "전사·요약 — 분석 보드", 작업 목록은 ④로 번호 이동, 뷰어 모달</td><td><span class="badge new">신규</span></td></tr>
+    <tr><td><code>webui/app.js</code></td><td><code>loadAnalysisBoard</code>·<code>renderFolder</code>·<code>mdToHtml</code>·<code>openDoc</code> 등 (~170줄)</td><td><span class="badge new">신규</span></td></tr>
+    <tr><td><code>webui/styles.css</code></td><td><code>.an-*</code>(보드)·<code>.md-*</code>(모달) 스타일</td><td><span class="badge new">신규</span></td></tr>
+    <tr><td><code>transcribe/whisper.py</code></td><td>추론 시점 CUDA DLL 실패 → CPU 폴백 1곳 (실전 테스트로 발견된 버그 수정)</td><td><span class="badge new">수정</span></td></tr>
+    <tr><td><code>transcribe/*.py</code> 나머지</td><td>변경 없음 — import 해서 그대로 호출</td><td><span class="badge reuse">재사용</span></td></tr>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec4"><span class="sec">§4</span>동작 원리 — 분석 1건이 흐르는 길</h2>
+
+<p>
+    "체크박스 2개 선택 → <kbd>선택 2개 분석</kbd> 클릭" 했을 때 일어나는 일을
+    시간 순서대로 따라갑니다. 위치 표시:
+    <span class="where browser">BROWSER</span> = 브라우저의 JS(app.js),
+    <span class="where server">SERVER</span> = FastAPI 메인(이벤트 루프),
+    <span class="where workerT">WORKER</span> = 분석 전용 스레드.
+</p>
+
+<div class="flow">
+    <div class="flow-step">
+        <div class="flow-no">1</div>
+        <div><span class="where browser">BROWSER</span><b>선택 수집 + 폴더별 묶기</b>
+        <p><code>anSel</code>(Map)에 담긴 선택을 <code>root|폴더</code> 단위로 묶는다.
+        같은 폴더의 파일들은 잡 1개로 — 산출물이 같은 <code>_analysis/</code> 에 모이기 때문.</p></div>
+    </div>
+    <div class="flow-arrow">▼ <small>fetch POST /api/analyze {root, files, language, summarize, budget_usd}</small></div>
+
+    <div class="flow-step">
+        <div class="flow-no">2</div>
+        <div><span class="where server">SERVER</span><b>검증 → 잡 등록 → 스레드 시작 → 즉시 응답</b>
+        <p>경로 검증(<code>_safe_join</code>) 통과한 파일 목록으로 <code>_JobRow(jid, "analyze", …)</code> 를
+        만들어 <code>_state.jobs</code> 에 넣고, <code>threading.Thread(target=_run_analyze…).start()</code>.
+        그리고 <b>바로</b> <code>{"job_id": "a1b2c3…"}</code> 응답. 전사가 끝나길 기다리지 않는다(논블로킹).</p></div>
+    </div>
+    <div class="flow-arrow">▼ <small>응답 받은 즉시 new EventSource("/api/jobs/{id}/events")</small></div>
+
+    <div class="flow-step">
+        <div class="flow-no">3</div>
+        <div><span class="where browser">BROWSER</span><b>작업 목록에 카드 생성 + SSE 구독</b>
+        <p><code>trackJob()</code> 이 패널 ④에 진행률 카드를 만들고 SSE 연결을 연다.
+        서버는 연결 직후 현재 상태 스냅샷 1건을 먼저 보낸다.</p></div>
+    </div>
+    <div class="flow-arrow">▼ <small>그 사이 워커 스레드는 이미 일하는 중</small></div>
+
+    <div class="flow-step">
+        <div class="flow-no">4</div>
+        <div><span class="where workerT">WORKER</span><b>모델 로드 → 파일별 [전사 → 요약 → 리포트]</b>
+        <p>① <code>TranscribeEngine</code> 생성(Whisper 모델 로드, 최초엔 다운로드).
+        ② 파일마다 전사 — 세그먼트가 나올 때마다 콜백이 진행률을 계산(초당 1회로 제한).
+        ③ 요약이 켜져 있으면 <code>Summarizer.summarize()</code> 가 Claude 호출(예산 사전 점검).
+        ④ <code>write_transcript</code>(.srt) + <code>write_reports</code>(.script.md/.summary.md) 저장.</p></div>
+    </div>
+    <div class="flow-arrow">▼ <small>job.emit_sync("progress", progress=0.37, message="[1/2] 전사 43% · …")</small></div>
+
+    <div class="flow-step">
+        <div class="flow-no">5</div>
+        <div><span class="where server">SERVER</span><b>emit_sync — 스레드의 소식을 SSE 로 중계</b>
+        <p>워커는 별도 스레드라 asyncio 큐에 직접 못 넣는다. <code>emit_sync</code> 가
+        <code>loop.call_soon_threadsafe(q.put_nowait, msg)</code> 로 "메인 이벤트 루프야,
+        네 차례 될 때 이 메시지 큐에 넣어줘"라고 안전하게 부탁한다.
+        큐에 들어간 메시지는 열려 있는 SSE 연결로 흘러나간다.</p></div>
+    </div>
+    <div class="flow-arrow">▼ <small>data: {"event":"progress","progress":0.37,…}\n\n</small></div>
+
+    <div class="flow-step">
+        <div class="flow-no">6</div>
+        <div><span class="where browser">BROWSER</span><b>카드 실시간 갱신</b>
+        <p><code>es.onmessage</code> 가 이벤트 종류별로 분기: <code>progress</code> → 진행 바 폭,
+        <code>status</code> → 상태 태그, <code>estimate</code> → 누적 비용, <code>error</code> → 빨간 에러 줄.</p></div>
+    </div>
+    <div class="flow-arrow">▼ <small>마지막 파일까지 끝나면 emit_sync("done", out_path=…)</small></div>
+
+    <div class="flow-step">
+        <div class="flow-no">7</div>
+        <div><span class="where browser">BROWSER</span><b>done → 분석 보드 자동 새로고침</b>
+        <p>카드가 ✓ done 으로 바뀌고, <code>loadAnalysisBoard()</code> 를 다시 불러
+        방금 생긴 요약·대본 버튼이 보드에 나타난다. "요약" 클릭 → <code>/files/...</code> 로
+        .md 를 받아 모달에 렌더.</p></div>
+    </div>
+</div>
+
+<div class="card why">
+    <h3>왜 "즉시 응답 + SSE" 인가? (폴링과 비교)</h3>
+    <p>
+        전사는 몇 분씩 걸립니다. 응답을 끝까지 기다리게 하면 브라우저는 타임아웃,
+        서버는 그동안 다른 요청 처리 불가. 그래서
+        ① 접수증(<code>job_id</code>)만 먼저 주고 ② 진행 상황은 SSE 로 흘려보냅니다.
+        브라우저가 1초마다 "끝났어요?"라고 묻는 <b>폴링</b>보다 트래픽이 적고 반응이 즉각적입니다.
+        이 구조는 다운로드·Sora 생성이 이미 쓰던 것 — 분석은 <b>같은 레일에 올라탔을 뿐</b>입니다.
+    </p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec5"><span class="sec">§5</span>새 API 4개 레퍼런스</h2>
+
+<h3><span class="badge get">GET</span> /api/analysis/overview — 보드에 뿌릴 현황 스캔</h3>
+<p>
+    다운로드 루트들을 훑어 "어떤 영상이 있고, 무엇이 이미 분석됐고, 앨범이 있는지"를 돌려줍니다.
+    보드가 처음 뜰 때·새로고침 때·잡 완료 때 호출.
+</p>
+<pre><code><span class="c">// 응답 예시 (요약)</span>
+{
+  "roots": [
+    { "key": "out", "path": "D:\\26y\\YCollector\\downloads", "folders": [ … ] },
+    { "key": "dl",  "path": "D:\\26y\\YCollector\\download",
+      "folders": [
+        { "name": "LJM", "rel": "LJM",
+          "analyzed": 9,                          <span class="c">// 9개 중</span>
+          "items": [
+            { "name": "….webm", "rel": "LJM/….webm", "bytes": 123456789,
+              "summary": "LJM/_analysis/….summary.md",   <span class="c">// null 이면 미분석</span>
+              "script":  "LJM/_analysis/….script.md" }, …
+          ],
+          "album": "LJM/_album/index.html",
+          "standalones": ["LJM/LJM_album_standalone.html"] }
+      ] }
+  ]
+}</code></pre>
+
+<h3><span class="badge post">POST</span> /api/analyze — 전사(+요약) 잡 시작</h3>
+<pre><code><span class="c">// 요청</span>
+{ "root": "dl",                       <span class="c">// overview 가 준 루트 키</span>
+  "files": ["LJM/영상1.webm", …],      <span class="c">// 루트 기준 상대 경로</span>
+  "language": "ko",                   <span class="c">// "auto" = 자동 감지</span>
+  "summarize": true,                  <span class="c">// false = 전사+대본만(무료)</span>
+  "budget_usd": 5 }                   <span class="c">// Claude 비용 상한</span>
+<span class="c">// 응답</span>
+{ "job_id": "d9c114c07c8e" }</code></pre>
+<p>산출물은 각 영상 폴더의 <code>_analysis/</code>에: <code>&lt;파일명&gt;.srt</code>(타임스탬프 전사),
+<code>.script.md</code>(대본), <code>.summary.md</code>(요약 — 요약 켰을 때).</p>
+
+<h3><span class="badge post">POST</span> /api/album — 장면 앨범북 생성 잡 시작</h3>
+<pre><code><span class="c">// 요청</span>
+{ "root": "dl", "dir": "LJM", "frames": 3 }   <span class="c">// frames = 장면당 캡쳐 수(1~6)</span>
+<span class="c">// 응답</span>
+{ "job_id": "…" }      <span class="c">// _analysis/*.summary.md 가 없으면 400</span></code></pre>
+
+<h3><span class="badge get">GET</span> /files/{root}/{경로} — 산출물·앨범·영상 서빙</h3>
+<pre><code>GET /files/dl/LJM/_album/index.html          <span class="c">→ 앨범 (상대 링크 그대로 동작)</span>
+GET /files/dl/LJM/_analysis/….summary.md     <span class="c">→ 요약 원문 (UTF-8 text)</span>
+GET /files/dl/LJM/….webm                     <span class="c">→ 영상 (브라우저 재생 가능)</span></code></pre>
+<p>
+    URL 구조가 실제 폴더 구조를 그대로 비추기 때문에, 앨범 HTML 안의
+    <code>book01/index.html</code> 같은 <b>상대 링크가 수정 없이 동작</b>합니다.
+    이것이 <code>?path=…</code> 쿼리 방식 대신 경로 방식을 고른 이유입니다.
+    서빙은 <b>확장자 화이트리스트</b>(미디어 + html/md/srt/vtt/txt/json/이미지)로
+    제한됩니다 — 다운로드 폴더에 우연히 섞인 무관한 파일은 404.
+</p>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec6"><span class="sec">§6</span>변수·필드 정의</h2>
+
+<h3>서버 (server.py)</h3>
+<table>
+    <tr><th style="width:230px">이름</th><th>정의</th></tr>
+    <tr><td><code>_ANALYSIS_DIRNAME</code> = <code>"_analysis"</code></td><td>분석 산출물 폴더 이름. 영상 폴더 바로 아래 생성. CLI 와 동일 규약.</td></tr>
+    <tr><td><code>_ALBUM_DIRNAME</code> = <code>"_album"</code></td><td>앨범 출력 폴더 이름.</td></tr>
+    <tr><td><code>_media_roots()</code></td><td>스캔/서빙이 허용된 루트 폴더 목록 <code>[(키, 절대경로)]</code>. 키: <code>out</code> = settings.ini 의 <code>output_dir</code>, <code>dl</code>/<code>dls</code> = 서버 실행 폴더의 <code>download</code>/<code>downloads</code>. 존재하는 것만, 중복 경로는 1개만.</td></tr>
+    <tr><td><code>_safe_join(root, rel)</code></td><td>루트 안에서만 경로를 합치는 보안 함수. 탈출 시도면 <code>None</code>. §7 참고.</td></tr>
+    <tr><td><code>_scan_overview()</code></td><td>루트 직속 + 1단계 하위 폴더의 미디어/산출물 현황 수집. <code>_</code>·<code>.</code> 으로 시작하는 폴더는 건너뜀(<code>_analysis</code> 자신을 스캔하지 않도록).</td></tr>
+    <tr><td><code>_JobRow.kind</code></td><td>잡 종류: <code>"download" | "generate" | "analyze" | "album"</code>. 보드 카드의 라벨 색을 결정.</td></tr>
+    <tr><td><code>_JobRow.status</code></td><td>분석 잡의 상태 전이: <code>queued → loading-model → transcribing → summarizing → done|failed</code>. 앨범 잡: <code>queued → rendering → done|failed</code>.</td></tr>
+    <tr><td><code>_JobRow.progress</code></td><td>0.0~1.0. 보드 진행 바의 폭.</td></tr>
+    <tr><td><code>_JobRow.cost_usd</code></td><td>Claude 요약 누적 비용(USD). <code>Summarizer.budget.spent_usd</code> 를 복사.</td></tr>
+    <tr><td><code>_JobRow.events</code></td><td>SSE 구독자별 asyncio 큐 목록. 같은 잡을 여러 탭이 봐도 각자 큐를 가짐.</td></tr>
+    <tr><td><code>t_share</code> (워커 지역변수)</td><td>파일 1개 진행률에서 전사가 차지하는 비중. 요약 ON 이면 0.85(전사 85% + 요약 15%), OFF 면 1.0. 전사가 압도적으로 오래 걸리는 현실을 반영한 가중치.</td></tr>
+    <tr><td><code>on_seg(seg, duration)</code></td><td>세그먼트 1개가 나올 때마다 불리는 콜백. <code>진행률 = (현재파일번호 + 파일내비율×t_share) / 전체파일수</code>. 초당 1회만 emit(SSE 폭주 방지).</td></tr>
+    <tr><td><code>budget_usd</code></td><td>요약 예산 상한. <code>Budget.precheck()</code> 가 호출 <b>전</b> 예상 비용으로 초과를 차단 — "끝나고 보니 과금 폭탄"을 구조적으로 방지.</td></tr>
+</table>
+
+<h3>브라우저 (app.js)</h3>
+<table>
+    <tr><th style="width:230px">이름</th><th>정의</th></tr>
+    <tr><td><code>anSel</code></td><td>선택된 파일들. <code>Map&lt;"root|rel", {root, folderRel, rel, name}&gt;</code>. Map 인 이유: 중복 선택 방지 + 삭제 O(1).</td></tr>
+    <tr><td><code>fileUrl(rootKey, rel)</code></td><td><code>rel</code> 을 <code>/</code> 단위로 잘라 각 조각만 <code>encodeURIComponent</code> — 한글·공백·<code>？</code>·<code>⧸</code> 같은 특수문자 파일명을 안전한 URL 로.</td></tr>
+    <tr><td><code>loadAnalysisBoard()</code></td><td>overview 를 받아 보드 DOM 을 다시 그림. 시작 시·새로고침 버튼·분석/앨범 잡 완료 시 호출.</td></tr>
+    <tr><td><code>renderFolder(root, folder)</code></td><td>폴더 1개 블록(헤더 + 파일 목록) 생성. 앨범 버튼·체크박스·요약/대본 버튼의 이벤트를 여기서 연결.</td></tr>
+    <tr><td><code>groups</code> (분석 시작 시)</td><td>선택을 <code>root|folderRel</code> 로 묶은 Map. 폴더 1개 = 잡 1개 = POST 1번.</td></tr>
+    <tr><td><code>mdToHtml(md)</code></td><td>summary.md/script.md 전용 미니 markdown 렌더러. <b>먼저 <code>escapeHtml</code> 로 이스케이프 후</b> 제한된 패턴(#·##·###·-·**굵게**·---)만 태그로 치환 — XSS 차단 순서가 핵심.</td></tr>
+    <tr><td><code>trackJob(jobId, kind, label)</code></td><td>작업 목록 카드 생성 + EventSource 구독. 기존 함수 재사용 — <code>analyze</code>/<code>album</code> 라벨과 "done 시 보드 새로고침"만 추가됨.</td></tr>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec7"><span class="sec">§7</span>보안 — 경로 탈출은 왜, 어떻게 막았나</h2>
+
+<p>
+    <code>/files/{root}/{경로}</code> 는 "디스크의 파일을 돌려주는" 라우트입니다.
+    검증 없이 만들면 <code>/files/dl/../../.env</code> 로 <b>API 키가 든 파일</b>을
+    빼갈 수 있습니다. 게다가 이 서버는 CORS 가 <code>*</code> 라서, 사용자가 열어둔
+    악성 웹페이지의 JS 도 <code>http://127.0.0.1:8765</code> 를 호출할 수 있습니다.
+    "로컬 전용이니까 안전"이 성립하지 않는 이유입니다.
+</p>
+
+<pre><code><span class="k">def</span> <span class="f">_safe_join</span>(root: Path, rel: str) -&gt; Path | <span class="k">None</span>:
+    <span class="c"># ① 빈 경로 / 절대경로(\로 시작) / 콜론(드라이브 문자 C:, NTFS ADS) 거부</span>
+    <span class="k">if</span> <span class="k">not</span> rel <span class="k">or</span> rel.startswith((<span class="s">"/"</span>, <span class="s">"\\"</span>)) <span class="k">or</span> <span class="s">":"</span> <span class="k">in</span> rel:
+        <span class="k">return</span> <span class="k">None</span>
+    <span class="k">try</span>:
+        <span class="c"># ② 합친 뒤 resolve() — "..", 심볼릭 링크까지 실제 경로로 펼침</span>
+        target = (root / rel).resolve()
+        <span class="c"># ③ 펼친 결과가 여전히 root 아래인지 최종 확인</span>
+        <span class="k">if</span> <span class="k">not</span> target.is_relative_to(root):
+            <span class="k">return</span> <span class="k">None</span>
+    <span class="k">except</span> (OSError, ValueError):
+        <span class="k">return</span> <span class="k">None</span>
+    <span class="k">return</span> target</code></pre>
+
+<table>
+    <tr><th>공격 입력</th><th>차단 지점</th></tr>
+    <tr><td><code>../pyproject.toml</code></td><td>③ — resolve 후 루트 밖</td></tr>
+    <tr><td><code>LJM/../../settings.ini</code></td><td>③ — 중간에 끼워도 resolve 가 펼침</td></tr>
+    <tr><td><code>C:/Windows/win.ini</code></td><td>① — 콜론 거부</td></tr>
+    <tr><td><code>/etc/passwd</code>, <code>\\서버\공유</code></td><td>① — 절대경로 거부</td></tr>
+    <tr><td><code>file.txt:hidden</code> (NTFS 대체 스트림)</td><td>① — 콜론 거부</td></tr>
+    <tr><td>URL 인코딩 <code>%2e%2e%2f</code></td><td>FastAPI 가 디코드한 뒤 들어오므로 위와 동일하게 ③</td></tr>
+    <tr><td>화이트리스트 외 확장자 (<code>.bin</code>, <code>.exe</code> …)</td><td>라우트의 확장자 검사 — 존재 여부도 숨기려 404 로 응답</td></tr>
+</table>
+
+<p>
+    같은 원칙이 <code>POST /api/analyze</code> 에도 적용됩니다:
+    경로 검증(<code>_safe_join</code>) + <b>미디어 확장자만 허용</b> +
+    모델 이름 형식 검사(영숫자·<code>._/-</code> 만). "서버가 받는 모든 입력은
+    악의적일 수 있다"고 가정하고 입구에서 거릅니다.
+</p>
+
+<div class="card tip">
+    <h3>원칙: 허용 목록(allow-list) 사고방식</h3>
+    <p>
+        "위험한 패턴을 골라 거부"(<code>..</code> 금지 등)가 아니라
+        "<b>루트 안에 있음이 증명된 경로만 허용</b>"으로 뒤집는 것이 안전합니다.
+        ①은 빠른 사전 거부, ③(resolve 후 포함 확인)이 실질적 안전망 — 새로운 우회
+        기법이 나와도 ③에서 걸립니다. 같은 함수를 <code>/api/analyze</code>·<code>/api/album</code> 의
+        입력 검증에도 재사용해 검증 로직이 한 곳에만 존재합니다.
+    </p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec8"><span class="sec">§8</span>직접 해보기 — 실행과 문제 해결</h2>
+
+<h3>설치 + 실행</h3>
+<pre><code><span class="c"># 1회: 웹 + 전사 (+ 요약, GPU) extras 설치 — 이 PC 는 TLS 가로채기라 --native-tls 필수</span>
+uv sync --extra web --extra transcribe --extra summarize --native-tls
+uv sync --extra transcribe-cuda --native-tls   <span class="c"># GPU 쓸 때만(없으면 CPU 자동 폴백)</span>
+
+<span class="c"># 실행 (또는 extras 를 그때그때: uv run --extra transcribe --extra summarize ycollector-server)</span>
+uv run ycollector-server
+<span class="c"># → http://127.0.0.1:8765/  패널 ③에 분석 보드가 보임</span></code></pre>
+
+<h3>시나리오 A — LJM 기존 산출물 보기 (1분)</h3>
+<ol>
+    <li>보드 패널 ③에서 <b>LJM</b> 폴더 블록 확인 — "9/9 분석됨"</li>
+    <li>파일 옆 <b>요약</b>/<b>대본</b> 버튼 → 모달로 열림 ("원본 열기"는 새 탭)</li>
+    <li>폴더 헤더의 <b>앨범 보기</b> → <code>_album/index.html</code> 화보집, <b>단일 합본</b> → 1파일 버전</li>
+</ol>
+
+<h3>시나리오 B — 새 영상 분석 (전사는 무료, 요약만 유료)</h3>
+<ol>
+    <li>패널 ①로 영상 다운로드 → 패널 ③ <b>새로고침</b></li>
+    <li>파일 체크 → 언어 <code>ko</code> / Claude 요약 ON·예산 $5 → <kbd>선택 N개 분석</kbd></li>
+    <li>패널 ④ 카드에서 진행률 관찰: <code>loading-model → transcribing → summarizing → done</code></li>
+    <li>done 후 보드에 요약·대본 버튼 생성 → 폴더 헤더 <b>앨범 생성</b>으로 화보집까지</li>
+</ol>
+
+<h3>문제 해결 (실전에서 실제로 겪은 것들)</h3>
+<table>
+    <tr><th>증상</th><th>원인 / 해결</th></tr>
+    <tr>
+        <td>잡이 즉시 failed:<br><code>[not-installed] faster-whisper 가 설치돼 있지 않습니다</code></td>
+        <td>transcribe extra 미설치. <code>uv sync --extra transcribe --native-tls</code> 후 서버 재시작.
+            (서버는 죽지 않고 잡만 실패 — 설치 안내가 카드 에러 줄에 그대로 표시되도록 설계)</td>
+    </tr>
+    <tr>
+        <td><code>Library cublas64_12.dll is not found</code></td>
+        <td>GPU 는 보이는데 CUDA 런타임 wheel(transcribe-cuda) 이 없는 경우.
+            <b>이번 연동 테스트에서 발견된 실제 버그</b>: CUDA DLL 은 모델 로드가 아니라
+            <b>첫 추론 때</b> 지연 로드되어 기존 폴백을 비껴갔다. <code>whisper.py</code> 의
+            <code>transcribe()</code> 에 같은 폴백(CPU·int8 재시도)을 추가해 해결 — 이제 자동으로 CPU 로 이어서 전사한다.</td>
+    </tr>
+    <tr>
+        <td>요약이 안 되고 "요약 비활성 — ANTHROPIC_API_KEY 가 없습니다"</td>
+        <td>리포 루트 <code>.env</code> 에 <code>ANTHROPIC_API_KEY=sk-ant-…</code> 추가.
+            키가 없어도 전사+대본은 정상 진행(부분 성공 설계).</td>
+    </tr>
+    <tr>
+        <td>모델 다운로드 중 TLS 인증서 오류(UnknownIssuer)</td>
+        <td>이 PC 의 백신/프록시 TLS 가로채기 때문. transcribe extra 에 포함된
+            <code>truststore</code> 가 OS 신뢰 저장소를 주입해 회피 — extras 를 <code>--native-tls</code> 로 설치했는지 확인.</td>
+    </tr>
+    <tr>
+        <td>앨범에 "캡쳐 없음"만 나옴</td>
+        <td>ffmpeg 가 PATH 에 없음. <code>winget install Gyan.FFmpeg</code> 후 서버 재시작.</td>
+    </tr>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<h2 id="sec9"><span class="sec">§9</span>설계 결정 노트 — 왜 이렇게 만들었나</h2>
+
+<table>
+    <tr><th style="width:240px">결정</th><th>이유</th></tr>
+    <tr>
+        <td>CLI 모듈을 <b>직접 import</b> (subprocess 아님)</td>
+        <td>진행률 콜백(<code>on_segment</code>)을 함수 인자로 바로 받을 수 있어 SSE 연동이 자연스럽다.
+            subprocess 였다면 stdout 파싱이라는 깨지기 쉬운 다리가 필요했다. 예외도 파이썬 객체로
+            그대로 받아 카테고리별 친절한 에러(<code>not-installed</code> 등)를 유지.</td>
+    </tr>
+    <tr>
+        <td>기존 잡/SSE 인프라에 <b>그대로 편승</b></td>
+        <td><code>_JobRow</code>·<code>emit_sync</code>·<code>/api/jobs/*</code>·<code>trackJob</code> 을 한 줄도 복제하지 않았다.
+            새 작업 종류는 <code>kind</code> 문자열 2개("analyze", "album")가 전부.
+            인프라가 한 벌이면 버그 수정도 한 곳에서 끝난다.</td>
+    </tr>
+    <tr>
+        <td>루트를 <b>키("out"/"dl"/"dls")</b>로 추상화</td>
+        <td>설정의 <code>downloads</code> 와 과거 산출물의 <code>download</code>(LJM)가 공존하는 현실 수용.
+            절대 경로를 URL 에 노출하지 않고, 서빙 허용 범위를 이 목록으로 한정하는 보안 경계도 겸한다.</td>
+    </tr>
+    <tr>
+        <td>분석 요청을 <b>폴더 단위 1잡</b>으로 묶기</td>
+        <td>같은 폴더 파일들은 같은 <code>_analysis/</code> 에 쌓이고, Whisper 모델 로드(수십 초)를
+            잡 1개당 1번만 치른다. 파일마다 잡을 쪼개면 모델을 N 번 로드한다.</td>
+    </tr>
+    <tr>
+        <td>markdown 렌더러를 <b>30줄 자작</b></td>
+        <td>이 webui 는 "빌드 없음·의존성 없음"이 원칙. 입력이 우리가 직접 생성하는
+            summary.md/script.md 뿐이라 패턴이 6개로 고정 — 범용 라이브러리는 과잉.
+            단, 이스케이프를 먼저 하고 치환은 나중에(XSS 순서) 라는 원칙은 그대로 적용.</td>
+    </tr>
+    <tr>
+        <td>진행률 가중치 <code>t_share = 0.85</code></td>
+        <td>진행 바가 "전사 끝났는데 95%에서 한참 멈춤"이 되지 않도록, 요약 구간에 15%를
+            남겨두는 UX 보정. 정밀 측정값이 아니라 체감 보정값이다.</td>
+    </tr>
+    <tr>
+        <td>앨범은 <code>album.main()</code> 호출로 끝</td>
+        <td>앨범 생성은 진행률을 세분화할 가치가 낮은 일괄 작업(수십 초~수 분).
+            CLI 의 main 을 그대로 불러 인자만 서버가 채운다 — 코드 0줄 복제.</td>
+    </tr>
+    <tr>
+        <td>SSE emit 을 <b>초당 1회로 제한</b></td>
+        <td>Whisper 는 세그먼트를 초당 수십 개 뱉을 수 있다. 그대로 흘리면 SSE 큐·브라우저 렌더가
+            낭비된다. 진행률은 사람이 보는 것 — 1Hz 면 충분하다.</td>
+    </tr>
+</table>
+
+<p style="margin-top:40px; color: var(--fg-soft); font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 16px;">
+    YCollector 교육 가이드 · 2026-06-13 · 관련 문서:
+    <code>docs/implement/api_unification_260525.html</code>(잡/SSE 인프라의 탄생),
+    <code>src/ycollector/server.py</code> 모듈 docstring(엔드포인트 전체 목록)
+</p>
+
+</main>
+</body>
+</html>
