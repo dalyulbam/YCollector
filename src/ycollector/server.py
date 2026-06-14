@@ -1604,6 +1604,20 @@ def main(argv: list[str] | None = None) -> int:
     url = f"http://{args.host}:{port}/"
     print(f"\n  ▶ YCollector server: {url}\n", file=sys.stderr)
 
+    # HTTP 파서 선택: 기본은 빠른 httptools(있으면). 단 TLS 가로채기 환경에서
+    # httptools 휠이 잘려 받아지면 import 는 되는데 HttpRequestParser 가 없어
+    # 매 요청마다 죽는다. 그 경우 순수 파이썬 h11 로 폴백해 무조건 뜨게 한다.
+    http_impl = "auto"
+    try:
+        import httptools  # noqa: F401
+        if not hasattr(httptools, "HttpRequestParser"):
+            raise ImportError("httptools 부분 설치(HttpRequestParser 없음)")
+    except Exception as exc:
+        http_impl = "h11"
+        print(f"  ⓘ httptools 사용 불가({exc}) → h11 로 구동. "
+              "복구:  uv pip install --reinstall --no-cache --native-tls httptools\n",
+              file=sys.stderr)
+
     if not args.no_browser:
         # 서버 가동 직후 잠깐 뒤 브라우저 — 별 스레드에서 sleep.
         threading.Thread(
@@ -1611,7 +1625,7 @@ def main(argv: list[str] | None = None) -> int:
             daemon=True,
         ).start()
 
-    uvicorn.run(app, host=args.host, port=port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=port, http=http_impl, log_level="warning")
     return 0
 
 
