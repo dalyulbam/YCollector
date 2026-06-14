@@ -146,12 +146,21 @@
 
 <!-- ── 3) 전사 · 요약 분석 ────────────────────────────────────── -->
 <section class="panel">
-    <h2><span class="num">3</span>전사 · 요약 — 분석 보드</h2>
+    <h2><span class="num">3</span>전사 · 요약 — 분석</h2>
     <p class="lead">
-        다운로드 폴더의 영상을 <b>전사(faster-whisper)</b> → <b>Claude 요약</b>하고
-        <b>장면 앨범북</b>으로 봅니다. 산출물은 영상 폴더의
+        <b>전사(faster-whisper)</b> → <b>Claude 요약</b> → <b>장면 앨범북</b>.
+        입력은 둘 중 하나 — <b>폴더의 파일</b>을 고르거나, <b>URL</b>(영상 또는
+        재생목록 전체)을 받아 다운로드 후 전사합니다. 산출물은 영상 폴더의
         <code>_analysis/</code> · <code>_album/</code> 에 저장됩니다.
     </p>
+
+    <!-- 입력 모드 선택 -->
+    <div class="an-tabs" role="tablist">
+        <button id="an-tab-folder" class="an-tab active" role="tab" aria-selected="true">📁 폴더에서 선택</button>
+        <button id="an-tab-url" class="an-tab" role="tab" aria-selected="false">🔗 URL 입력</button>
+    </div>
+
+    <!-- 공통 옵션 (두 모드 모두 적용) -->
     <div class="row tight an-opts">
         <label class="an-opt"><span>언어</span>
             <select id="an-lang">
@@ -167,16 +176,46 @@
         <label class="an-opt"><span>요약 예산 $</span>
             <input type="number" id="an-budget" value="5" min="1" max="100" step="1">
         </label>
-        <span class="an-spacer"></span>
-        <button id="an-refresh" class="btn btn-outline" title="폴더 다시 스캔">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>
-            </svg>
-            새로고침
-        </button>
-        <button id="an-go" class="btn btn-primary" disabled>선택 0개 분석</button>
     </div>
-    <div id="an-board" class="an-board"><p class="empty">분석 보드 불러오는 중…</p></div>
+
+    <!-- 모드 A: 폴더에서 선택 -->
+    <div id="an-folder-mode">
+        <div class="row tight an-actions">
+            <span class="an-spacer"></span>
+            <button id="an-refresh" class="btn btn-outline" title="폴더 다시 스캔">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>
+                </svg>
+                새로고침
+            </button>
+            <button id="an-go" class="btn btn-primary" disabled>선택 0개 분석</button>
+        </div>
+        <div id="an-board" class="an-board"><p class="empty">분석 보드 불러오는 중…</p></div>
+    </div>
+
+    <!-- 모드 B: URL 입력 -->
+    <div id="an-url-mode" hidden>
+        <div class="row">
+            <input id="an-url" type="url" placeholder="https://www.youtube.com/watch?v=...   또는   ...&list=PL..." spellcheck="false" autocomplete="off">
+            <button id="an-url-playlist" class="btn btn-outline" title="클릭하면 재생목록 전체 전사" aria-pressed="false" aria-label="재생목록 전체 전사">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/><path d="m16 12 5 3-5 3v-6Z"/>
+                </svg>
+                <span id="an-url-playlist-label">단일</span>
+            </button>
+            <button id="an-url-paste" class="btn btn-outline" title="클립보드에서 붙여넣기" aria-label="paste">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="8" y="2" width="8" height="4" rx="1"/>
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                </svg>
+            </button>
+            <button id="an-url-go" class="btn btn-primary">전사 시작</button>
+        </div>
+        <p class="hint">
+            받은 영상은 다운로드 폴더(<code>settings.ini</code> 의 output_dir)에 저장되고 위 보드에도 나타납니다.
+            재생목록 URL은 <b>전체</b>로 두면 목록의 모든 영상을 받아 전사합니다.
+        </p>
+    </div>
 </section>
 
 <!-- ── 4) 작업 목록 ───────────────────────────────────────────── -->
@@ -185,6 +224,25 @@
     <div id="jobs" class="jobs">
         <p class="empty">아직 작업이 없습니다. 위에서 다운로드하거나 생성하세요.</p>
     </div>
+</section>
+
+<!-- ── 5) 작업 큐 / 중단된 작업 ─────────────────────────────────── -->
+<section class="panel">
+    <h2><span class="num">5</span>작업 큐 · 중단된 작업</h2>
+    <p class="lead">
+        다운로드·전사 작업을 영속 관리합니다. 서버가 멈췄다 떠도 남아 있어
+        <b>재시도</b>할 수 있어요. 전사는 CPU 부하 때문에 <b>하나씩 순차</b> 처리됩니다.
+        <code>미전사 폴더 스캔</code> 으로 이미 받아둔 영상의 전사를 한 번에 걸 수 있습니다.
+    </p>
+    <div class="row tight an-actions">
+        <span class="q-counts" id="q-counts"></span>
+        <span class="an-spacer"></span>
+        <button id="q-scan" class="btn btn-primary" title="다운로드 폴더에서 전사 안 된 영상을 큐에 추가">미전사 폴더 스캔</button>
+        <button id="q-retry-all" class="btn btn-outline">중단·실패 전부 재시도</button>
+        <button id="q-clear" class="btn btn-outline">완료 비우기</button>
+        <button id="q-refresh" class="btn btn-outline" title="목록 새로고침">새로고침</button>
+    </div>
+    <div id="q-list" class="q-list"><p class="empty">큐가 비어 있습니다.</p></div>
 </section>
 
 </main>

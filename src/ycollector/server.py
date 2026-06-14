@@ -20,7 +20,8 @@ uv run ycollector-server
     GET  /api/jobs               → 전체 작업 목록
     GET  /api/library            → manifest 전체
     GET  /api/analysis/overview  → 다운로드 루트 스캔(미디어 + _analysis/_album 산출물)
-    POST /api/analyze            → {"root", "files": [...], "language"?, "summarize"?, ...} → job_id
+    POST /api/analyze            → 파일 모드 {"root","files":[...]} 또는
+                                    URL 모드 {"url","playlist_all"?} (+language/summarize/budget) → job_id
     POST /api/album              → {"root", "dir", "frames"?} → job_id (장면 앨범북 생성)
     GET  /files/{root}/{path}    → 다운로드 루트 안의 파일 서빙(요약 md · 앨범 html · 영상)
 """
@@ -118,6 +119,22 @@ class _ServerState:
 
 _state = _ServerState()
 
+# 메모리 무한 증가 방지 — 초과 시 가장 오래된 '종료' job 부터 비운다(영속 큐는
+# queue.json 에 따로 남으므로 in-memory job 카드만 정리되는 것).
+_MAX_JOBS = 300
+
+
+def _remember_job(jid: str, row: "_JobRow") -> None:
+    jobs = _state.jobs
+    jobs[jid] = row
+    if len(jobs) <= _MAX_JOBS:
+        return
+    terminal = {"done", "failed", "cancelled"}
+    removable = sorted((r for r in jobs.values() if r.status in terminal),
+                       key=lambda r: r.created_at)
+    for r in removable[: len(jobs) - _MAX_JOBS]:
+        jobs.pop(r.id, None)
+
 
 # ── library manifest ──────────────────────────────────────────────────────
 def _library_path() -> Path:
@@ -172,7 +189,14 @@ def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | No
     else:
         s = base
 
-    engine = YtdlpEngine()
+    try:
+        engine = YtdlpEngine()
+    except FileNotFoundError as exc:
+        job.status = "failed"
+        job.error = {"category": "not-installed", "message": f"yt-dlp 미설치: {exc}"}
+        job.emit_sync("error", category="not-installed",
+                      message=f"yt-dlp 를 찾을 수 없습니다 — 설치 후 다시 시도하세요. ({exc})")
+        return
     fmt = compose_format_spec(FormatChoice(
         quality=Quality(s.quality), container=Container(s.container),
         codec=CodecPref(s.codec), audio=AudioPref(s.audio),
@@ -566,7 +590,26 @@ def _scan_overview() -> dict[str, Any]:
 # ── analyze 워커 (faster-whisper 전사 → Claude 요약 → 리포트) ──────────────
 def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
                  do_summarize: bool, summary_model: str | None, budget_usd: float,
-                 whisper_model: str | None) -> None:
+                 whisper_model: str | None, skip_existing: bool = False) -> None:
+    # skip_existing: 이미 산출물이 있는 파일은 건너뛴다(큐 재시도/폴더 스캔 시).
+    # 전사(.script.md)가 있고, 요약을 안 하거나 요약(.summary.md)까지 있으면 완료로 본다.
+    if skip_existing:
+        kept: list[Path] = []
+        for f in files:
+            ad = f.parent / _ANALYSIS_DIRNAME
+            has_script = (ad / f"{f.stem}.script.md").is_file()
+            has_summary = (ad / f"{f.stem}.summary.md").is_file()
+            if has_script and (has_summary or not do_summarize):
+                continue
+            kept.append(f)
+        if not kept:
+            job.status = "done"
+            job.progress = 1.0
+            job.message = "이미 전사·요약됨 (건너뜀)"
+            job.emit_sync("done", message=job.message)
+            return
+        files = kept
+
     from ycollector.transcribe.config import TranscribeConfig, load_transcribe_config
 
     base_cfg, _src = load_transcribe_config(None)
@@ -679,7 +722,139 @@ def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
     job.progress = 1.0
     job.out_path = out_dirs[0] if len(out_dirs) == 1 else f"{len(out_dirs)}개 폴더"
     job.message = f"전사 {n - len(failed)}/{n} · 요약 {summarized}/{n}"
+    # 일부 파일이 실패했으면 큐가 '실패'로 표시해 재시도할 수 있게 detail 을 남긴다
+    # (재시도 시 skip_existing 이면 성공분은 건너뛰고 실패분만 다시 시도).
+    if failed:
+        job.error = {"category": "partial",
+                     "message": f"부분 실패 {len(failed)}/{n}: " + " / ".join(failed)[:300]}
     job.emit_sync("done", out_path=job.out_path, message=job.message, cost_usd=job.cost_usd)
+
+
+# ── URL 전사 워커 (영상 다운로드 → 전사·요약) ─────────────────────────────
+# 분석 보드의 두 번째 입력 모드: 폴더 파일 대신 URL 을 받아 해당 영상(또는
+# 재생목록 전체)을 다운로드한 뒤 위 _run_analyze 로 그대로 넘긴다.
+def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Path]:
+    """URL(또는 재생목록)을 다운로드하고 받은 미디어 파일 경로 전부를 모은다.
+
+    `_run_download` 과 같은 엔진·설정을 쓰되 (1) 재생목록의 모든 파일을
+    on_file 로 수집하고 (2) library 등록/done emit 은 하지 않는다(전사 단계가
+    이어서 done 을 쏜다). 미디어 확장자 + 실재 파일만 중복 제거 후 반환.
+    """
+    from ycollector.config import load_settings
+    from ycollector.cookies import default_cookies_path, is_cookies_present
+    from ycollector.engine import (
+        AudioPref, CodecPref, Container, DownloadError, FormatChoice, Quality,
+        YtdlpEngine, compose_format_spec,
+    )
+    from ycollector.transcribe.config import MEDIA_EXTENSIONS
+
+    s, _ = load_settings(None)
+    engine = YtdlpEngine()
+    fmt = compose_format_spec(FormatChoice(
+        quality=Quality(s.quality), container=Container(s.container),
+        codec=CodecPref(s.codec), audio=AudioPref(s.audio),
+    ))
+    cookies_file: Path | None = None
+    if s.cookies_file:
+        cookies_file = Path(s.cookies_file)
+    elif is_cookies_present():
+        cookies_file = default_cookies_path()
+    if cookies_file is not None and not cookies_file.is_file():
+        cookies_file = None
+
+    # 사용자가 '전체' 면 재생목록 펼침, 아니면 단일(모호 URL 도 단일 취급).
+    no_pl, yes_pl = (False, True) if playlist_all else (True, False)
+
+    collected: list[Path] = []
+    seen: set[str] = set()
+
+    def on_file(p: Path) -> None:
+        key = str(p).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        collected.append(p)
+        job.emit_sync("progress", status="downloading",
+                      message=f"받음 {len(collected)}개 · {p.name[:48]}")
+
+    def on_progress(ev: Any) -> None:
+        # 진행바는 전사 단계(이후 _run_analyze)가 0→100 으로 단조 증가시킨다.
+        # 다운로드 중에는 바를 건드리지 않고 속도/ETA/개수만 메시지로 보여
+        # 전사 시작 시 바가 거꾸로 튀지 않게 한다.
+        pct = f"{ev.percent:.0f}%" if ev.percent is not None else "…"
+        job.emit_sync("progress", status="downloading", speed=ev.speed, eta=ev.eta,
+                      message=f"다운로드 중 {pct} ({len(collected)}개 완료)")
+
+    def on_meta(meta: Any) -> None:
+        job.title = meta.title
+        job.emit_sync("meta", title=meta.title, channel=meta.channel, duration=meta.duration)
+
+    job.status = "downloading"
+    job.emit_sync("status", status="downloading",
+                  message="영상 다운로드 시작 — 재생목록이면 항목 수만큼 걸립니다")
+    try:
+        engine.download(
+            url, format=fmt, output_dir=Path(s.output_dir),
+            merge_format=s.container, write_subs=s.embed_subs, sub_langs=s.sub_langs,
+            cookies_from_browser=s.cookies_from_browser, cookies_file=cookies_file,
+            socket_timeout=s.socket_timeout, retries=s.retries,
+            fragment_retries=s.fragment_retries, throttled_rate=s.throttled_rate,
+            no_playlist=no_pl, yes_playlist=yes_pl,
+            max_downloads=s.max_downloads, playlist_items=s.playlist_items,
+            # 아카이브 미사용 — 전사 목적이라 이미 받은 URL 도 파일 경로를 확보해야
+            # 한다. 다운로드 패널과 archive.txt 를 공유하면 yt-dlp 가 archive-skip
+            # 하면서 경로를 안 알려줘(로그 형식이 달라 on_file 미발사) '영상 없음'
+            # 으로 오인된다. 디스크에 이미 있으면 yt-dlp 가 곧장 인식해 경로를 준다.
+            on_progress=on_progress, on_meta=on_meta, on_file=on_file,
+        )
+    except DownloadError as exc:
+        # 일부라도 받았으면 그것만 전사, 전부 실패면 위로 전달.
+        if not collected:
+            raise
+        job.emit_sync("progress",
+                      message=f"일부 다운로드 실패({exc.message[:80]}) — 받은 것만 전사")
+
+    out: list[Path] = []
+    for p in collected:
+        try:
+            if p.is_file() and p.suffix.lower() in MEDIA_EXTENSIONS:
+                out.append(p)
+        except OSError:
+            continue
+    return out
+
+
+def _run_url_analyze(job: _JobRow, url: str, *, playlist_all: bool,
+                     language: str | None, do_summarize: bool,
+                     summary_model: str | None, budget_usd: float,
+                     whisper_model: str | None) -> None:
+    from ycollector.engine import DownloadError
+
+    try:
+        files = _download_collect(job, url, playlist_all=playlist_all)
+    except DownloadError as exc:
+        job.status = "failed"
+        job.error = {"category": exc.category, "message": exc.message}
+        job.emit_sync("error", category=exc.category, message=exc.message)
+        return
+    except Exception as exc:
+        job.status = "failed"
+        job.error = {"category": "internal", "message": str(exc)}
+        job.emit_sync("error", category="internal", message=str(exc))
+        return
+
+    if not files:
+        job.status = "failed"
+        job.error = {"category": "download",
+                     "message": "다운로드된 영상이 없습니다 (URL/재생목록을 확인하세요)."}
+        job.emit_sync("error", category="download", message=job.error["message"])
+        return
+
+    job.emit_sync("progress", message=f"다운로드 완료 {len(files)}개 — 전사 시작")
+    # 이어서 전사+요약 — 완료 시 _run_analyze 가 done 을 쏜다.
+    _run_analyze(job, files, language=language, do_summarize=do_summarize,
+                 summary_model=summary_model, budget_usd=budget_usd,
+                 whisper_model=whisper_model)
 
 
 # ── album 워커 (ffmpeg 장면 캡쳐 + HTML 앨범북) ─────────────────────────────
@@ -721,6 +896,224 @@ def _run_album(job: _JobRow, folder: Path, frames: int) -> None:
         job.emit_sync("error", category="album", message=job.error["message"])
 
 
+# ── 영속 작업 큐 (다운로드/전사 — 중단되면 리스트로 관리·재시도) ────────────
+# queue.json 에 작업을 영속 저장한다. 다운로드는 즉시 실행하되 추적하고(실패·
+# 중단 시 리스트에 남아 재시도 가능), 전사(analyze)는 CPU 가 무거워 단일 레인에서
+# 하나씩 순차 처리한다. 서버가 죽었다 떠도 'running' 이던 작업을 'interrupted' 로
+# 표시해 재시도할 수 있다.
+#
+# task: {id, kind: download|analyze-url|analyze-files, title, spec, status, error,
+#        attempts, job_id, created_at, updated_at}
+#   status: pending(레인 대기) | running | done | failed | interrupted
+_QUEUE_LOCK = threading.RLock()
+_ANALYZE_CV = threading.Condition()  # 전사 레인 wake 신호.
+_QUEUE_STATUSES = ("pending", "running", "done", "failed", "interrupted")
+
+
+def _queue_path() -> Path:
+    from ycollector.config import user_config_dir
+    return user_config_dir() / "queue.json"
+
+
+def _queue_read() -> list[dict[str, Any]]:
+    p = _queue_path()
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return data.get("tasks", []) if isinstance(data, dict) else []
+
+
+def _queue_write(tasks: list[dict[str, Any]]) -> None:
+    p = _queue_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps({"tasks": tasks}, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    tmp.replace(p)  # 원자적 교체 — 중간에 죽어도 파일이 깨지지 않게.
+
+
+def _new_task(kind: str, title: str, spec: dict[str, Any], status: str,
+              job_id: str | None = None) -> dict[str, Any]:
+    now = int(time.time() * 1000)
+    return {"id": uuid.uuid4().hex[:12], "kind": kind, "title": title, "spec": spec,
+            "status": status, "error": None, "attempts": 0, "job_id": job_id,
+            "created_at": now, "updated_at": now}
+
+
+def _queue_add(task: dict[str, Any]) -> None:
+    with _QUEUE_LOCK:
+        tasks = _queue_read()
+        tasks.append(task)
+        _queue_write(tasks)
+
+
+def _queue_update(task_id: str, **changes: Any) -> dict[str, Any] | None:
+    with _QUEUE_LOCK:
+        tasks = _queue_read()
+        found = None
+        for t in tasks:
+            if t.get("id") == task_id:
+                t.update(changes)
+                t["updated_at"] = int(time.time() * 1000)
+                found = t
+                break
+        if found is not None:
+            _queue_write(tasks)
+        return found
+
+
+def _queue_outcome(task_id: str, row: _JobRow) -> None:
+    """워커가 끝난 뒤 job 상태로 큐 상태를 갱신.
+
+    완전 실패뿐 아니라 '부분 실패'(status=done 이지만 row.error 가 설정된 경우)도
+    큐에선 failed 로 남겨 재시도 대상이 되게 한다.
+    """
+    err = (row.error or {}).get("message") if row.error else None
+    if row.status == "failed" or err:
+        _queue_update(task_id, status="failed", error=err or "실패")
+    else:
+        _queue_update(task_id, status="done", error=None)
+
+
+def _run_download_task(row: _JobRow, url: str, settings_override: dict[str, Any] | None,
+                       task_id: str) -> None:
+    _queue_update(task_id, status="running", job_id=row.id, error=None)
+    try:
+        _run_download(row, url, settings_override)
+    except Exception as exc:  # _run_download 는 내부에서 잡지만 방어적으로.
+        row.status = "failed"
+        row.error = {"category": "internal", "message": str(exc)}
+        row.emit_sync("error", category="internal", message=str(exc))
+    _queue_outcome(task_id, row)
+
+
+def _run_analyze_task(task: dict[str, Any]) -> None:
+    spec = task.get("spec") or {}
+    jid = task.get("job_id") or uuid.uuid4().hex[:12]
+    row = _state.jobs.get(jid) or _JobRow(jid, "analyze", task.get("title") or jid)
+    _remember_job(jid, row)
+    # 상태/attempts 는 레인이 이미 'running' 으로 원자적 claim 했다 — 여기선 job_id 만 보강.
+    if task.get("job_id") != jid:
+        _queue_update(task["id"], job_id=jid)
+    try:
+        if task.get("kind") == "analyze-url":
+            _run_url_analyze(
+                row, spec["url"], playlist_all=bool(spec.get("playlist_all")),
+                language=spec.get("language"), do_summarize=bool(spec.get("summarize", True)),
+                summary_model=None, budget_usd=float(spec.get("budget_usd") or 5.0),
+                whisper_model=None,
+            )
+        else:  # analyze-files
+            root = _root_by_key(str(spec.get("root") or ""))
+            files: list[Path] = []
+            if root is not None:
+                for rel in spec.get("files") or []:
+                    p = _safe_join(root, str(rel))
+                    if p is not None and p.is_file():
+                        files.append(p)
+            if not files:
+                raise RuntimeError("대상 파일이 없습니다 (이동·삭제됐거나 root 변경).")
+            _run_analyze(
+                row, files, language=spec.get("language"),
+                do_summarize=bool(spec.get("summarize", True)), summary_model=None,
+                budget_usd=float(spec.get("budget_usd") or 5.0), whisper_model=None,
+                skip_existing=bool(spec.get("skip_existing")),
+            )
+    except Exception as exc:
+        row.status = "failed"
+        row.error = {"category": "internal", "message": str(exc)}
+        row.emit_sync("error", category="internal", message=str(exc))
+    _queue_outcome(task["id"], row)
+
+
+def _analyze_lane_loop() -> None:
+    """전사 작업을 하나씩 순차 처리하는 단일 워커 (CPU 과부하 방지)."""
+    while True:
+        claimed = None
+        # pending → running 으로 '잠금 안에서' 원자적으로 claim 한다. 그래야
+        # claim 직후 들어온 재시도 요청이 (이미 running 이라) 거부돼 같은 작업이
+        # 두 job_id 로 갈라지지 않는다(TOCTOU 방지).
+        with _QUEUE_LOCK:
+            tasks = _queue_read()
+            for t in tasks:
+                if str(t.get("kind", "")).startswith("analyze") and t.get("status") == "pending":
+                    t["status"] = "running"
+                    t["attempts"] = int(t.get("attempts") or 0) + 1
+                    t["error"] = None
+                    t["updated_at"] = int(time.time() * 1000)
+                    _queue_write(tasks)
+                    claimed = dict(t)
+                    break
+        if claimed is None:
+            with _ANALYZE_CV:
+                _ANALYZE_CV.wait(timeout=5.0)
+            continue
+        try:
+            _run_analyze_task(claimed)
+        except Exception as exc:  # 레인은 절대 죽지 않게.
+            _queue_update(claimed["id"], status="failed", error=str(exc))
+
+
+def _analyze_lane_wake() -> None:
+    with _ANALYZE_CV:
+        _ANALYZE_CV.notify_all()
+
+
+def _queue_recover() -> None:
+    """서버 시작 시: 직전 프로세스에서 'running' 이던 작업을 'interrupted' 로."""
+    with _QUEUE_LOCK:
+        tasks = _queue_read()
+        changed = False
+        for t in tasks:
+            if t.get("status") == "running":
+                t["status"] = "interrupted"
+                t["updated_at"] = int(time.time() * 1000)
+                changed = True
+        if changed:
+            _queue_write(tasks)
+
+
+def _queue_requeue(task_id: str) -> str | None:
+    """interrupted/failed 작업을 다시 실행. 다운로드는 즉시, 전사는 레인에 pending.
+
+    상태 확인 + 전이를 '잠금 안에서' 원자적으로 처리해, 동시 재시도(두 탭·더블클릭)
+    나 레인 claim 직전 끼어드는 재시도에도 작업이 두 번 돌지 않게 한다. 이미
+    running/pending 이거나 없는 작업이면 ``None`` 을 돌려준다(호출부가 거부).
+    새 live job 의 id 를 돌려줘 UI 가 그걸 추적한다(이전 job_id 폐기).
+    """
+    jid = uuid.uuid4().hex[:12]
+    with _QUEUE_LOCK:
+        tasks = _queue_read()
+        t = next((x for x in tasks if x.get("id") == task_id), None)
+        if t is None or t.get("status") in ("running", "pending"):
+            return None
+        kind = t.get("kind")
+        title = t.get("title") or jid
+        spec = dict(t.get("spec") or {})
+        t["job_id"] = jid
+        t["error"] = None
+        t["attempts"] = int(t.get("attempts") or 0) + 1
+        t["status"] = "running" if kind == "download" else "pending"
+        t["updated_at"] = int(time.time() * 1000)
+        _queue_write(tasks)
+
+    if kind == "download":
+        row = _JobRow(jid, "download", title)
+        _remember_job(jid, row)
+        threading.Thread(target=_run_download_task,
+                         args=(row, spec.get("url") or "", spec.get("settings"), task_id),
+                         daemon=True).start()
+    else:
+        row = _JobRow(jid, "analyze", title)
+        row.status = "queued"
+        _remember_job(jid, row)
+        _analyze_lane_wake()
+    return jid
+
+
 # ── FastAPI app ───────────────────────────────────────────────────────────
 def _build_app():  # type: ignore[no-untyped-def]
     try:
@@ -748,6 +1141,12 @@ def _build_app():  # type: ignore[no-untyped-def]
     @asynccontextmanager
     async def lifespan(_app):  # type: ignore[no-untyped-def]
         _state.loop = asyncio.get_running_loop()
+        # 직전 프로세스의 미완료 작업 정리 + 전사 레인 1회 기동.
+        _queue_recover()
+        if not getattr(_state, "_lane_started", False):
+            _state._lane_started = True  # type: ignore[attr-defined]
+            threading.Thread(target=_analyze_lane_loop, daemon=True,
+                             name="analyze-lane").start()
         yield
         _state.loop = None
 
@@ -813,10 +1212,14 @@ def _build_app():  # type: ignore[no-untyped-def]
             settings_dict.setdefault("playlist_mode", payload["playlist_mode"])
         jid = uuid.uuid4().hex[:12]
         row = _JobRow(jid, "download", url)
-        _state.jobs[jid] = row
+        _remember_job(jid, row)
+        # 다운로드는 즉시 실행하되 큐에 기록 — 실패·중단되면 리스트에서 재시도 가능.
+        task = _new_task("download", url, {"url": url, "settings": settings_dict or None},
+                         status="running", job_id=jid)
+        _queue_add(task)
         threading.Thread(
-            target=_run_download,
-            args=(row, url, settings_dict or None),
+            target=_run_download_task,
+            args=(row, url, settings_dict or None, task["id"]),
             daemon=True,
         ).start()
         return {"job_id": jid}
@@ -867,7 +1270,7 @@ def _build_app():  # type: ignore[no-untyped-def]
         if len(prompts_clean) >= 2 or len(refs) >= 2:
             jid = uuid.uuid4().hex[:12]
             row = _JobRow(jid, "generate", combined)
-            _state.jobs[jid] = row
+            _remember_job(jid, row)
             threading.Thread(
                 target=_run_generate_continuous,
                 args=(row, prompts_clean, refs, model, size, seconds, seed_i),
@@ -878,7 +1281,7 @@ def _build_app():  # type: ignore[no-untyped-def]
         # 단일 생성(프롬프트 1개 + reference 0~1개).
         jid = uuid.uuid4().hex[:12]
         row = _JobRow(jid, "generate", combined)
-        _state.jobs[jid] = row
+        _remember_job(jid, row)
         ref0 = refs[0] if refs else None
         threading.Thread(
             target=_run_generate,
@@ -942,22 +1345,12 @@ def _build_app():  # type: ignore[no-untyped-def]
 
     @app.post("/api/analyze")
     def start_analyze(payload: dict[str, Any]) -> dict[str, Any]:
+        """전사·요약 시작. 두 입력 모드:
+          * 파일 모드 — {"root", "files": [...]}: 폴더에서 고른 파일 전사.
+          * URL  모드 — {"url", "playlist_all"?}: 영상(또는 재생목록 전체)을
+            다운로드한 뒤 전사. 공통 옵션: language / summarize / budget_usd.
+        """
         from ycollector.transcribe.config import MEDIA_EXTENSIONS
-
-        root = _root_by_key(str(payload.get("root") or ""))
-        if root is None:
-            raise HTTPException(400, "root 가 올바르지 않음 (overview 의 key 를 쓰세요)")
-        rels = payload.get("files") or []
-        if not isinstance(rels, list) or not rels:
-            raise HTTPException(400, "files 가 비어 있음")
-        files: list[Path] = []
-        for rel in rels:
-            p = _safe_join(root, str(rel))
-            if p is None or not p.is_file():
-                raise HTTPException(400, f"파일 없음: {rel}")
-            if p.suffix.lower() not in MEDIA_EXTENSIONS:
-                raise HTTPException(400, f"미디어 파일이 아님: {rel}")
-            files.append(p)
 
         def clean_model(v: Any) -> str | None:
             s = str(v or "").strip()
@@ -973,24 +1366,56 @@ def _build_app():  # type: ignore[no-untyped-def]
             budget = float(payload.get("budget_usd") or 5.0)
         except (TypeError, ValueError):
             budget = 5.0
+        kwargs: dict[str, Any] = {
+            "language": None if lang in ("", "auto") else lang,
+            "do_summarize": do_sum,
+            "summary_model": clean_model(payload.get("summary_model")),
+            "budget_usd": budget,
+            "whisper_model": clean_model(payload.get("whisper_model")),
+        }
 
+        # 전사는 CPU 가 무거워 큐의 단일 레인에서 순차 처리한다. 여기선 작업을
+        # 'pending' 으로 큐에 넣고 즉시 job_id 를 돌려준다(UI 는 'queued' 로 표시).
+        # ── URL 모드: 영상(들) 다운로드 → 전사 ──
+        url = str(payload.get("url") or "").strip()
+        if url:
+            label = f"URL 전사 — {url[:60]}"
+            jid = uuid.uuid4().hex[:12]
+            row = _JobRow(jid, "analyze", label)
+            row.status = "queued"
+            _remember_job(jid, row)
+            spec = {"url": url, "playlist_all": bool(payload.get("playlist_all")),
+                    "language": kwargs["language"], "summarize": kwargs["do_summarize"],
+                    "budget_usd": kwargs["budget_usd"]}
+            _queue_add(_new_task("analyze-url", label, spec, status="pending", job_id=jid))
+            _analyze_lane_wake()
+            return {"job_id": jid}
+
+        # ── 파일 모드: 폴더에서 고른 파일 전사 ──
+        root = _root_by_key(str(payload.get("root") or ""))
+        if root is None:
+            raise HTTPException(400, "root 가 올바르지 않음 (overview 의 key 를 쓰거나 url 을 주세요)")
+        rels = payload.get("files") or []
+        if not isinstance(rels, list) or not rels:
+            raise HTTPException(400, "files 가 비어 있음 (또는 url 을 주세요)")
+        for rel in rels:
+            p = _safe_join(root, str(rel))
+            if p is None or not p.is_file():
+                raise HTTPException(400, f"파일 없음: {rel}")
+            if p.suffix.lower() not in MEDIA_EXTENSIONS:
+                raise HTTPException(400, f"미디어 파일이 아님: {rel}")
+
+        first = Path(str(rels[0])).name
+        label = first if len(rels) == 1 else f"{Path(str(rels[0])).parent.name} — {len(rels)}개 파일"
         jid = uuid.uuid4().hex[:12]
-        label = files[0].name if len(files) == 1 else \
-            f"{files[0].parent.name} — {len(files)}개 파일"
         row = _JobRow(jid, "analyze", label)
-        _state.jobs[jid] = row
-        threading.Thread(
-            target=_run_analyze,
-            args=(row, files),
-            kwargs={
-                "language": None if lang in ("", "auto") else lang,
-                "do_summarize": do_sum,
-                "summary_model": clean_model(payload.get("summary_model")),
-                "budget_usd": budget,
-                "whisper_model": clean_model(payload.get("whisper_model")),
-            },
-            daemon=True,
-        ).start()
+        row.status = "queued"
+        _remember_job(jid, row)
+        spec = {"root": str(payload.get("root")), "files": list(rels),
+                "language": kwargs["language"], "summarize": kwargs["do_summarize"],
+                "budget_usd": kwargs["budget_usd"]}
+        _queue_add(_new_task("analyze-files", label, spec, status="pending", job_id=jid))
+        _analyze_lane_wake()
         return {"job_id": jid}
 
     @app.post("/api/album")
@@ -1011,7 +1436,7 @@ def _build_app():  # type: ignore[no-untyped-def]
 
         jid = uuid.uuid4().hex[:12]
         row = _JobRow(jid, "album", folder.name or str(folder))
-        _state.jobs[jid] = row
+        _remember_job(jid, row)
         threading.Thread(target=_run_album, args=(row, folder, frames), daemon=True).start()
         return {"job_id": jid}
 
@@ -1042,6 +1467,87 @@ def _build_app():  # type: ignore[no-untyped-def]
             "items": [r.to_dict() for r in
                       sorted(_state.jobs.values(), key=lambda r: -r.created_at)]
         }
+
+    # ── 작업 큐 (다운로드/전사 — 중단 시 관리·재시도) ──────────────────────
+    @app.get("/api/queue")
+    def queue_list() -> dict[str, Any]:
+        tasks = sorted(_queue_read(), key=lambda t: -int(t.get("updated_at") or 0))
+        counts: dict[str, int] = {s: 0 for s in _QUEUE_STATUSES}
+        for t in tasks:
+            counts[t.get("status", "")] = counts.get(t.get("status", ""), 0) + 1
+        return {"tasks": tasks, "counts": counts}
+
+    @app.post("/api/queue/{task_id}/retry")
+    def queue_retry(task_id: str) -> dict[str, Any]:
+        jid = _queue_requeue(task_id)  # 원자적 — 없거나 이미 대기·실행 중이면 None.
+        if jid is None:
+            raise HTTPException(409, "재시도 불가 (없는 작업이거나 이미 대기·실행 중)")
+        return {"ok": True, "job_id": jid}
+
+    @app.post("/api/queue/retry-all")
+    def queue_retry_all() -> dict[str, Any]:
+        with _QUEUE_LOCK:
+            targets = [(t["id"], t.get("kind", ""), t.get("title", ""))
+                       for t in _queue_read()
+                       if t.get("status") in ("interrupted", "failed")]
+        jobs: list[dict[str, str]] = []
+        for tid, kind, title in targets:
+            jid = _queue_requeue(tid)
+            if jid:
+                jobs.append({"task_id": tid, "job_id": jid, "kind": kind, "title": title})
+        return {"ok": True, "retried": len(jobs), "jobs": jobs}
+
+    @app.delete("/api/queue/{task_id}")
+    def queue_delete(task_id: str) -> dict[str, Any]:
+        with _QUEUE_LOCK:
+            tasks = _queue_read()
+            keep = [t for t in tasks if t.get("id") != task_id]
+            if len(keep) == len(tasks):
+                raise HTTPException(404, "작업 없음")
+            # 실행 중인 건 큐에서 빼되 잡 자체는 그대로 둔다(목록 정리 용도).
+            _queue_write(keep)
+        return {"ok": True}
+
+    @app.post("/api/queue/clear")
+    def queue_clear() -> dict[str, Any]:
+        with _QUEUE_LOCK:
+            tasks = _queue_read()
+            keep = [t for t in tasks if t.get("status") != "done"]
+            _queue_write(keep)
+        return {"ok": True, "removed": len(tasks) - len(keep)}
+
+    @app.post("/api/queue/scan")
+    def queue_scan(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """다운로드 루트를 스캔해 '전사 안 된' 미디어를 폴더별로 큐에 추가."""
+        p = payload or {}
+        do_sum = bool(p.get("summarize", True))
+        lang = str(p.get("language") or "ko").strip().lower()
+        lang_arg = None if lang in ("", "auto") else lang
+        try:
+            budget = float(p.get("budget_usd") or 5.0)
+        except (TypeError, ValueError):
+            budget = 5.0
+
+        added = 0
+        files_total = 0
+        for root in _scan_overview().get("roots", []):
+            for folder in root.get("folders", []):
+                missing = [it["rel"] for it in folder.get("items", []) if not it.get("script")]
+                if not missing:
+                    continue
+                label = f"{folder.get('name') or root['key']} — 미전사 {len(missing)}개"
+                jid = uuid.uuid4().hex[:12]
+                row = _JobRow(jid, "analyze", label)
+                row.status = "queued"
+                _remember_job(jid, row)
+                spec = {"root": root["key"], "files": missing, "language": lang_arg,
+                        "summarize": do_sum, "budget_usd": budget, "skip_existing": True}
+                _queue_add(_new_task("analyze-files", label, spec, status="pending", job_id=jid))
+                added += 1
+                files_total += len(missing)
+        if added:
+            _analyze_lane_wake()
+        return {"enqueued": added, "files": files_total}
 
     return app
 

@@ -330,6 +330,7 @@ class YtdlpEngine:
         on_log: Callable[[str], None] | None = None,
         on_process: Callable[[subprocess.Popen[str]], None] | None = None,
         on_meta: Callable[[MetaInfo], None] | None = None,
+        on_file: Callable[[Path], None] | None = None,
     ) -> Path:
         """Download URL and return the final filepath.
 
@@ -351,6 +352,13 @@ class YtdlpEngine:
             another thread (e.g. the Qt worker) can call ``proc.terminate()``
             to cancel cooperatively. The terminated subprocess raises a
             ``DownloadError(category="cancelled", ...)`` here.
+
+        Per-file callback:
+          - ``on_file(path)`` fires once for *each* finished video's authoritative
+            on-disk path (after merge/post-process/move), and also for items
+            yt-dlp skips as already-downloaded. For a playlist this fires N times;
+            the return value is still only the last path. Use this to collect the
+            full set (e.g. download → transcribe a whole playlist).
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         outtmpl = str(output_dir / output_template)
@@ -436,6 +444,8 @@ class YtdlpEngine:
                     payload = line[len(_FINAL_PATH_MARKER):].strip()
                     if payload:
                         final_path = Path(payload)
+                        if on_file:
+                            on_file(final_path)
                 elif line.startswith(_META_MARKER):
                     meta = _parse_meta(line[len(_META_MARKER):])
                     if meta is not None and on_meta:
@@ -459,6 +469,8 @@ class YtdlpEngine:
                     m = _ALREADY_DOWNLOADED_RE.match(line)
                     if m:
                         final_path = Path(m.group(1))
+                        if on_file:
+                            on_file(final_path)
 
             assert proc.stderr is not None
             for raw in proc.stderr:

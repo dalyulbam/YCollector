@@ -446,6 +446,189 @@ anGo.addEventListener("click", async () => {
 anRefresh.addEventListener("click", loadAnalysisBoard);
 loadAnalysisBoard();
 
+// ── 분석 입력 모드 (폴더에서 선택 / URL 입력) ──────────────────────────────
+// URL 모드는 다운로드 패널과 비슷 — URL(또는 재생목록)을 받아 서버가
+// 영상을 받은 뒤 전사한다. POST /api/analyze 에 files 대신 url 을 보낸다.
+const anTabFolder = $("an-tab-folder"), anTabUrl = $("an-tab-url");
+const anFolderMode = $("an-folder-mode"), anUrlMode = $("an-url-mode");
+const anUrl = $("an-url"), anUrlGo = $("an-url-go");
+const anUrlPaste = $("an-url-paste"), anUrlPlaylist = $("an-url-playlist");
+const anUrlPlaylistLabel = $("an-url-playlist-label");
+
+function setAnMode(folder) {
+    anTabFolder.classList.toggle("active", folder);
+    anTabUrl.classList.toggle("active", !folder);
+    anTabFolder.setAttribute("aria-selected", String(folder));
+    anTabUrl.setAttribute("aria-selected", String(!folder));
+    anFolderMode.hidden = !folder;
+    anUrlMode.hidden = folder;
+}
+anTabFolder.addEventListener("click", () => setAnMode(true));
+anTabUrl.addEventListener("click", () => setAnMode(false));
+
+let anPlaylistAll = false;
+anUrlPlaylist.addEventListener("click", () => {
+    anPlaylistAll = !anPlaylistAll;
+    anUrlPlaylist.setAttribute("aria-pressed", String(anPlaylistAll));
+    anUrlPlaylist.classList.toggle("btn-active", anPlaylistAll);
+    anUrlPlaylist.classList.toggle("btn-outline", !anPlaylistAll);
+    anUrlPlaylist.title = anPlaylistAll ? "재생목록 전체 전사 (ON)" : "클릭하면 재생목록 전체 전사";
+    anUrlPlaylistLabel.textContent = anPlaylistAll ? "전체" : "단일";
+});
+anUrlPaste.addEventListener("click", async () => {
+    try { const t = await navigator.clipboard.readText(); if (t) anUrl.value = t.trim(); } catch (e) { /* ignore */ }
+});
+
+async function startUrlAnalyze() {
+    if (anUrlGo.disabled) return;  // 진행 중 — Enter 연타로 인한 중복 제출 방지.
+    const url = anUrl.value.trim();
+    if (!url) return;
+    anUrlGo.disabled = true;
+    try {
+        const r = await fetch("/api/analyze", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                url,
+                playlist_all: anPlaylistAll,
+                language: anLang.value,
+                summarize: anSum.checked,
+                budget_usd: parseFloat(anBudget.value) || 5,
+            }),
+        });
+        if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+        const j = await r.json();
+        trackJob(j.job_id, "analyze", `${anPlaylistAll ? "재생목록" : "URL"} 전사 — ${url}`);
+        anUrl.value = "";
+    } catch (e) {
+        alert(`전사 시작 실패: ${e.message}`);
+    } finally {
+        anUrlGo.disabled = false;
+    }
+}
+anUrlGo.addEventListener("click", startUrlAnalyze);
+anUrl.addEventListener("keydown", e => { if (e.key === "Enter") startUrlAnalyze(); });
+
+// ── 작업 큐 (영속 — 중단/실패 관리·재시도) ────────────────────────────────
+// 백엔드: GET /api/queue, POST /api/queue/{id}/retry · /retry-all · /scan · /clear,
+//         DELETE /api/queue/{id}
+const qList = $("q-list"), qCounts = $("q-counts");
+const qScan = $("q-scan"), qRetryAll = $("q-retry-all"), qClear = $("q-clear"), qRefresh = $("q-refresh");
+const Q_STATUS = {
+    pending:     { txt: "대기",   cls: "run" },
+    running:     { txt: "실행 중", cls: "run" },
+    done:        { txt: "완료",   cls: "ok" },
+    failed:      { txt: "실패",   cls: "fail" },
+    interrupted: { txt: "중단됨", cls: "warn" },
+};
+const Q_KIND = { "download": "DL", "analyze-url": "전사·URL", "analyze-files": "전사" };
+
+let qBusy = false;     // 폴링 중복 방지(느린 서버에서 요청이 쌓여 순서가 꼬이는 것 방지).
+let qLastSig = null;   // 직전 렌더 시그니처 — 변화 없으면 DOM 재구성 생략(깜빡임 방지).
+async function loadQueue() {
+    if (qBusy) return;
+    qBusy = true;
+    let data;
+    try {
+        const r = await fetch("/api/queue");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        data = await r.json();
+    } catch (e) {
+        qList.innerHTML = `<p class="empty">큐 로드 실패: ${escapeHtml(e.message)}</p>`;
+        qLastSig = null;
+        return;
+    } finally {
+        qBusy = false;
+    }
+    const tasks = data.tasks || [], c = data.counts || {};
+    qCounts.textContent =
+        `대기 ${c.pending || 0} · 실행 ${c.running || 0} · 완료 ${c.done || 0} · 실패 ${c.failed || 0} · 중단 ${c.interrupted || 0}`;
+    // 상태가 그대로면 재구성하지 않는다(hover/focus 유지 + 재시도 중 버튼 부활 방지).
+    const sig = JSON.stringify(tasks.map(t => [t.id, t.status, t.attempts, t.error, t.title]));
+    if (sig === qLastSig) return;
+    qLastSig = sig;
+    if (!tasks.length) { qList.innerHTML = '<p class="empty">큐가 비어 있습니다.</p>'; return; }
+    qList.innerHTML = "";
+    for (const t of tasks) qList.appendChild(renderTask(t));
+}
+
+function renderTask(t) {
+    const st = Q_STATUS[t.status] || { txt: t.status, cls: "run" };
+    const row = document.createElement("div");
+    row.className = "q-item";
+    row.innerHTML = `
+        <span class="status-tag ${st.cls}">${st.txt}</span>
+        <span class="q-kind">${escapeHtml(Q_KIND[t.kind] || t.kind)}</span>
+        <span class="q-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+        ${t.attempts ? `<span class="q-attempts">시도 ${t.attempts}</span>` : ""}
+        ${t.error ? `<span class="q-err" title="${escapeHtml(t.error)}">${escapeHtml(t.error)}</span>` : ""}
+        <span class="q-actions"></span>`;
+    const acts = row.querySelector(".q-actions");
+    if (t.status === "failed" || t.status === "interrupted") {
+        const b = document.createElement("button");
+        b.className = "btn btn-outline btn-sm"; b.textContent = "재시도";
+        b.addEventListener("click", async () => {
+            b.disabled = true;
+            try {
+                const r = await fetch(`/api/queue/${t.id}/retry`, { method: "POST" });
+                if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+                const j = await r.json();
+                if (j.job_id) trackJob(j.job_id, t.kind === "download" ? "download" : "analyze", t.title);
+                loadQueue();
+            } catch (e) { alert(`재시도 실패: ${e.message}`); b.disabled = false; }
+        });
+        acts.appendChild(b);
+    }
+    const del = document.createElement("button");
+    del.className = "btn btn-outline btn-sm"; del.textContent = "삭제";
+    del.title = "목록에서 제거 (실행 중이면 작업 자체는 계속됨)";
+    del.addEventListener("click", async () => {
+        try {
+            const r = await fetch(`/api/queue/${t.id}`, { method: "DELETE" });
+            if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+            loadQueue();
+        } catch (e) { alert(`삭제 실패: ${e.message}`); }
+    });
+    acts.appendChild(del);
+    return row;
+}
+
+qScan.addEventListener("click", async () => {
+    if (!confirm("다운로드 폴더에서 전사 안 된 영상을 모두 큐에 추가할까요?\n전사는 순차로 처리되어 오래 걸릴 수 있습니다.")) return;
+    qScan.disabled = true;
+    try {
+        const r = await fetch("/api/queue/scan", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ summarize: anSum.checked, language: anLang.value, budget_usd: parseFloat(anBudget.value) || 5 }),
+        });
+        if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+        const j = await r.json();
+        alert(`큐에 ${j.enqueued}개 폴더(${j.files}개 파일)를 추가했습니다.`);
+        loadQueue();
+    } catch (e) { alert(`스캔 실패: ${e.message}`); }
+    finally { qScan.disabled = false; }
+});
+qRetryAll.addEventListener("click", async () => {
+    try {
+        const r = await fetch("/api/queue/retry-all", { method: "POST" });
+        const j = await r.json();
+        // 재시도된 각 작업을 라이브 카드로도 추적(개별 재시도와 동일한 피드백).
+        for (const job of j.jobs || []) {
+            trackJob(job.job_id, job.kind === "download" ? "download" : "analyze", job.title || job.job_id);
+        }
+        alert(`${j.retried || 0}개 작업을 재시도합니다.`);
+        loadQueue();
+    } catch (e) { alert(`재시도 실패: ${e.message}`); }
+});
+qClear.addEventListener("click", async () => {
+    try { await fetch("/api/queue/clear", { method: "POST" }); loadQueue(); }
+    catch (e) { alert(`비우기 실패: ${e.message}`); }
+});
+qRefresh.addEventListener("click", loadQueue);
+loadQueue();
+// 탭이 보일 때만 폴링(숨겨진 탭에서 불필요한 요청 방지). qBusy 가 중복도 막는다.
+setInterval(() => { if (!document.hidden) loadQueue(); }, 4000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadQueue(); });
+
 // ── markdown 뷰어 모달 (요약/대본 — summary.md/script.md 전용 미니 렌더러) ──
 const mdModal = $("md-modal"), mdBody = $("md-body"), mdTitle = $("md-title"), mdOpen = $("md-open");
 
@@ -541,10 +724,12 @@ function trackJob(jobId, kind, label) {
             es.close();
             // 분석/앨범 완료 → 보드의 요약·대본·앨범 링크 갱신.
             if (kind === "analyze" || kind === "album") loadAnalysisBoard();
+            loadQueue();  // 큐 패널도 즉시 갱신(4초 폴링 기다리지 않게).
         } else if (e === "error") {
             applyStatus("failed", tag);
             errLine.textContent = `[${msg.category || "?"}] ${msg.message || "실패"}`;
             es.close();
+            loadQueue();
         } else if (e === "cancelled") {
             applyStatus("cancelled", tag);
             es.close();
