@@ -473,11 +473,21 @@ _SERVE_EXTRA_EXTENSIONS = (
 )
 
 
+# 전사·요약용으로 받는 영상은 일반 다운로드(downloads/)와 섞이지 않게 전용
+# 폴더에 둔다. URL 전사 모드가 여기로 받고, 분석 보드/스캔도 이 폴더를 본다.
+_READ_DIRNAME = "download2read"
+
+
+def _read_root() -> Path:
+    return Path.cwd() / _READ_DIRNAME
+
+
 def _media_roots() -> list[tuple[str, Path]]:
     """분석 보드가 스캔/서빙할 수 있는 루트 폴더 목록 ``[(키, 절대경로)]``.
 
     키는 URL(``/files/{키}/...``)과 API payload 의 ``root`` 로 쓰인다:
-      * ``out`` — settings.ini ``[output] output_dir``
+      * ``read`` — 서버 cwd 의 ``download2read`` (전사·요약 전용 다운로드)
+      * ``out`` — settings.ini ``[output] output_dir`` (일반 다운로드)
       * ``dl`` / ``dls`` — 서버 cwd 의 ``download`` / ``downloads``
         (과거 산출물 폴더 호환 — 예: 리포의 download/LJM)
     존재하는 폴더만, 같은 경로면 앞의 키 하나만 남긴다.
@@ -486,6 +496,7 @@ def _media_roots() -> list[tuple[str, Path]]:
 
     s, _ = load_settings(None)
     cands: list[tuple[str, Path]] = [
+        ("read", _read_root()),
         ("out", Path(s.output_dir)),
         ("dl", Path.cwd() / "download"),
         ("dls", Path.cwd() / "downloads"),
@@ -794,7 +805,8 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
                   message="영상 다운로드 시작 — 재생목록이면 항목 수만큼 걸립니다")
     try:
         engine.download(
-            url, format=fmt, output_dir=Path(s.output_dir),
+            # 전사용 다운로드는 일반 다운로드(downloads/)와 섞이지 않게 전용 폴더로.
+            url, format=fmt, output_dir=_read_root(),
             merge_format=s.container, write_subs=s.embed_subs, sub_langs=s.sub_langs,
             cookies_from_browser=s.cookies_from_browser, cookies_file=cookies_file,
             socket_timeout=s.socket_timeout, retries=s.retries,

@@ -38,6 +38,7 @@ desktop.ini
 # --- YCollector runtime artifacts ---
 downloads/
 download/
+download2read/
 reference/
 generated/
 *.part
