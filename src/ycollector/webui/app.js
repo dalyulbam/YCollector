@@ -513,6 +513,7 @@ anUrl.addEventListener("keydown", e => { if (e.key === "Enter") startUrlAnalyze(
 //         DELETE /api/queue/{id}
 const qList = $("q-list"), qCounts = $("q-counts");
 const qScan = $("q-scan"), qRetryAll = $("q-retry-all"), qClear = $("q-clear"), qRefresh = $("q-refresh");
+const qAlbumScan = $("q-album-scan");
 const Q_STATUS = {
     pending:     { txt: "대기",   cls: "run" },
     running:     { txt: "실행 중", cls: "run" },
@@ -520,12 +521,14 @@ const Q_STATUS = {
     failed:      { txt: "실패",   cls: "fail" },
     interrupted: { txt: "중단됨", cls: "warn" },
 };
-const Q_KIND = { "download": "DL", "analyze-url": "전사·URL", "analyze-files": "전사" };
+const Q_KIND = { "download": "DL", "analyze-url": "전사·URL", "analyze-files": "전사", "album": "앨범" };
 
 let qBusy = false;     // 폴링 중복 방지(느린 서버에서 요청이 쌓여 순서가 꼬이는 것 방지).
 let qLastSig = null;   // 직전 렌더 시그니처 — 변화 없으면 DOM 재구성 생략(깜빡임 방지).
-async function loadQueue() {
-    if (qBusy) return;
+async function loadQueue(force) {
+    // force: 삭제/재시도 등 액션 직후 즉시 반영(폴링 중복 가드 무시 + 강제 재렌더).
+    if (qBusy && !force) return;
+    if (force) qLastSig = null;
     qBusy = true;
     let data;
     try {
@@ -539,26 +542,66 @@ async function loadQueue() {
     } finally {
         qBusy = false;
     }
-    const tasks = data.tasks || [], c = data.counts || {};
+    const tasks = data.tasks || [], c = data.counts || {}, lane = data.lane || {};
     qCounts.textContent =
         `대기 ${c.pending || 0} · 실행 ${c.running || 0} · 완료 ${c.done || 0} · 실패 ${c.failed || 0} · 중단 ${c.interrupted || 0}`;
-    // 상태가 그대로면 재구성하지 않는다(hover/focus 유지 + 재시도 중 버튼 부활 방지).
-    const sig = JSON.stringify(tasks.map(t => [t.id, t.status, t.attempts, t.error, t.title]));
+    // 상태/진행률이 그대로면 재구성하지 않는다(깜빡임·재시도 버튼 부활 방지).
+    const sig = JSON.stringify([lane.busy, lane.current, lane.current_msg, lane.waiting,
+        tasks.map(t => [t.id, t.status, t.attempts, t.error, t.title, t.wait_pos,
+                        t.live && t.live.progress, t.live && t.live.message])]);
     if (sig === qLastSig) return;
     qLastSig = sig;
-    if (!tasks.length) { qList.innerHTML = '<p class="empty">큐가 비어 있습니다.</p>'; return; }
     qList.innerHTML = "";
+    qList.appendChild(renderLane(lane));
+    if (!tasks.length) {
+        const p = document.createElement("p"); p.className = "empty";
+        p.textContent = "큐가 비어 있습니다.";
+        qList.appendChild(p);
+        return;
+    }
     for (const t of tasks) qList.appendChild(renderTask(t));
+}
+
+// 전사 레인(1개씩 순차) 현재 상태 배너 — '지금 뭐가 도는지/얼마나 대기인지'.
+function renderLane(lane) {
+    const d = document.createElement("div");
+    d.className = "q-lane";
+    if (lane.busy) {
+        const cur = escapeHtml(lane.current || "");
+        const msg = lane.current_msg ? ` — ${escapeHtml(lane.current_msg)}` : "";
+        d.innerHTML = `<b>전사 레인</b> ▶ 실행 중 · <span title="${cur}">${cur}</span>${msg}` +
+            (lane.waiting ? ` <span class="q-lane-wait">· 뒤에 ${lane.waiting}개 대기</span>` : "");
+    } else if (lane.waiting) {
+        d.innerHTML = `<b>전사 레인</b> ⏳ 곧 시작 · 대기 ${lane.waiting}개`;
+        d.classList.add("idle");
+    } else {
+        d.innerHTML = `<b>전사 레인</b> · 유휴 (대기 작업 없음)`;
+        d.classList.add("idle");
+    }
+    return d;
 }
 
 function renderTask(t) {
     const st = Q_STATUS[t.status] || { txt: t.status, cls: "run" };
     const row = document.createElement("div");
     row.className = "q-item";
+    const live = t.live || {};
+    const pct = (t.status === "running" && typeof live.progress === "number")
+        ? Math.round(live.progress * 100) : null;
+    // 서브텍스트: 실행 중=라이브 메시지, 대기=순번 안내, 중단=재시도 안내.
+    let sub = "";
+    if (t.status === "running") sub = live.message || "처리 중…";
+    else if (t.status === "pending" && t.wait_pos) sub = `대기 ${t.wait_pos}번째 — 전사 레인 비는 대로 자동 시작`;
+    else if (t.status === "pending") sub = "대기 중";
+    else if (t.status === "interrupted") sub = "중단됨 — 재시도로 이어서 진행(완료분은 건너뜀)";
     row.innerHTML = `
-        <span class="status-tag ${st.cls}">${st.txt}</span>
+        <span class="status-tag ${st.cls}">${st.txt}${pct !== null ? " " + pct + "%" : ""}</span>
         <span class="q-kind">${escapeHtml(Q_KIND[t.kind] || t.kind)}</span>
-        <span class="q-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+        <div class="q-main">
+            <span class="q-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+            ${sub ? `<span class="q-sub">${escapeHtml(sub)}</span>` : ""}
+            ${pct !== null ? `<div class="q-bar"><div style="width:${pct}%"></div></div>` : ""}
+        </div>
         ${t.attempts ? `<span class="q-attempts">시도 ${t.attempts}</span>` : ""}
         ${t.error ? `<span class="q-err" title="${escapeHtml(t.error)}">${escapeHtml(t.error)}</span>` : ""}
         <span class="q-actions"></span>`;
@@ -573,7 +616,7 @@ function renderTask(t) {
                 if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
                 const j = await r.json();
                 if (j.job_id) trackJob(j.job_id, t.kind === "download" ? "download" : "analyze", t.title);
-                loadQueue();
+                loadQueue(true);
             } catch (e) { alert(`재시도 실패: ${e.message}`); b.disabled = false; }
         });
         acts.appendChild(b);
@@ -585,7 +628,8 @@ function renderTask(t) {
         try {
             const r = await fetch(`/api/queue/${t.id}`, { method: "DELETE" });
             if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
-            loadQueue();
+            row.remove();          // 즉시 사라지게(서버 반영은 아래 새로고침으로 확정).
+            loadQueue(true);
         } catch (e) { alert(`삭제 실패: ${e.message}`); }
     });
     acts.appendChild(del);
@@ -603,9 +647,23 @@ qScan.addEventListener("click", async () => {
         if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
         const j = await r.json();
         alert(`큐에 ${j.enqueued}개 폴더(${j.files}개 파일)를 추가했습니다.`);
-        loadQueue();
+        loadQueue(true);
     } catch (e) { alert(`스캔 실패: ${e.message}`); }
     finally { qScan.disabled = false; }
+});
+qAlbumScan.addEventListener("click", async () => {
+    if (!confirm("전사된 폴더 중 앨범이 없는 곳에 앨범(시각 HTML)을 생성할까요?\n이미 앨범이 있는 폴더는 건너뜁니다. ffmpeg 장면 캡쳐라 시간이 걸립니다.")) return;
+    qAlbumScan.disabled = true;
+    try {
+        const r = await fetch("/api/queue/scan-albums", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+        const j = await r.json();
+        alert(`앨범 큐에 ${j.enqueued}개 폴더를 추가했습니다.`);
+        loadQueue(true);
+    } catch (e) { alert(`앨범 스캔 실패: ${e.message}`); }
+    finally { qAlbumScan.disabled = false; }
 });
 qRetryAll.addEventListener("click", async () => {
     try {
@@ -616,15 +674,16 @@ qRetryAll.addEventListener("click", async () => {
             trackJob(job.job_id, job.kind === "download" ? "download" : "analyze", job.title || job.job_id);
         }
         alert(`${j.retried || 0}개 작업을 재시도합니다.`);
-        loadQueue();
+        loadQueue(true);
     } catch (e) { alert(`재시도 실패: ${e.message}`); }
 });
 qClear.addEventListener("click", async () => {
-    try { await fetch("/api/queue/clear", { method: "POST" }); loadQueue(); }
+    try { await fetch("/api/queue/clear", { method: "POST" }); loadQueue(true); }
     catch (e) { alert(`비우기 실패: ${e.message}`); }
 });
-qRefresh.addEventListener("click", loadQueue);
+qRefresh.addEventListener("click", () => loadQueue(true));
 loadQueue();
+rehydrateJobs();
 // 탭이 보일 때만 폴링(숨겨진 탭에서 불필요한 요청 방지). qBusy 가 중복도 막는다.
 setInterval(() => { if (!document.hidden) loadQueue(); }, 4000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) loadQueue(); });
@@ -687,7 +746,10 @@ function trackJob(jobId, kind, label) {
             <div class="progress"><div></div></div>
             <div class="error-line"></div>
         </div>
-        <div><span class="status-tag run">queued</span></div>`;
+        <div class="job-side">
+            <span class="status-tag run">queued</span>
+            <button class="job-dismiss" title="목록에서 제거 (실행 중이어도 작업은 계속됨)" aria-label="제거">✕</button>
+        </div>`;
     jobsEl.prepend(card);
 
     const tag = card.querySelector(".status-tag");
@@ -698,13 +760,34 @@ function trackJob(jobId, kind, label) {
     const es = new EventSource(`/api/jobs/${jobId}/events`);
     jobs.set(jobId, { card, es });
 
+    // 카드 제거(✕) — 서버 in-memory job 에서도 빼서 새로고침 시 다시 안 뜨게.
+    card.querySelector(".job-dismiss").addEventListener("click", async () => {
+        try { await fetch(`/api/jobs/${jobId}`, { method: "DELETE" }); } catch (e) { /* ignore */ }
+        es.close();
+        jobs.delete(jobId);
+        card.remove();
+        if (!jobsEl.children.length)
+            jobsEl.innerHTML = '<p class="empty">아직 작업이 없습니다. 위에서 다운로드하거나 생성하세요.</p>';
+    });
+
     es.onmessage = (ev) => {
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         const e = msg.event;
         if (e === "snapshot" || e === "status") {
             applyStatus(msg.status, tag);
+            if (typeof msg.progress === "number") bar.style.width = (msg.progress * 100).toFixed(1) + "%";
             if (msg.message) mid.textContent = msg.message;
+            // 새로고침 복원: 스냅샷이 이미 종료 상태면 최종 표시 + SSE 닫기.
+            if (e === "snapshot" && (msg.status === "done" || msg.status === "failed" || msg.status === "cancelled")) {
+                if (msg.status === "done") {
+                    bar.style.width = "100%";
+                    mid.textContent = [msg.message, msg.out_path].filter(Boolean).join(" → ") || mid.textContent || "완료";
+                } else if (msg.status === "failed" && msg.error) {
+                    errLine.textContent = `[${msg.error.category || "?"}] ${msg.error.message || "실패"}`;
+                }
+                es.close();
+            }
         } else if (e === "meta") {
             mid.textContent = `${msg.title || ""}  ${msg.channel ? "· " + msg.channel : ""}  ${msg.duration ? "· " + msg.duration : ""}`;
         } else if (e === "progress") {
@@ -724,12 +807,12 @@ function trackJob(jobId, kind, label) {
             es.close();
             // 분석/앨범 완료 → 보드의 요약·대본·앨범 링크 갱신.
             if (kind === "analyze" || kind === "album") loadAnalysisBoard();
-            loadQueue();  // 큐 패널도 즉시 갱신(4초 폴링 기다리지 않게).
+            loadQueue(true);  // 큐 패널도 즉시 갱신(4초 폴링 기다리지 않게).
         } else if (e === "error") {
             applyStatus("failed", tag);
             errLine.textContent = `[${msg.category || "?"}] ${msg.message || "실패"}`;
             es.close();
-            loadQueue();
+            loadQueue(true);
         } else if (e === "cancelled") {
             applyStatus("cancelled", tag);
             es.close();
@@ -738,6 +821,23 @@ function trackJob(jobId, kind, label) {
     es.onerror = () => {
         applyStatus("offline", tag);
     };
+}
+
+// 페이지 로드/새로고침 시 서버의 현재 작업들을 다시 카드로 복원(패널 ④).
+// in-memory job 목록(/api/jobs)에서 최근 것들을 가져와 SSE 재연결 — 진행 중이면
+// 라이브로 이어지고, 이미 끝난 건 스냅샷으로 최종 상태만 표시(SSE 즉시 닫힘).
+async function rehydrateJobs() {
+    let items;
+    try {
+        const r = await fetch("/api/jobs");
+        if (!r.ok) return;
+        items = (await r.json()).items || [];
+    } catch (e) { return; }
+    // 오래된 것부터 추가(trackJob 이 prepend 라 최신이 위로). 너무 많으면 최근 60개만.
+    for (const job of items.slice(0, 60).reverse()) {
+        if (jobs.has(job.id)) continue;
+        trackJob(job.id, job.kind, job.title || job.input || job.id);
+    }
 }
 
 function applyStatus(s, tag) {

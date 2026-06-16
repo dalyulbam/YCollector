@@ -40,6 +40,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -601,7 +602,8 @@ def _scan_overview() -> dict[str, Any]:
 # ── analyze 워커 (faster-whisper 전사 → Claude 요약 → 리포트) ──────────────
 def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
                  do_summarize: bool, summary_model: str | None, budget_usd: float,
-                 whisper_model: str | None, skip_existing: bool = False) -> None:
+                 whisper_model: str | None, skip_existing: bool = False,
+                 make_album: bool = False) -> None:
     # skip_existing: 이미 산출물이 있는 파일은 건너뛴다(큐 재시도/폴더 스캔 시).
     # 전사(.script.md)가 있고, 요약을 안 하거나 요약(.summary.md)까지 있으면 완료로 본다.
     if skip_existing:
@@ -738,6 +740,19 @@ def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
     if failed:
         job.error = {"category": "partial",
                      "message": f"부분 실패 {len(failed)}/{n}: " + " / ".join(failed)[:300]}
+    # 정방향: 전사·요약이 끝난 폴더마다 앨범 작업을 큐(앨범 레인)에 넣는다.
+    # 앨범은 ffmpeg(CPU)라 전사(GPU)와 별도 레인에서 동시 진행된다.
+    if make_album:
+        done_folders = sorted(
+            {src.parent for src in files
+             if (src.parent / _ANALYSIS_DIRNAME / f"{src.stem}.summary.md").is_file()},
+            key=str,
+        )
+        for folder in done_folders:
+            try:
+                _enqueue_album(folder)
+            except Exception:  # 앨범 enqueue 실패가 전사 완료를 막지 않게.
+                pass
     job.emit_sync("done", out_path=job.out_path, message=job.message, cost_usd=job.cost_usd)
 
 
@@ -839,7 +854,7 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
 def _run_url_analyze(job: _JobRow, url: str, *, playlist_all: bool,
                      language: str | None, do_summarize: bool,
                      summary_model: str | None, budget_usd: float,
-                     whisper_model: str | None) -> None:
+                     whisper_model: str | None, make_album: bool = False) -> None:
     from ycollector.engine import DownloadError
 
     try:
@@ -863,37 +878,53 @@ def _run_url_analyze(job: _JobRow, url: str, *, playlist_all: bool,
         return
 
     job.emit_sync("progress", message=f"다운로드 완료 {len(files)}개 — 전사 시작")
-    # 이어서 전사+요약 — 완료 시 _run_analyze 가 done 을 쏜다.
+    # 이어서 전사+요약 — 완료 시 _run_analyze 가 done 을 쏘고 앨범을 enqueue 한다.
     _run_analyze(job, files, language=language, do_summarize=do_summarize,
                  summary_model=summary_model, budget_usd=budget_usd,
-                 whisper_model=whisper_model)
+                 whisper_model=whisper_model, make_album=make_album)
 
 
 # ── album 워커 (ffmpeg 장면 캡쳐 + HTML 앨범북) ─────────────────────────────
-def _run_album(job: _JobRow, folder: Path, frames: int) -> None:
+def _generate_album(folder: Path, frames: int) -> tuple[int, Path]:
+    """``_album/index.html`` (+ bookNN) 와 단일 합본 ``*_album_standalone.html`` 생성.
+
+    album CLI 의 ``--standalone`` 은 '단독 모드'(index 대신 합본만)라, LJM 처럼 둘 다
+    얻으려면 (1) 일반 앨범 빌드 후 (2) 캡쳐 이미지를 재사용해 합본을 한 번 더 만든다.
+    (rc, index_path) 반환. 합본 실패는 무시(메인 앨범이 핵심).
+    """
     from ycollector.transcribe import album as album_mod
 
+    out_dir = folder / _ALBUM_DIRNAME
+    index = out_dir / "index.html"
+    base = ["--analysis-dir", str(folder / _ANALYSIS_DIRNAME),
+            "--video-dir", str(folder), "--frames", str(frames)]
+
+    def _run(extra: list[str]) -> int:
+        try:
+            rc = album_mod.main(base + extra)
+        except SystemExit as exc:  # argparse 방어.
+            rc = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        return rc if isinstance(rc, int) else 1
+
+    rc = _run(["--output-dir", str(out_dir)])
+    if rc == 0 and index.is_file():
+        standalone = folder / f"{folder.name}_album_standalone.html"
+        _run(["--standalone", str(standalone), "--album-dir", str(out_dir)])
+    return rc, index
+
+
+def _run_album(job: _JobRow, folder: Path, frames: int) -> None:
     job.status = "rendering"
     job.emit_sync("status", status="rendering",
                   message="ffmpeg 장면 캡쳐 + 앨범 HTML 생성 중 (몇 분 걸릴 수 있음)")
     try:
-        # CLI main 재사용 — 진행 로그는 서버 콘솔(stderr)로 나간다.
-        rc = album_mod.main([
-            "--analysis-dir", str(folder / _ANALYSIS_DIRNAME),
-            "--video-dir", str(folder),
-            "--output-dir", str(folder / _ALBUM_DIRNAME),
-            "--frames", str(frames),
-        ])
-    except SystemExit as exc:  # argparse 방어 — 인자는 서버가 만들지만 혹시 모를 종료.
-        # exc.code 는 int|str|None 가능 (sys.exit("메시지") 등) — None 은 성공(0) 의미.
-        rc = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        rc, index = _generate_album(folder, frames)
     except Exception as exc:
         job.status = "failed"
         job.error = {"category": "internal", "message": str(exc)}
         job.emit_sync("error", category="internal", message=str(exc))
         return
 
-    index = folder / _ALBUM_DIRNAME / "index.html"
     if rc == 0 and index.is_file():
         job.status = "done"
         job.progress = 1.0
@@ -908,6 +939,79 @@ def _run_album(job: _JobRow, folder: Path, frames: int) -> None:
         job.emit_sync("error", category="album", message=job.error["message"])
 
 
+def _run_album_task(task: dict[str, Any]) -> None:
+    """큐의 album 작업 — spec {root, dir, frames} 폴더에 앨범 생성."""
+    spec = task.get("spec") or {}
+    jid = task.get("job_id") or uuid.uuid4().hex[:12]
+    row = _state.jobs.get(jid) or _JobRow(jid, "album", task.get("title") or jid)
+    _remember_job(jid, row)
+    if task.get("job_id") != jid:
+        _queue_update(task["id"], job_id=jid)
+    root = _root_by_key(str(spec.get("root") or ""))
+    folder = None
+    if root is not None:
+        rel = str(spec.get("dir") or "").strip()
+        folder = root if rel in ("", ".") else _safe_join(root, rel)
+    if folder is None or not folder.is_dir():
+        row.status = "failed"
+        row.error = {"category": "album", "message": "대상 폴더 없음(이동·삭제됨)."}
+        row.emit_sync("error", category="album", message=row.error["message"])
+    else:
+        try:
+            _run_album(row, folder, int(spec.get("frames") or 3))
+        except Exception as exc:
+            row.status = "failed"
+            row.error = {"category": "internal", "message": str(exc)}
+            row.emit_sync("error", category="internal", message=str(exc))
+    _queue_outcome(task["id"], row)
+
+
+def _root_ref_for(path: Path) -> tuple[str, str] | None:
+    """절대 폴더 경로 → (루트키, 루트기준 rel). 앨범 작업 enqueue 용."""
+    try:
+        rp = path.resolve()
+    except OSError:
+        return None
+    for key, root in _media_roots():
+        try:
+            if rp == root or rp.is_relative_to(root):
+                return key, ("" if rp == root else rp.relative_to(root).as_posix())
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _enqueue_album(folder: Path, frames: int = 3) -> str | None:
+    """폴더에 summary.md 가 있으면 앨범 작업을 큐(album 레인)에 추가하고 job_id 반환.
+
+    같은 폴더(root,dir)의 앨범 작업이 이미 pending/running 이면 새로 만들지 않고 그
+    job_id 를 돌려준다(중복 방지). summary 없거나 루트 밖이면 None.
+    """
+    if not any((folder / _ANALYSIS_DIRNAME).glob("*.summary.md")):
+        return None
+    ref = _root_ref_for(folder)
+    if ref is None:
+        return None
+    key, rel = ref
+    with _QUEUE_LOCK:  # 검사+추가를 한 잠금 안에서(중복 enqueue TOCTOU 방지).
+        tasks = _queue_read()
+        for t in tasks:
+            spec = t.get("spec") or {}
+            if (t.get("kind") == "album" and t.get("status") in ("pending", "running")
+                    and spec.get("root") == key and spec.get("dir") == rel):
+                return t.get("job_id")  # 이미 대기/실행 중 — 그걸 추적.
+        jid = uuid.uuid4().hex[:12]
+        row = _JobRow(jid, "album", folder.name or key)
+        row.status = "queued"
+        _remember_job(jid, row)
+        tasks.append(_new_task("album", f"앨범 — {folder.name or key}",
+                               {"root": key, "dir": rel, "frames": frames},
+                               status="pending", job_id=jid))
+        _queue_write(tasks)
+    _album_lane_wake()
+    return jid
+
+
 # ── 영속 작업 큐 (다운로드/전사 — 중단되면 리스트로 관리·재시도) ────────────
 # queue.json 에 작업을 영속 저장한다. 다운로드는 즉시 실행하되 추적하고(실패·
 # 중단 시 리스트에 남아 재시도 가능), 전사(analyze)는 CPU 가 무거워 단일 레인에서
@@ -919,6 +1023,7 @@ def _run_album(job: _JobRow, folder: Path, frames: int) -> None:
 #   status: pending(레인 대기) | running | done | failed | interrupted
 _QUEUE_LOCK = threading.RLock()
 _ANALYZE_CV = threading.Condition()  # 전사 레인 wake 신호.
+_ALBUM_CV = threading.Condition()    # 앨범 레인 wake 신호(ffmpeg=CPU, 전사와 동시 진행).
 _QUEUE_STATUSES = ("pending", "running", "done", "failed", "interrupted")
 
 
@@ -1016,7 +1121,7 @@ def _run_analyze_task(task: dict[str, Any]) -> None:
                 row, spec["url"], playlist_all=bool(spec.get("playlist_all")),
                 language=spec.get("language"), do_summarize=bool(spec.get("summarize", True)),
                 summary_model=None, budget_usd=float(spec.get("budget_usd") or 5.0),
-                whisper_model=None,
+                whisper_model=None, make_album=bool(spec.get("make_album", True)),
             )
         else:  # analyze-files
             root = _root_by_key(str(spec.get("root") or ""))
@@ -1033,6 +1138,7 @@ def _run_analyze_task(task: dict[str, Any]) -> None:
                 do_summarize=bool(spec.get("summarize", True)), summary_model=None,
                 budget_usd=float(spec.get("budget_usd") or 5.0), whisper_model=None,
                 skip_existing=bool(spec.get("skip_existing")),
+                make_album=bool(spec.get("make_album", True)),
             )
     except Exception as exc:
         row.status = "failed"
@@ -1041,37 +1147,56 @@ def _run_analyze_task(task: dict[str, Any]) -> None:
     _queue_outcome(task["id"], row)
 
 
-def _analyze_lane_loop() -> None:
-    """전사 작업을 하나씩 순차 처리하는 단일 워커 (CPU 과부하 방지)."""
+def _lane_claim(match: "Callable[[dict[str, Any]], bool]") -> dict[str, Any] | None:
+    """match(t) 이고 pending 인 첫 작업을 '잠금 안에서' 원자적으로 running 으로 claim.
+
+    claim 직후 들어온 재시도 요청이 (이미 running 이라) 거부돼 같은 작업이 두 job_id
+    로 갈라지지 않는다(TOCTOU 방지). claim 한 작업의 스냅샷(dict) 반환, 없으면 None.
+    """
+    with _QUEUE_LOCK:
+        tasks = _queue_read()
+        for t in tasks:
+            if match(t) and t.get("status") == "pending":
+                t["status"] = "running"
+                t["attempts"] = int(t.get("attempts") or 0) + 1
+                t["error"] = None
+                t["updated_at"] = int(time.time() * 1000)
+                _queue_write(tasks)
+                return dict(t)
+    return None
+
+
+def _lane_loop(match: "Callable[[dict[str, Any]], bool]", cv: threading.Condition,
+               runner: "Callable[[dict[str, Any]], None]") -> None:
+    """한 종류의 작업을 하나씩 순차 처리하는 단일 워커. (전사/앨범 각각 1개)"""
     while True:
-        claimed = None
-        # pending → running 으로 '잠금 안에서' 원자적으로 claim 한다. 그래야
-        # claim 직후 들어온 재시도 요청이 (이미 running 이라) 거부돼 같은 작업이
-        # 두 job_id 로 갈라지지 않는다(TOCTOU 방지).
-        with _QUEUE_LOCK:
-            tasks = _queue_read()
-            for t in tasks:
-                if str(t.get("kind", "")).startswith("analyze") and t.get("status") == "pending":
-                    t["status"] = "running"
-                    t["attempts"] = int(t.get("attempts") or 0) + 1
-                    t["error"] = None
-                    t["updated_at"] = int(time.time() * 1000)
-                    _queue_write(tasks)
-                    claimed = dict(t)
-                    break
+        claimed = _lane_claim(match)
         if claimed is None:
-            with _ANALYZE_CV:
-                _ANALYZE_CV.wait(timeout=5.0)
+            with cv:
+                cv.wait(timeout=5.0)
             continue
         try:
-            _run_analyze_task(claimed)
+            runner(claimed)
         except Exception as exc:  # 레인은 절대 죽지 않게.
             _queue_update(claimed["id"], status="failed", error=str(exc))
+
+
+def _is_analyze(t: dict[str, Any]) -> bool:
+    return str(t.get("kind", "")).startswith("analyze")
+
+
+def _is_album(t: dict[str, Any]) -> bool:
+    return t.get("kind") == "album"
 
 
 def _analyze_lane_wake() -> None:
     with _ANALYZE_CV:
         _ANALYZE_CV.notify_all()
+
+
+def _album_lane_wake() -> None:
+    with _ALBUM_CV:
+        _ALBUM_CV.notify_all()
 
 
 def _queue_recover() -> None:
@@ -1118,7 +1243,12 @@ def _queue_requeue(task_id: str) -> str | None:
         threading.Thread(target=_run_download_task,
                          args=(row, spec.get("url") or "", spec.get("settings"), task_id),
                          daemon=True).start()
-    else:
+    elif kind == "album":
+        row = _JobRow(jid, "album", title)
+        row.status = "queued"
+        _remember_job(jid, row)
+        _album_lane_wake()
+    else:  # analyze-url / analyze-files
         row = _JobRow(jid, "analyze", title)
         row.status = "queued"
         _remember_job(jid, row)
@@ -1153,12 +1283,14 @@ def _build_app():  # type: ignore[no-untyped-def]
     @asynccontextmanager
     async def lifespan(_app):  # type: ignore[no-untyped-def]
         _state.loop = asyncio.get_running_loop()
-        # 직전 프로세스의 미완료 작업 정리 + 전사 레인 1회 기동.
+        # 직전 프로세스의 미완료 작업 정리 + 레인 1회 기동(전사 1 · 앨범 1, 동시).
         _queue_recover()
-        if not getattr(_state, "_lane_started", False):
-            _state._lane_started = True  # type: ignore[attr-defined]
-            threading.Thread(target=_analyze_lane_loop, daemon=True,
-                             name="analyze-lane").start()
+        if not getattr(_state, "_lanes_started", False):
+            _state._lanes_started = True  # type: ignore[attr-defined]
+            threading.Thread(target=lambda: _lane_loop(_is_analyze, _ANALYZE_CV, _run_analyze_task),
+                             daemon=True, name="analyze-lane").start()
+            threading.Thread(target=lambda: _lane_loop(_is_album, _ALBUM_CV, _run_album_task),
+                             daemon=True, name="album-lane").start()
         yield
         _state.loop = None
 
@@ -1446,10 +1578,12 @@ def _build_app():  # type: ignore[no-untyped-def]
         except (TypeError, ValueError):
             frames = 3
 
-        jid = uuid.uuid4().hex[:12]
-        row = _JobRow(jid, "album", folder.name or str(folder))
-        _remember_job(jid, row)
-        threading.Thread(target=_run_album, args=(row, folder, frames), daemon=True).start()
+        # 앨범 레인으로 라우팅 — 같은 폴더에서 자동앨범과 직접요청이 동시에 돌아
+        # _album 출력이 깨지는 것을 막는다(단일 레인이 직렬화). 이미 대기/실행 중이면
+        # 그 job_id 를 돌려준다.
+        jid = _enqueue_album(folder, frames)
+        if jid is None:
+            raise HTTPException(400, "앨범 작업 추가 실패 (요약/루트 확인)")
         return {"job_id": jid}
 
     @app.get("/files/{root_key}/{rel:path}")
@@ -1480,14 +1614,42 @@ def _build_app():  # type: ignore[no-untyped-def]
                       sorted(_state.jobs.values(), key=lambda r: -r.created_at)]
         }
 
+    @app.delete("/api/jobs/{job_id}")
+    def delete_job(job_id: str) -> dict[str, Any]:
+        """작업 카드(in-memory job)를 목록에서 제거. 실행 중이어도 카드만 치운다
+        (잡 자체는 계속 진행). 새로고침 시 /api/jobs 복원에서도 빠진다."""
+        _state.jobs.pop(job_id, None)
+        return {"ok": True}
+
     # ── 작업 큐 (다운로드/전사 — 중단 시 관리·재시도) ──────────────────────
     @app.get("/api/queue")
     def queue_list() -> dict[str, Any]:
         tasks = sorted(_queue_read(), key=lambda t: -int(t.get("updated_at") or 0))
         counts: dict[str, int] = {s: 0 for s in _QUEUE_STATUSES}
+        # 대기 작업이 '몇 번째'인지(전사 레인은 1개씩 순차) + 실행 중 작업의 라이브
+        # 진행률/메시지를 붙여 UI 가 '지금 뭐가 도는지/왜 대기인지'를 보여주게 한다.
+        wait_pos = 0
         for t in tasks:
-            counts[t.get("status", "")] = counts.get(t.get("status", ""), 0) + 1
-        return {"tasks": tasks, "counts": counts}
+            st = t.get("status", "")
+            counts[st] = counts.get(st, 0) + 1
+            job = _state.jobs.get(t.get("job_id") or "")
+            if job is not None:
+                t["live"] = {
+                    "status": job.status, "progress": round(job.progress, 4),
+                    "message": getattr(job, "message", "") or "",
+                }
+            if str(t.get("kind", "")).startswith("analyze") and st == "pending":
+                wait_pos += 1
+                t["wait_pos"] = wait_pos  # 전사 레인에서 몇 번째로 대기 중인지.
+        lane_running = next((t for t in tasks if str(t.get("kind", "")).startswith("analyze")
+                             and t.get("status") == "running"), None)
+        lane = {
+            "busy": lane_running is not None,
+            "current": (lane_running or {}).get("title"),
+            "current_msg": ((lane_running or {}).get("live") or {}).get("message"),
+            "waiting": wait_pos,
+        }
+        return {"tasks": tasks, "counts": counts, "lane": lane}
 
     @app.post("/api/queue/{task_id}/retry")
     def queue_retry(task_id: str) -> dict[str, Any]:
@@ -1560,6 +1722,28 @@ def _build_app():  # type: ignore[no-untyped-def]
         if added:
             _analyze_lane_wake()
         return {"enqueued": added, "files": files_total}
+
+    @app.post("/api/queue/scan-albums")
+    def queue_scan_albums(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """전사·요약은 됐지만 앨범(_album/index.html)이 없는 폴더를 앨범 큐에 추가.
+        이미 앨범이 있는 폴더(LJM 등)는 자동으로 건너뛴다."""
+        try:
+            frames = max(1, min(6, int((payload or {}).get("frames") or 3)))
+        except (TypeError, ValueError):
+            frames = 3
+        added = 0
+        for root in _scan_overview().get("roots", []):
+            base = _root_by_key(root["key"])
+            if base is None:
+                continue
+            for folder in root.get("folders", []):
+                if folder.get("summarized", 0) <= 0 or folder.get("album"):
+                    continue  # 요약 없음 → 앨범 불가 / 이미 앨범 있음 → 건너뜀.
+                rel = folder.get("rel") or ""
+                abs_folder = base if rel in ("", ".") else (base / rel)
+                if _enqueue_album(abs_folder, frames):
+                    added += 1
+        return {"enqueued": added}
 
     return app
 
