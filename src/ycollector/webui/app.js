@@ -490,15 +490,23 @@ function renderFolderActions(data) {
             ? "전사 대본에 화자(말하는 사람) 라벨을 붙입니다 — speechbrain ECAPA"
             : "화자 구분 비활성 — 서버에서  uv sync --extra diarize --native-tls  설치 필요";
         d.addEventListener("click", async () => {
+            // 화자 수를 알면 지정 — 긴 인터뷰는 자동 추정이 과분할되기 쉬워(예: 2인 → 16명)
+            // 인원 수를 주면 정확해진다. 비우면 자동 추정.
+            const raw = prompt("화자 수를 알면 입력하세요 (모르면 비워두면 자동 추정).\n예: 인터뷰=2, 단독 내레이션=1", "");
+            if (raw === null) return;  // 취소
+            const body = { root: data.root, dir: data.rel };
+            const n = parseInt(raw, 10);
+            if (Number.isFinite(n) && n > 0) body.num_speakers = n;
             d.disabled = true;
             try {
                 const r = await fetch("/api/diarize", {
                     method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ root: data.root, dir: data.rel }),
+                    body: JSON.stringify(body),
                 });
                 if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
                 const j = await r.json();
-                trackJob(j.job_id, "diarize", `화자 구분 — ${data.rel || data.root}`);
+                const tag = body.num_speakers ? ` (${body.num_speakers}명)` : "";
+                trackJob(j.job_id, "diarize", `화자 구분 — ${data.rel || data.root}${tag}`);
             } catch (e) { alert(`화자 구분 실패: ${e.message}`); d.disabled = false; }
         });
         bar.appendChild(d);
