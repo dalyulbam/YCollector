@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — 화자 구분 · 무음 분할/배치 · 음원 업로드</title>
+<meta name="description" content="구현 기록 · 2026-06-20">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #7c3aed; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px; display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.topbar .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.topbar .meta { margin-left: auto; font-size: 0.85rem; color: var(--fg-muted); }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+h1 { font-size: 1.8rem; font-weight: 800; margin: 0 0 8px; }
+h2 { font-size: 1.25rem; font-weight: 700; margin: 40px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: var(--accent); }
+.subtitle { color: var(--fg-muted); margin: 0 0 32px; font-size: 0.95rem; }
+
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code, p code, li code { background: var(--code-bg); color: var(--code-fg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85em; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow-sm); }
+.card h3 { margin-top: 0; }
+.card.accent { border-left: 4px solid var(--accent); }
+
+pre { background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 16px; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge.new { background: #dcfce7; color: #166534; }
+.badge.changed { background: #fef3c7; color: #92400e; }
+.badge.removed { background: #fee2e2; color: #991b1b; }
+.badge.note { background: #e0e7ff; color: #3730a3; }
+@media (prefers-color-scheme: dark) {
+    .badge.new { background: #14532d; color: #86efac; }
+    .badge.changed { background: #78350f; color: #fde68a; }
+    .badge.removed { background: #7f1d1d; color: #fca5a5; }
+    .badge.note { background: #312e81; color: #c7d2fe; }
+}
+
+ul { padding-left: 20px; }
+li { margin: 4px 0; }
+
+.diagram {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 20px; margin: 16px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.82rem;
+    line-height: 1.6; white-space: pre; overflow-x: auto;
+}
+.toc { font-size: 0.9rem; color: var(--fg-muted); }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.callout { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 12px 16px; margin: 16px 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand">YCollector<span class="dot"></span></div>
+    <div class="meta">구현 기록 &middot; 2026-06-20</div>
+</div>
+
+<div class="wrap">
+
+<h1>화자 구분 · 무음 분할/배치 가속 · 음원 업로드</h1>
+<p class="subtitle">
+    전사·요약 분석 보드(패널 ③)를 <strong>탐색기식 폴더 네비게이션</strong>으로 바꾸고, 그 위에 세 기능을 얹었다 —
+    <strong>(A) 화자 구분(diarization)</strong> 웹·자동 파이프라인 연동,
+    <strong>(B) 무음 분할 민감도 + 배치 가속</strong> 노출,
+    <strong>(C) 로컬 음원·영상 파일 업로드</strong> 전사.
+</p>
+
+<p class="toc">
+    바로가기 &middot;
+    <a href="#overview">① 개요</a> &middot;
+    <a href="#nav">② 보드 재설계</a> &middot;
+    <a href="#diarize">③ 화자 구분</a> &middot;
+    <a href="#vad">④ 무음 분할·배치</a> &middot;
+    <a href="#upload">⑤ 음원 업로드</a> &middot;
+    <a href="#stack">⑥ 패키지·기술</a> &middot;
+    <a href="#trend">⑦ 트렌드</a> &middot;
+    <a href="#verify">⑧ 검증</a>
+</p>
+
+<!-- ── 개요 ──────────────────────────────────────────────────────── -->
+<h2 id="overview">1. 개요 — 무엇을, 왜</h2>
+
+<div class="card">
+<p>분석 보드(패널 ③)는 다운로드한 영상/음원을 <em>전사 → 요약 → 장면 앨범북</em>으로 가공하는 곳이다. 이번 변경의 동기:</p>
+<ul>
+    <li><strong>보드가 지저분했다</strong> — 모든 폴더를 평면으로 쏟아내던 것을 <em>윈도우 탐색기처럼 경로를 따라 한 폴더씩</em> 들어가는 방식으로 재설계.</li>
+    <li><strong>"누가 말하는지" 구분이 필요했다</strong> — 전사 대본에 화자(<code>[화자1]</code>, <code>[화자2]</code>…) 라벨을 붙이는 화자 구분을 보드 버튼·자동 파이프라인으로 연동.</li>
+    <li><strong>"무음마다 끊어 전사"하면 어떨지</strong>에 대한 답 — VAD(무음 구간 검출)는 이미 켜져 있었고, 그 <em>민감도</em>와 <em>배치 가속</em>을 노출해 "안전한 형태의 무음 분할"을 제공.</li>
+    <li><strong>URL·폴더 외에 로컬 음원 파일</strong>을 브라우저에서 바로 올려 전사할 수 있게 업로드 UI 추가.</li>
+</ul>
+<p><strong>관통하는 설계 원칙:</strong> 다운로드(yt-dlp)·전사(GPU)·요약(Claude)·앨범(ffmpeg)에 이어, 화자 구분(ECAPA)도 <em>영속 큐의 단일 소비자 "레인"</em>으로 편입 — 서버가 죽었다 떠도 재시도 가능하고, 무거운 작업이 서로를 막지 않게 분리.</p>
+</div>
+
+<!-- ── 보드 재설계 ────────────────────────────────────────────────── -->
+<h2 id="nav">2. 분석 보드 재설계 — 탐색기식 네비게이션</h2>
+
+<div class="diagram">Before (평면 덤프)                     After (경로 탐색)
+┌──────────────────────────┐         ┌──────────────────────────────────┐
+│ LJM            영상 9/9   │         │ [download2read | downloads]  루트탭 │
+│ 석군           영상 1/1   │         │ download2read › KBS 히스토리  ↑상위  │
+│ KBS 히스토리   영상 1/1   │   ──▶   │ [📖앨범][단일합본][앨범생성][🗣화자]│
+│ … (전부 한 화면에)        │         │ 📁 LJM 9/9 앨범✓  📁 석군 1/1     │
+└──────────────────────────┘         │ ☑ clip.mp3  [요약][대본] 화자✓     │
+                                      └──────────────────────────────────┘</div>
+
+<table>
+<tr><th>요소</th><th>설명</th></tr>
+<tr><td>루트 탭</td><td><code>download2read</code>(전사 전용) · <code>downloads</code> 등 미디어 루트 전환</td></tr>
+<tr><td>경로(breadcrumb)</td><td>현재 위치 + <code>↑ 상위</code>. 폴더 카드 클릭으로 진입</td></tr>
+<tr><td>폴더 액션바</td><td>그 폴더의 <strong>앨범 보기/생성</strong>, <strong>🗣 화자 구분</strong>(이번 추가)</td></tr>
+<tr><td>파일 행</td><td>체크박스(분석 대상) + <code>요약</code>/<code>대본</code> 뷰어 + <code>화자✓</code> 배지(이번 추가)</td></tr>
+</table>
+<p>백엔드는 <code>GET /api/analysis/browse?root=&rel=</code> 한 폴더 조회 API. 경로 탈출은 <code>_safe_join</code>(<code>..</code>·절대경로·드라이브 콜론 차단)로 막는다.</p>
+
+<!-- ── 화자 구분 ──────────────────────────────────────────────────── -->
+<h2 id="diarize">3. (A) 화자 구분 — 토큰 없는 ECAPA diarization</h2>
+
+<div class="card accent">
+<p><strong>핵심 선택:</strong> 게이트 모델 <code>pyannote.audio</code>(HuggingFace 토큰 + 약관 동의 필요) 대신, 공개 <strong>speechbrain ECAPA-TDNN</strong> 화자 임베딩 + 응집 클러스터링. "이름은 몰라도 화자만 구분"을 토큰 마찰 없이 달성.</p>
+</div>
+
+<h3>파이프라인</h3>
+<div class="diagram">전사 산출물            화자 구분(diarize_folder)                       대본 재작성
+_analysis/*.srt   ─┐
+_analysis/*.json  ─┼─▶ ffmpeg 16kHz mono wav 추출                    _analysis/
+(JSON 우선,        │   ─▶ 세그먼트별 ECAPA 임베딩(192d)        ─▶     <stem>.script.md
+ 없으면 SRT 파싱)  ─┘   ─▶ 코사인 응집 클러스터링(threshold)            (원자적 tmp→replace,
+                       ─▶ 첫 등장 순 화자1·화자2… 라벨링                화자 라벨 포함)</div>
+
+<table>
+<tr><th>구성요소</th><th>변경</th><th>요약</th></tr>
+<tr><td><code>transcribe/diarize.py</code></td><td><span class="badge new">NEW</span> <code>diarize_folder()</code></td>
+    <td>JSON 우선·SRT 폴백(<code>_parse_srt</code>) 세그먼트 로드 → ECAPA → <code>script.md</code> 원자적 재작성. 임베딩 <code>.emb.npz</code> 캐시.</td></tr>
+<tr><td><code>server.py</code> 레인</td><td><span class="badge new">NEW</span> diarize 레인</td>
+    <td><code>_DIARIZE_CV</code>/<code>_is_diarize</code>/<code>_run_diarize_task</code> — 전사·앨범 레인과 <strong>동시</strong> 단일 소비. lifespan에서 기동.</td></tr>
+<tr><td>엔드포인트</td><td><span class="badge new">NEW</span></td>
+    <td><code>POST /api/diarize</code>, <code>POST /api/queue/scan-diarize</code>, <code>/api/health.diarize_available</code></td></tr>
+<tr><td>정방향 자동화</td><td><span class="badge changed">CHANGED</span></td>
+    <td><code>_run_analyze(make_diarize)</code> → 전사 후 폴더별 diarize enqueue</td></tr>
+</table>
+
+<h3>정방향 체이닝: 전사 → 화자 구분 → 앨범</h3>
+<div class="callout">
+앨범 렌더러(<code>album.py</code>)는 <code>script.md</code>의 <code>**[h:mm:ss] 화자N:** …</code> 라인을 파싱해 장면별 <strong>화자 대화</strong>를 싣는다. 그래서 순서를 <strong>전사 → 화자 구분 → 앨범</strong>으로 고정해 앨범이 화자 라벨을 반영하게 했다. 동시에 같은 <code>script.md</code>를 두 레인이 읽고/쓰는 경쟁을 피하려고 화자 구분 쓰기는 <strong>원자적</strong>(tmp+replace)으로 처리.
+</div>
+<pre><code># 화자 구분 ON: diarize 작업이 끝난 뒤(성공/실패 무관) 앨범을 이어서 enqueue
+_run_analyze(make_diarize=True, make_album=True)
+   └─▶ _enqueue_diarize(folder, make_album=True)
+          └─▶ _run_diarize_task → (ECAPA 실행) → make_album 이면 _enqueue_album(folder)
+
+# 화자 구분 OFF: 종전대로 요약된 폴더를 곧장 앨범 레인으로</code></pre>
+<p><strong>회복탄력성:</strong> 화자 구분 의존성(torch 등)이 없어 diarize가 <em>not-installed</em>로 실패해도, 앨범 자동화는 잃지 않도록 실패 후에도 앨범을 enqueue하게 했다(검증으로 확인).</p>
+
+<!-- ── VAD ───────────────────────────────────────────────────────── -->
+<h2 id="vad">4. (B) 무음 분할 민감도 + 배치 가속</h2>
+
+<div class="card">
+<p>"음이 비어있는 순간마다 끊어 전사하면?" 이라는 질문에 대한 정직한 답:</p>
+<ul>
+    <li>faster-whisper의 <code>vad_filter</code>(Silero VAD)는 <strong>이미 기본 ON</strong> — 무음을 제거해 환각(hallucination)↓·속도↑.</li>
+    <li>"매 pause마다 조각을 <em>독립</em> 전사"하는 건 보통 손해 — Whisper는 직전 텍스트 문맥(<code>condition_on_previous_text</code>)으로 추론하고 30초 윈도우로 학습됐기에, 짧은 파편은 문맥 손실·정확도↓.</li>
+    <li>그래서 노출한 건 <strong>안전한 형태</strong>: ① VAD <em>민감도</em>(무음 길이 임계) ② <strong>배치 가속</strong>(VAD 컷을 ~30초로 묶어 배치 추론 — WhisperX가 검증한 방식).</li>
+</ul>
+</div>
+
+<table>
+<tr><th>설정 (<code>[transcribe]</code> / 패널 "고급")</th><th>의미</th></tr>
+<tr><td><code>vad_min_silence_ms</code></td><td>이만큼 조용하면 발화 경계로 절단. 작을수록 잘게(표준 2000 · 촘촘 700 · 매우 촘촘 300)</td></tr>
+<tr><td><code>vad_speech_pad_ms</code></td><td>음성 구간 앞뒤 여유(ms) — 단어 잘림 방지</td></tr>
+<tr><td><code>vad_threshold</code></td><td>음성 판정 임계값(0~1)</td></tr>
+<tr><td><code>batched</code> / <code>batch_size</code></td><td><code>BatchedInferencePipeline</code>으로 VAD 컷 배치 추론(VAD 강제 ON) — 긴 파일 대폭 가속</td></tr>
+</table>
+
+<pre><code># whisper.py — VadOptions 키로 매핑, 배치는 지연 생성 파이프라인
+vad_params = {"threshold": …, "min_silence_duration_ms": …, "speech_pad_ms": …}
+if cfg.batched:
+    BatchedInferencePipeline(model).transcribe(src, batch_size=…, vad_filter=True, vad_parameters=vad_params)
+else:
+    model.transcribe(src, vad_filter=cfg.vad_filter, vad_parameters=vad_params)</code></pre>
+<p class="callout">faster-whisper <strong>1.2.1</strong>의 실제 API를 introspect로 확인한 뒤 구현(추측 금지): <code>BatchedInferencePipeline.transcribe(... beam_size, batch_size, vad_filter, vad_parameters, condition_on_previous_text ...)</code>, <code>VadOptions</code> 필드 = <code>threshold / min_silence_duration_ms / speech_pad_ms</code> 등.</p>
+
+<!-- ── 업로드 ─────────────────────────────────────────────────────── -->
+<h2 id="upload">5. (C) 로컬 음원·영상 업로드</h2>
+
+<div class="diagram">[브라우저] 드래그&드롭(⬆ 파일 업로드 탭)
+   │ multipart (list[UploadFile])
+   ▼
+POST /api/analyze/upload ─▶ download2read/업로드/<정리된 이름>.ext   (스트리밍 저장)
+   │ {root:"read", saved:[{rel,…}], rejected:[…]}     · _safe_upload_name(경로탈출 차단, 한글 보존)
+   ▼                                                  · MEDIA_EXTENSIONS 화이트리스트
+POST /api/analyze {root, files:[rel], …anOptions} ─▶ 전사 레인(요약·화자 구분·앨범 옵션 그대로)</div>
+
+<table>
+<tr><th>구성요소</th><th>변경</th><th>요약</th></tr>
+<tr><td><code>POST /api/analyze/upload</code></td><td><span class="badge new">NEW</span></td>
+    <td>다중 파일 스트리밍 저장 → <code>download2read/업로드/</code>(보드에서 보이는 정상 폴더). 미디어 확장자만 허용, 비미디어는 <code>rejected</code></td></tr>
+<tr><td><code>_safe_upload_name()</code></td><td><span class="badge new">NEW</span></td>
+    <td>경로 구분자·예약문자(<code>: * ? " &lt; &gt; |</code>) 제거, 선행 점·길이 제한, <strong>한글 보존</strong>. 충돌 시 hex 접미</td></tr>
+<tr><td>패널 ③ 3번째 탭</td><td><span class="badge new">NEW</span></td>
+    <td><code>⬆ 파일 업로드</code> — 드롭존(<code>#an-drop</code>), 업로드 후 현재 옵션대로 즉시 전사</td></tr>
+</table>
+<p><strong>이중 방어:</strong> 업로드 시 <code>_safe_upload_name</code>, 이어지는 <code>/api/analyze</code>에서 <code>_safe_join</code>이 rel을 루트 안으로 재검증.</p>
+
+<!-- ── 패키지·기술 ────────────────────────────────────────────────── -->
+<h2 id="stack">6. 사용한 패키지·기술</h2>
+
+<h3>전사 · 화자 구분 (ML)</h3>
+<table>
+<tr><th>패키지/기술</th><th>역할</th><th>extra</th></tr>
+<tr><td><code>faster-whisper</code> 1.2.1</td><td>CTranslate2 기반 Whisper 전사. <code>BatchedInferencePipeline</code>·<code>VadOptions</code></td><td><code>transcribe</code></td></tr>
+<tr><td><code>ctranslate2</code></td><td>Whisper 추론 런타임(INT8/FP16, CUDA)</td><td><code>transcribe</code></td></tr>
+<tr><td>Silero VAD</td><td>음성 구간 검출(무음 제거·환각 방지) — faster-whisper 내장</td><td><code>transcribe</code></td></tr>
+<tr><td><code>speechbrain</code> (ECAPA-TDNN)</td><td>화자 임베딩(192차원) — 토큰 불필요(비게이트)</td><td><code>diarize</code></td></tr>
+<tr><td><code>torch</code></td><td>ECAPA 추론 백엔드(CUDA/CPU)</td><td><code>diarize</code></td></tr>
+<tr><td><code>scikit-learn</code></td><td><code>AgglomerativeClustering</code>(코사인) 화자 군집화</td><td><code>diarize</code></td></tr>
+<tr><td><code>soundfile</code> / <code>numpy</code></td><td>wav 로드 + 세그먼트 슬라이싱</td><td><code>diarize</code></td></tr>
+<tr><td><code>ffmpeg</code></td><td>원본→16kHz mono wav 추출(화자 구분), 장면 캡쳐(앨범)</td><td>시스템</td></tr>
+<tr><td><code>anthropic</code> (Claude)</td><td>전사록 → 요약·핵심 파트</td><td><code>summarize</code></td></tr>
+</table>
+
+<h3>서버 · 인프라</h3>
+<table>
+<tr><th>패키지/기술</th><th>역할</th></tr>
+<tr><td>FastAPI <code>UploadFile</code> / multipart</td><td>음원 업로드(<code>python-multipart</code>)</td></tr>
+<tr><td>SSE(EventSource)</td><td>잡 진행률 실시간 스트림</td></tr>
+<tr><td><code>threading</code> 단일소비 레인 + <code>Condition</code></td><td>전사/앨범/<strong>화자 구분</strong> 3개 레인 동시·직렬 처리, 영속 JSON 큐</td></tr>
+<tr><td><code>truststore</code></td><td>TLS 가로채기 환경에서 OS 신뢰저장소 주입(모델 다운로드)</td></tr>
+<tr><td><code>uv</code> (<code>--native-tls</code>, extras)</td><td>패키지 관리 — 기능별 extra 분리 설치</td></tr>
+<tr><td>vanilla JS(빌드 단계 없음)</td><td>webui — 탐색기 네비·업로드 드롭존·옵션</td></tr>
+</table>
+
+<div class="callout">
+<strong>현재 미설치 상태:</strong> <code>diarize</code> extra(torch/speechbrain/sklearn/soundfile)는 .venv에 아직 없다(코드는 연동 완료, UI는 <code>diarize_available</code>로 자동 비활성). 실제 화자 구분 실행:
+<pre><code>uv sync --extra diarize --native-tls   # torch 등 수 GB</code></pre>
+</div>
+
+<!-- ── 트렌드 ─────────────────────────────────────────────────────── -->
+<h2 id="trend">7. 배경이 된 기술 트렌드</h2>
+
+<div class="card">
+<h3>① WhisperX식 "VAD 컷 + 배치 추론"</h3>
+<p>긴 오디오를 무음(VAD) 경계로 자르고 ~30초 윈도우로 <em>묶어</em> 배치 전사 → 강제 정렬 → 화자 구분. 환각↓·속도↑를 문맥 손실 없이 얻는 정석. faster-whisper의 <code>BatchedInferencePipeline</code>이 이 방식을 라이브러리에 내장 — 본 구현이 노출한 "배치 가속"이 그것.</p>
+</div>
+<div class="card">
+<h3>② 토큰 없는 화자 구분(speechbrain ECAPA) vs 게이트 pyannote</h3>
+<p>최신 diarization은 pyannote가 강력하지만 HF 토큰·약관 동의라는 마찰이 있다. 화자 <em>임베딩</em>(ECAPA-TDNN) + 단순 군집화는 정확도를 약간 양보하는 대신 <strong>토큰 0·즉시 사용</strong> — 로컬 단독 도구에 적합한 트레이드오프.</p>
+</div>
+<div class="card">
+<h3>③ 로컬·인프로세스 ML, 온디바이스 GPU</h3>
+<p>외부 <code>whisper.exe</code> 호출 대신 in-process 라이브러리, CUDA(블랙웰 RTX 5070 Ti)에서 INT8/FP16 추론, CPU 자동 폴백. 클라우드 API 없이 로컬에서 전사·요약·화자 구분·앨범까지 완결하는 "local-first AI" 흐름.</p>
+</div>
+<div class="card">
+<h3>④ 영속 작업 큐 + 단일소비 레인</h3>
+<p>GPU(전사)·CPU(앨범 ffmpeg)·ML(화자 구분)을 자원 특성별 레인으로 분리해 동시에 돌리되 각 레인은 1개씩 직렬. 서버 크래시 후 <code>running→interrupted</code> 회복·재시도. 로컬 장시간 ML 배치의 실무 패턴.</p>
+</div>
+
+<!-- ── 검증 ───────────────────────────────────────────────────────── -->
+<h2 id="verify">8. 검증</h2>
+
+<div class="card">
+<h3>스모크 테스트(격리 cwd/APPDATA, lifespan 미기동 → 모델 로드 없음)</h3>
+<ul>
+    <li>백엔드 컴파일 + 라우트 등록(<code>/api/diarize</code>, <code>/api/analyze/upload</code>, <code>/api/queue/scan-diarize</code> …)</li>
+    <li>업로드: 한글 파일 저장 / <code>.xyz</code> 거부 / spec에 diarize·vad·batched 반영</li>
+    <li>브라우즈: 폴더·파일 <code>diarized</code> 필드 / <code>화자✓</code></li>
+    <li>화자 구분 엔드포인트·스캔: 의존성 없을 때 400(안내) — <code>DiarizeError(not-installed)</code> 깔끔히 전파</li>
+    <li><strong>체이닝</strong>: diarize 실패해도 앨범 enqueue 보존 / <code>_enqueue_diarize</code> dedup / 전사물 게이팅</li>
+    <li><code>node --check app.js</code> 통과, <code>_parse_srt</code>/<code>_script_has_speakers</code> 단위 확인</li>
+</ul>
+<h3>적대적 리뷰(멀티에이전트)</h3>
+<p>5개 차원(동시성·엔진·보안·프론트·통합) 리뷰 → 발견 검증. 확정 4건 수정:
+큐 재시도 라벨 매핑(<code>trackKind</code>), <code>_enqueue_diarize</code> 전사물 검사 TOCTOU(잠금 안으로),
+<code>batch_size is None</code> 교정. 기각 4건.</p>
+</div>
+
+<h3>설치 · 실행</h3>
+<pre><code># 전사 + 요약 + 화자 구분 + 웹 (1회 설치, TLS 가로채기 환경)
+uv sync --extra web --extra transcribe --extra summarize --extra diarize --native-tls
+
+# 서버 실행
+uv run ycollector-server          # → http://127.0.0.1:8765/
+# 패널 ③: 📁 폴더 / 🔗 URL / ⬆ 파일 업로드 — "화자 구분" 체크 + "고급"에서 무음 분할·배치</code></pre>
+
+</div>
+</body>
+</html>

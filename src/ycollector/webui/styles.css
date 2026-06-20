@@ -343,8 +343,41 @@ footer a { color: var(--accent); text-decoration: none; }
 .an-spacer { flex: 1; }
 .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; text-decoration: none; }
 
-.an-board { display: flex; flex-direction: column; gap: 14px; }
+.an-board { display: flex; flex-direction: column; gap: 12px; }
 .an-board .empty { color: var(--fg-soft); font-size: 14px; text-align: center; padding: 24px 0; }
+
+/* 탐색기식 네비게이션 */
+.an-roots { display: flex; gap: 6px; flex-wrap: wrap; }
+.an-root-tab {
+    height: 30px; padding: 0 12px; cursor: pointer; font-size: 12.5px; font-weight: 600;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--bg); color: var(--fg-muted);
+}
+.an-root-tab:hover { color: var(--fg); border-color: var(--accent); }
+.an-root-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.an-crumbs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+    padding: 6px 8px; background: var(--bg-soft); border-radius: var(--radius-sm); }
+.an-crumb { border: none; background: transparent; cursor: pointer; padding: 3px 7px;
+    font-size: 13px; color: var(--accent); border-radius: 6px; }
+.an-crumb:hover { background: var(--bg); }
+.an-crumb.current { color: var(--fg); font-weight: 700; cursor: default; }
+.an-crumb.current:hover { background: transparent; }
+.an-crumb-sep { color: var(--fg-soft); font-size: 13px; }
+.an-up { margin-left: 8px; }
+.an-folder-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.an-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.an-folder-card {
+    display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 9px;
+    padding: 9px 12px; cursor: pointer; text-align: left;
+    background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+}
+.an-folder-card:hover { border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-soft)); }
+.an-fc-icon { grid-row: span 2; font-size: 20px; }
+.an-fc-name { grid-column: 2; font-size: 13px; font-weight: 600;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-fc-meta { grid-column: 2; font-size: 11px; color: var(--fg-soft); }
+.an-files-head { font-size: 12px; color: var(--fg-muted); font-weight: 600; margin-top: 2px; }
 .an-folder {
     background: var(--bg-soft); border: 1px solid var(--border-soft);
     border-radius: var(--radius-sm); padding: 12px 14px;
@@ -381,6 +414,24 @@ footer a { color: var(--accent); text-decoration: none; }
 }
 .job-card .kind.analyze { background: color-mix(in srgb, var(--accent-2) 14%, transparent); color: var(--accent-2); }
 .job-card .kind.album   { background: color-mix(in srgb, var(--accent-warn) 16%, transparent); color: var(--accent-warn); }
+.job-card .kind.diarize { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+
+/* 화자 구분됨 배지(파일 행) */
+.an-spk {
+    font-size: 11px; padding: 2px 10px; border-radius: 999px; font-weight: 700;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+/* 고급 옵션(무음 분할·배치) 접이식 */
+.an-adv { margin: 2px 0 12px; }
+.an-adv > summary {
+    cursor: pointer; font-size: 12.5px; color: var(--fg-soft);
+    padding: 4px 2px; user-select: none; width: fit-content;
+}
+.an-adv > summary:hover { color: var(--accent); }
+.an-adv[open] > summary { color: var(--accent); margin-bottom: 4px; }
+/* 업로드 모드 칩 리스트 — references 칩과 동일 룩 */
+#an-upload-list:empty { display: none; }
 
 /* ── markdown 뷰어 모달 ────────────────────────────────────── */
 .md-modal {

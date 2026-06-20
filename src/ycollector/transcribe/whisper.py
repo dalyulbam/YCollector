@@ -172,6 +172,7 @@ class TranscribeEngine:
         self.cfg = cfg
         self._log = on_log or (lambda _m: None)
 
+        self._bpipe = None  # BatchedInferencePipeline 지연 생성 캐시(배치 모드).
         _inject_truststore()
         self.device, self.compute_type = _auto_device_and_compute(cfg.device, cfg.compute_type)
         if self.device == "cuda":
@@ -200,6 +201,14 @@ class TranscribeEngine:
                     _friendly_model_error(exc, cfg.model), category="model-load"
                 ) from exc
 
+    def _batched_pipe(self):  # type: ignore[no-untyped-def]
+        """현재 모델을 감싸는 BatchedInferencePipeline 를 1회 생성(지연)."""
+        if self._bpipe is None:
+            from faster_whisper import BatchedInferencePipeline
+
+            self._bpipe = BatchedInferencePipeline(model=self.model)
+        return self._bpipe
+
     def transcribe(
         self,
         src: Path,
@@ -213,14 +222,35 @@ class TranscribeEngine:
         """
         if not src.is_file():
             raise TranscribeError(f"파일을 찾을 수 없습니다: {src}", category="no-input")
+        # VAD 세부(무음 분할 민감도) — 켜져 있을 때만 의미. dict 로 넘기면
+        # faster-whisper 가 VadOptions 로 병합한다(빠진 키는 기본값).
+        vad_params = {
+            "threshold": self.cfg.vad_threshold,
+            "min_silence_duration_ms": self.cfg.vad_min_silence_ms,
+            "speech_pad_ms": self.cfg.vad_speech_pad_ms,
+        }
         try:
-            seg_iter, info = self.model.transcribe(
-                str(src),
-                language=self.cfg.language,  # None = 자동 감지
-                task=self.cfg.task,
-                beam_size=self.cfg.beam_size,
-                vad_filter=self.cfg.vad_filter,
-            )
+            if self.cfg.batched:
+                # 배치 가속 — VAD 로 자른 구간을 묶어 배치 추론(VAD 강제 ON).
+                pipe = self._batched_pipe()
+                seg_iter, info = pipe.transcribe(
+                    str(src),
+                    language=self.cfg.language,  # None = 자동 감지
+                    task=self.cfg.task,
+                    beam_size=self.cfg.beam_size,
+                    batch_size=max(1, int(self.cfg.batch_size)),
+                    vad_filter=True,
+                    vad_parameters=vad_params,
+                )
+            else:
+                seg_iter, info = self.model.transcribe(
+                    str(src),
+                    language=self.cfg.language,  # None = 자동 감지
+                    task=self.cfg.task,
+                    beam_size=self.cfg.beam_size,
+                    vad_filter=self.cfg.vad_filter,
+                    vad_parameters=vad_params,
+                )
             collected: list[Segment] = []
             for seg in seg_iter:
                 s = Segment(start=float(seg.start), end=float(seg.end), text=seg.text)
@@ -241,6 +271,7 @@ class TranscribeEngine:
                 self.device, self.compute_type = "cpu", "int8"
                 try:
                     self.model = WhisperModel(self.cfg.model, device="cpu", compute_type="int8")
+                    self._bpipe = None  # 모델 교체 — 배치 파이프 캐시 무효화.
                 except Exception as exc2:
                     raise TranscribeError(
                         _friendly_model_error(exc2, self.cfg.model), category="model-load"

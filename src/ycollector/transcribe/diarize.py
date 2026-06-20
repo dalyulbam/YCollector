@@ -25,9 +25,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -208,11 +210,44 @@ class Diarizer:
         return _relabel_by_first_appearance(seg_cluster)
 
 
-# ── 후처리: _analysis/*.json → 화자 라벨 script.md 재작성 ───────────────────
+# ── 후처리: _analysis/*.json|*.srt → 화자 라벨 script.md 재작성 ──────────────
 def _load_segments(json_path: Path) -> tuple[list[_JSeg], str, float]:
     doc = json.loads(json_path.read_text(encoding="utf-8"))
     segs = [_JSeg(float(s["start"]), float(s["end"]), s.get("text", "")) for s in doc.get("segments", [])]
     return segs, doc.get("language", "?"), float(doc.get("duration", 0.0))
+
+
+_SRT_TS_RE = re.compile(
+    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})"
+)
+
+
+def _parse_srt(text: str) -> list[_JSeg]:
+    """SRT/VTT 텍스트 → 세그먼트. analyze 산출물(.srt)에서 화자분리용 타임코드 복원."""
+    segs: list[_JSeg] = []
+    for block in re.split(r"\r?\n\s*\r?\n", text.strip()):
+        lines = [ln for ln in block.splitlines() if ln.strip()]
+        ts_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if ts_idx is None:
+            continue
+        m = _SRT_TS_RE.search(lines[ts_idx])
+        if not m:
+            continue
+        g = [int(x) for x in m.groups()]
+        start = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000.0
+        end = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000.0
+        txt = " ".join(lines[ts_idx + 1:]).strip()
+        segs.append(_JSeg(start, end, txt))
+    return segs
+
+
+def _load_transcript(kind: str, path: Path) -> tuple[list[_JSeg], str, float]:
+    """전사 산출물을 세그먼트로 로드. json=메타 포함, srt=타임코드만(언어 '?')."""
+    if kind == "json":
+        return _load_segments(path)
+    segs = _parse_srt(path.read_text(encoding="utf-8", errors="replace"))
+    duration = max((s.end for s in segs), default=0.0)
+    return segs, "?", duration
 
 
 def _find_audio(stem: str, audio_dir: Path) -> Path | None:
@@ -221,6 +256,83 @@ def _find_audio(stem: str, audio_dir: Path) -> Path | None:
         if cand.is_file():
             return cand
     return None
+
+
+def diarize_folder(
+    analysis_dir: Path,
+    audio_dir: Path | None = None,
+    *,
+    num_speakers: int | None = None,
+    threshold: float = 0.9,
+    device: str | None = None,
+    on_log: Callable[[str], None] | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
+) -> dict[str, object]:
+    """폴더의 전사 산출물(_analysis)에 화자 구분을 붙여 ``<stem>.script.md`` 재작성.
+
+    전사 파일은 ``*.json``(메타 포함) 우선, 없으면 ``*.srt`` 를 읽는다. 각 stem 의
+    원본 오디오를 ``audio_dir``(기본: analysis_dir 의 상위)에서 찾아 ECAPA 임베딩
+    클러스터링으로 화자를 구분한다. ``Diarizer`` 생성이 실패하면(의존성/모델)
+    :class:`DiarizeError` 를 그대로 올린다(호출부가 설치 안내). 반환: 처리 통계.
+    """
+    from .report import render_script
+
+    analysis_dir = Path(analysis_dir)
+    audio_dir = Path(audio_dir) if audio_dir else analysis_dir.parent
+    log = on_log or (lambda _m: None)
+
+    trans: dict[str, tuple[str, Path]] = {}
+    for j in sorted(analysis_dir.glob("*.json")):
+        trans[j.stem] = ("json", j)
+    for s in sorted(analysis_dir.glob("*.srt")):
+        trans.setdefault(s.stem, ("srt", s))
+    stems = sorted(trans)
+    if not stems:
+        return {"total": 0, "ok": 0, "failed": 0, "speakers": {}}
+
+    diarizer = Diarizer(device=device, on_log=log)  # 미설치/로드 실패 시 DiarizeError.
+
+    ok = 0
+    failed = 0
+    speakers_out: dict[str, int] = {}
+    total = len(stems)
+    for i, stem in enumerate(stems):
+        if on_progress is not None:
+            on_progress(i, total, stem)
+        kind, tpath = trans[stem]
+        audio = _find_audio(stem, audio_dir)
+        if audio is None:
+            failed += 1
+            log(f"[{stem}] 원본 오디오를 못 찾음 — 건너뜀")
+            continue
+        try:
+            segs, language, duration = _load_transcript(kind, tpath)
+            if not segs:
+                failed += 1
+                log(f"[{stem}] 전사 세그먼트가 비어 있음 — 건너뜀")
+                continue
+            spk = diarizer.diarize(
+                audio, segs, num_speakers=num_speakers, threshold=threshold,
+                cache_path=analysis_dir / f"{stem}.emb.npz",
+            )
+        except DiarizeError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 한 파일 실패가 폴더 전체를 막지 않게.
+            failed += 1
+            log(f"[{stem}] 화자분리 실패: {exc}")
+            continue
+        n_spk = len(set(spk))
+        out = analysis_dir / f"{stem}.script.md"
+        tmp = analysis_dir / f"{stem}.script.md.tmp"
+        tmp.write_text(
+            render_script(segs, title=stem, language=language, duration=duration, speakers=spk),
+            encoding="utf-8",
+        )
+        tmp.replace(out)  # 원자적 교체 — 앨범 레인이 동시에 읽어도 깨진 파일을 안 보게.
+        speakers_out[stem] = n_spk
+        ok += 1
+        log(f"[{stem}] 화자 {n_spk}명 구분 → {out.name}")
+    return {"total": total, "ok": ok, "failed": failed, "speakers": speakers_out}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -248,48 +360,28 @@ def main(argv: list[str] | None = None) -> int:
 
     analysis_dir: Path = args.analysis_dir
     audio_dir: Path = args.audio_dir or analysis_dir.parent
-    jsons = sorted(analysis_dir.glob("*.json"))
-    if not jsons:
-        print(f"[안내] {analysis_dir} 에 *.json 전사록이 없습니다.", file=sys.stderr)
-        return 0
+
+    def _progress(i: int, n: int, stem: str) -> None:
+        print(f"\n[{i + 1}/{n}] {stem}", file=sys.stderr)
 
     try:
-        diarizer = Diarizer(on_log=lambda m: print(f"[i] {m}", file=sys.stderr))
+        res = diarize_folder(
+            analysis_dir, audio_dir,
+            num_speakers=args.num_speakers, threshold=args.threshold,
+            on_log=lambda m: print(f"[i] {m}", file=sys.stderr),
+            on_progress=_progress,
+        )
     except DiarizeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 10
 
-    from .report import render_script
-
-    failed = 0
-    for i, jp in enumerate(jsons, 1):
-        stem = jp.stem
-        audio = _find_audio(stem, audio_dir)
-        print(f"\n[{i}/{len(jsons)}] {stem}", file=sys.stderr)
-        if audio is None:
-            print(f"  ✗ 원본 오디오를 못 찾음(audio-dir={audio_dir})", file=sys.stderr)
-            failed += 1
-            continue
-        segs, language, duration = _load_segments(jp)
-        try:
-            speakers = diarizer.diarize(
-                audio, segs, num_speakers=args.num_speakers, threshold=args.threshold,
-                cache_path=analysis_dir / f"{stem}.emb.npz",
-            )
-        except DiarizeError as exc:
-            print(f"  ✗ 화자분리 실패 [{exc.category}] {exc}", file=sys.stderr)
-            failed += 1
-            continue
-        n_spk = len(set(speakers))
-        out = analysis_dir / f"{stem}.script.md"
-        out.write_text(
-            render_script(segs, title=stem, language=language, duration=duration, speakers=speakers),
-            encoding="utf-8",
-        )
-        print(f"  ✓ 화자 {n_spk}명 구분 → {out.name}", file=sys.stderr)
-
-    print(f"\n[완료] {len(jsons) - failed}/{len(jsons)} 화자분리 완료.", file=sys.stderr)
-    return 0 if not failed else 1
+    total = int(res.get("total", 0))  # type: ignore[arg-type]
+    ok = int(res.get("ok", 0))  # type: ignore[arg-type]
+    if not total:
+        print(f"[안내] {analysis_dir} 에 *.json|*.srt 전사록이 없습니다.", file=sys.stderr)
+        return 0
+    print(f"\n[완료] {ok}/{total} 화자분리 완료.", file=sys.stderr)
+    return 0 if ok == total else 1
 
 
 if __name__ == "__main__":

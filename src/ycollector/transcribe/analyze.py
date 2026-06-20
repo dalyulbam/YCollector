@@ -96,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
         compute_type=args.compute_type,
         beam_size=args.beam_size,
         vad_filter=not args.no_vad,
+        vad_min_silence_ms=cfg.vad_min_silence_ms,
+        vad_speech_pad_ms=cfg.vad_speech_pad_ms,
+        vad_threshold=cfg.vad_threshold,
+        batched=cfg.batched,
+        batch_size=cfg.batch_size,
     )
 
     # ── 엔진/요약기 로드 (지연 import) ──────────────────────────────────────

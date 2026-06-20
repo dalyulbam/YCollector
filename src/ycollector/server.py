@@ -20,6 +20,7 @@ uv run ycollector-server
     GET  /api/jobs               → 전체 작업 목록
     GET  /api/library            → manifest 전체
     GET  /api/analysis/overview  → 다운로드 루트 스캔(미디어 + _analysis/_album 산출물)
+    GET  /api/analysis/browse    → ?root=&rel= 탐색기식 단일 폴더 조회(보드 네비게이션)
     POST /api/analyze            → 파일 모드 {"root","files":[...]} 또는
                                     URL 모드 {"url","playlist_all"?} (+language/summarize/budget) → job_id
     POST /api/album              → {"root", "dir", "frames"?} → job_id (장면 앨범북 생성)
@@ -483,6 +484,17 @@ def _read_root() -> Path:
     return Path.cwd() / _READ_DIRNAME
 
 
+# 웹에서 업로드한 음원·영상을 둘 폴더(전사 보드 'read' 루트 안 — 보드에서 보이게).
+_UPLOAD_DIRNAME = "업로드"
+
+
+def _safe_upload_name(name: str) -> str:
+    """업로드 파일명 정리 — 경로 구분자/예약문자 제거(한글은 보존). 길이 제한."""
+    name = (name or "").replace("\\", "/").split("/")[-1]
+    name = re.sub(r'[:*?"<>|\x00-\x1f]', "_", name).strip().strip(".")
+    return name[:120] or "audio"
+
+
 def _media_roots() -> list[tuple[str, Path]]:
     """분석 보드가 스캔/서빙할 수 있는 루트 폴더 목록 ``[(키, 절대경로)]``.
 
@@ -534,6 +546,112 @@ def _safe_join(root: Path, rel: str) -> Path | None:
     except (OSError, ValueError):
         return None
     return target
+
+
+def _diarize_available() -> bool:
+    """화자 구분 의존성(speechbrain/torch/sklearn/soundfile) 설치 여부 — 무거운 import 없이."""
+    import importlib.util as u
+
+    return all(u.find_spec(m) is not None for m in ("speechbrain", "torch", "sklearn", "soundfile"))
+
+
+def _script_has_speakers(p: Path) -> bool:
+    """``<stem>.script.md`` 가 화자 라벨(화자 구분)을 포함하는지 헤더로 싸게 판별.
+
+    render_script 는 머리말에 '(화자 구분: N명 …)' 또는 '(화자 구분 없음 …)' 을 쓴다.
+    앞부분만 읽어 판단(폴더 큰 경우 전체 읽기 회피).
+    """
+    try:
+        head = p.read_text(encoding="utf-8", errors="replace")[:400]
+    except OSError:
+        return False
+    return "화자 구분 없음" not in head and "화자 구분:" in head
+
+
+def _browse_dir(root_key: str, rel: str) -> dict[str, Any]:
+    """탐색기식 단일 디렉터리 조회 — 그 폴더의 하위 폴더 + 미디어 파일 + 앨범 현황.
+
+    보드를 평면으로 쏟지 않고 경로를 따라 한 폴더씩 들어가 보기 위함.
+    """
+    from ycollector.transcribe.config import MEDIA_EXTENSIONS
+
+    roots = _media_roots()
+    root_list = [{"key": k, "name": p.name or k} for k, p in roots]
+    if not roots:
+        return {"roots": [], "root": "", "rel": "", "crumbs": [],
+                "folders": [], "items": [], "summarized": 0, "album": None, "standalones": []}
+
+    rkey = root_key if _root_by_key(root_key) else roots[0][0]
+    root = _root_by_key(rkey)
+    assert root is not None
+
+    cur = root if rel in ("", ".") else _safe_join(root, rel)
+    if cur is None or not cur.is_dir():
+        cur, rel = root, ""
+
+    try:
+        children = sorted(cur.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        children = []
+
+    analysis_dir = cur / _ANALYSIS_DIRNAME
+    folders: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+    for c in children:
+        if c.is_dir() and not c.name.startswith((".", "_")):
+            try:
+                gc = list(c.iterdir())
+            except OSError:
+                gc = []
+            ana = c / _ANALYSIS_DIRNAME
+            media = [x for x in gc if x.is_file() and x.suffix.lower() in MEDIA_EXTENSIONS]
+            analyzed_scripts = [s for s in (ana / f"{x.stem}.script.md" for x in media) if s.is_file()]
+            folders.append({
+                "name": c.name,
+                "rel": c.relative_to(root).as_posix(),
+                "media": len(media),
+                "subdirs": sum(1 for x in gc if x.is_dir() and not x.name.startswith((".", "_"))),
+                "analyzed": len(analyzed_scripts),
+                "diarized": sum(1 for s in analyzed_scripts if _script_has_speakers(s)),
+                "album": (c / _ALBUM_DIRNAME / "index.html").is_file(),
+            })
+        elif c.is_file() and c.suffix.lower() in MEDIA_EXTENSIONS:
+            try:
+                size = c.stat().st_size
+            except OSError:
+                continue
+            summary = analysis_dir / f"{c.stem}.summary.md"
+            script = analysis_dir / f"{c.stem}.script.md"
+            script_exists = script.is_file()
+            items.append({
+                "name": c.name,
+                "rel": c.relative_to(root).as_posix(),
+                "bytes": size,
+                "summary": summary.relative_to(root).as_posix() if summary.is_file() else None,
+                "script": script.relative_to(root).as_posix() if script_exists else None,
+                "diarized": script_exists and _script_has_speakers(script),
+            })
+
+    album_index = cur / _ALBUM_DIRNAME / "index.html"
+    standalones = [c.relative_to(root).as_posix() for c in children
+                   if c.is_file() and c.name.lower().endswith("_standalone.html")]
+
+    crumbs = [{"rel": "", "name": root.name or rkey}]
+    if rel:
+        acc: list[str] = []
+        for part in rel.split("/"):
+            acc.append(part)
+            crumbs.append({"rel": "/".join(acc), "name": part})
+
+    return {
+        "roots": root_list, "root": rkey, "rel": rel, "crumbs": crumbs,
+        "folders": folders, "items": items,
+        "summarized": sum(1 for it in items if it["summary"]),
+        "transcribed": sum(1 for it in items if it["script"]),
+        "diarized": sum(1 for it in items if it.get("diarized")),
+        "album": album_index.relative_to(root).as_posix() if album_index.is_file() else None,
+        "standalones": standalones,
+    }
 
 
 def _scan_overview() -> dict[str, Any]:
@@ -603,7 +721,9 @@ def _scan_overview() -> dict[str, Any]:
 def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
                  do_summarize: bool, summary_model: str | None, budget_usd: float,
                  whisper_model: str | None, skip_existing: bool = False,
-                 make_album: bool = False) -> None:
+                 make_album: bool = False, make_diarize: bool = False,
+                 vad_overrides: dict[str, Any] | None = None,
+                 batched: bool | None = None, batch_size: int | None = None) -> None:
     # skip_existing: 이미 산출물이 있는 파일은 건너뛴다(큐 재시도/폴더 스캔 시).
     # 전사(.script.md)가 있고, 요약을 안 하거나 요약(.summary.md)까지 있으면 완료로 본다.
     if skip_existing:
@@ -626,6 +746,7 @@ def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
     from ycollector.transcribe.config import TranscribeConfig, load_transcribe_config
 
     base_cfg, _src = load_transcribe_config(None)
+    vov = vad_overrides or {}
     run_cfg = TranscribeConfig(
         model=whisper_model or base_cfg.model,
         language=language,
@@ -636,6 +757,12 @@ def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
         compute_type=base_cfg.compute_type,
         beam_size=base_cfg.beam_size,
         vad_filter=base_cfg.vad_filter,
+        # 무음 분할 민감도 — 요청 override 있으면 그것, 없으면 settings.ini 기본.
+        vad_min_silence_ms=int(vov.get("min_silence_ms", base_cfg.vad_min_silence_ms)),
+        vad_speech_pad_ms=int(vov.get("speech_pad_ms", base_cfg.vad_speech_pad_ms)),
+        vad_threshold=float(vov.get("threshold", base_cfg.vad_threshold)),
+        batched=base_cfg.batched if batched is None else bool(batched),
+        batch_size=base_cfg.batch_size if batch_size is None else int(batch_size),
     )
 
     job.status = "loading-model"
@@ -740,15 +867,29 @@ def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
     if failed:
         job.error = {"category": "partial",
                      "message": f"부분 실패 {len(failed)}/{n}: " + " / ".join(failed)[:300]}
-    # 정방향: 전사·요약이 끝난 폴더마다 앨범 작업을 큐(앨범 레인)에 넣는다.
-    # 앨범은 ffmpeg(CPU)라 전사(GPU)와 별도 레인에서 동시 진행된다.
-    if make_album:
-        done_folders = sorted(
-            {src.parent for src in files
-             if (src.parent / _ANALYSIS_DIRNAME / f"{src.stem}.summary.md").is_file()},
-            key=str,
-        )
-        for folder in done_folders:
+    # 정방향 체이닝: 전사 → (화자 구분) → 앨범.
+    #   * 화자 구분 ON 이면 diarize 레인에 넣고, 앨범 요청은 diarize 작업이
+    #     끝난 뒤(화자 라벨 반영된 script.md 로) 이어서 enqueue 한다(make_album 전달).
+    #   * 화자 구분 OFF 면 종전대로 요약된 폴더를 곧장 앨범 레인에 넣는다.
+    # diarize/album 은 전사(GPU)와 별도 레인이라 다음 전사를 막지 않는다.
+    script_folders = sorted(
+        {src.parent for src in files
+         if (src.parent / _ANALYSIS_DIRNAME / f"{src.stem}.script.md").is_file()},
+        key=str,
+    )
+    summary_folders = sorted(
+        {src.parent for src in files
+         if (src.parent / _ANALYSIS_DIRNAME / f"{src.stem}.summary.md").is_file()},
+        key=str,
+    )
+    if make_diarize:
+        for folder in script_folders:
+            try:
+                _enqueue_diarize(folder, make_album=make_album)
+            except Exception:  # diarize enqueue 실패가 전사 완료를 막지 않게.
+                pass
+    elif make_album:
+        for folder in summary_folders:
             try:
                 _enqueue_album(folder)
             except Exception:  # 앨범 enqueue 실패가 전사 완료를 막지 않게.
@@ -854,7 +995,9 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
 def _run_url_analyze(job: _JobRow, url: str, *, playlist_all: bool,
                      language: str | None, do_summarize: bool,
                      summary_model: str | None, budget_usd: float,
-                     whisper_model: str | None, make_album: bool = False) -> None:
+                     whisper_model: str | None, make_album: bool = False,
+                     make_diarize: bool = False, vad_overrides: dict[str, Any] | None = None,
+                     batched: bool | None = None, batch_size: int | None = None) -> None:
     from ycollector.engine import DownloadError
 
     try:
@@ -878,10 +1021,12 @@ def _run_url_analyze(job: _JobRow, url: str, *, playlist_all: bool,
         return
 
     job.emit_sync("progress", message=f"다운로드 완료 {len(files)}개 — 전사 시작")
-    # 이어서 전사+요약 — 완료 시 _run_analyze 가 done 을 쏘고 앨범을 enqueue 한다.
+    # 이어서 전사+요약 — 완료 시 _run_analyze 가 done 을 쏘고 (화자 구분/)앨범을 enqueue 한다.
     _run_analyze(job, files, language=language, do_summarize=do_summarize,
                  summary_model=summary_model, budget_usd=budget_usd,
-                 whisper_model=whisper_model, make_album=make_album)
+                 whisper_model=whisper_model, make_album=make_album,
+                 make_diarize=make_diarize, vad_overrides=vad_overrides,
+                 batched=batched, batch_size=batch_size)
 
 
 # ── album 워커 (ffmpeg 장면 캡쳐 + HTML 앨범북) ─────────────────────────────
@@ -1012,6 +1157,123 @@ def _enqueue_album(folder: Path, frames: int = 3) -> str | None:
     return jid
 
 
+# ── diarize 워커 (화자 구분 — speechbrain ECAPA, _analysis/script.md 재작성) ──
+def _run_diarize(job: _JobRow, folder: Path, *, num_speakers: int | None = None,
+                 threshold: float = 0.9) -> None:
+    job.status = "diarizing"
+    job.emit_sync("status", status="diarizing",
+                  message="화자 임베딩(ECAPA) 로드 + 화자 구분 중 (최초 1회 모델 다운로드)")
+    from ycollector.transcribe.diarize import DiarizeError, diarize_folder
+
+    analysis_dir = folder / _ANALYSIS_DIRNAME
+
+    def on_prog(i: int, n: int, stem: str) -> None:
+        job.progress = (i / n) if n else 0.0
+        job.emit_sync("progress", progress=job.progress, status="diarizing",
+                      message=f"[{i + 1}/{n}] 화자 구분 · {stem[:48]}")
+
+    try:
+        res = diarize_folder(
+            analysis_dir, folder, num_speakers=num_speakers, threshold=threshold,
+            on_log=lambda m: job.emit_sync("progress", message=m), on_progress=on_prog,
+        )
+    except DiarizeError as exc:
+        job.status = "failed"
+        job.error = {"category": exc.category, "message": exc.message}
+        job.emit_sync("error", category=exc.category, message=exc.message)
+        return
+    except Exception as exc:
+        job.status = "failed"
+        job.error = {"category": "internal", "message": str(exc)}
+        job.emit_sync("error", category="internal", message=str(exc))
+        return
+
+    total = int(res.get("total", 0))
+    ok = int(res.get("ok", 0))
+    if total > 0 and ok == 0:
+        job.status = "failed"
+        job.error = {"category": "diarize",
+                     "message": f"화자 구분 0/{total} — 원본 오디오를 못 찾았거나 전사가 비어 있음."}
+        job.emit_sync("error", category="diarize", message=job.error["message"])
+        return
+    job.status = "done"
+    job.progress = 1.0
+    job.out_path = str(analysis_dir)
+    job.message = f"화자 구분 {ok}/{total}"
+    job.emit_sync("done", out_path=job.out_path, message=job.message)
+
+
+def _run_diarize_task(task: dict[str, Any]) -> None:
+    """큐의 diarize 작업 — spec {root, dir, make_album?, num_speakers?, threshold?}."""
+    spec = task.get("spec") or {}
+    jid = task.get("job_id") or uuid.uuid4().hex[:12]
+    row = _state.jobs.get(jid) or _JobRow(jid, "diarize", task.get("title") or jid)
+    _remember_job(jid, row)
+    if task.get("job_id") != jid:
+        _queue_update(task["id"], job_id=jid)
+    root = _root_by_key(str(spec.get("root") or ""))
+    folder = None
+    if root is not None:
+        rel = str(spec.get("dir") or "").strip()
+        folder = root if rel in ("", ".") else _safe_join(root, rel)
+    if folder is None or not folder.is_dir():
+        row.status = "failed"
+        row.error = {"category": "diarize", "message": "대상 폴더 없음(이동·삭제됨)."}
+        row.emit_sync("error", category="diarize", message=row.error["message"])
+    else:
+        try:
+            _run_diarize(row, folder, num_speakers=spec.get("num_speakers"),
+                         threshold=float(spec.get("threshold") or 0.9))
+        except Exception as exc:
+            row.status = "failed"
+            row.error = {"category": "internal", "message": str(exc)}
+            row.emit_sync("error", category="internal", message=str(exc))
+    _queue_outcome(task["id"], row)
+    # 화자 구분 후(성공/실패 무관) 앨범 요청이 있으면 이어서 앨범 enqueue —
+    # diarize 가 미설치로 실패해도 앨범 자동화는 잃지 않게 한다.
+    if spec.get("make_album") and folder is not None:
+        try:
+            _enqueue_album(folder)
+        except Exception:
+            pass
+
+
+def _enqueue_diarize(folder: Path, *, make_album: bool = False,
+                     num_speakers: int | None = None, threshold: float = 0.9) -> str | None:
+    """폴더에 전사물이 있으면 화자 구분 작업을 큐(diarize 레인)에 추가하고 job_id 반환.
+
+    같은 폴더의 diarize 작업이 이미 pending/running 이면 그 job_id 를 돌려준다(중복
+    방지). 전사물(.script.md/.srt/.json) 없거나 루트 밖이면 None.
+    """
+    ad = folder / _ANALYSIS_DIRNAME
+    ref = _root_ref_for(folder)
+    if ref is None:
+        return None
+    key, rel = ref
+    with _QUEUE_LOCK:  # 전사물 검사 + 중복 검사 + 추가를 한 잠금 안에서(TOCTOU 방지).
+        if not (any(ad.glob("*.script.md")) or any(ad.glob("*.srt")) or any(ad.glob("*.json"))):
+            return None
+        tasks = _queue_read()
+        for t in tasks:
+            spec = t.get("spec") or {}
+            if (t.get("kind") == "diarize" and t.get("status") in ("pending", "running")
+                    and spec.get("root") == key and spec.get("dir") == rel):
+                return t.get("job_id")
+        jid = uuid.uuid4().hex[:12]
+        row = _JobRow(jid, "diarize", folder.name or key)
+        row.status = "queued"
+        _remember_job(jid, row)
+        spec = {"root": key, "dir": rel, "make_album": bool(make_album)}
+        if num_speakers:
+            spec["num_speakers"] = int(num_speakers)
+        spec["threshold"] = float(threshold)
+        tasks.append(_new_task("diarize", f"화자 구분 — {folder.name or key}", spec,
+                               status="pending", job_id=jid))
+        _queue_write(tasks)
+    _diarize_lane_wake()
+    return jid
+
+
 # ── 영속 작업 큐 (다운로드/전사 — 중단되면 리스트로 관리·재시도) ────────────
 # queue.json 에 작업을 영속 저장한다. 다운로드는 즉시 실행하되 추적하고(실패·
 # 중단 시 리스트에 남아 재시도 가능), 전사(analyze)는 CPU 가 무거워 단일 레인에서
@@ -1024,6 +1286,7 @@ def _enqueue_album(folder: Path, frames: int = 3) -> str | None:
 _QUEUE_LOCK = threading.RLock()
 _ANALYZE_CV = threading.Condition()  # 전사 레인 wake 신호.
 _ALBUM_CV = threading.Condition()    # 앨범 레인 wake 신호(ffmpeg=CPU, 전사와 동시 진행).
+_DIARIZE_CV = threading.Condition()  # 화자 구분 레인 wake 신호(ECAPA, 전사와 동시 진행).
 _QUEUE_STATUSES = ("pending", "running", "done", "failed", "interrupted")
 
 
@@ -1122,6 +1385,8 @@ def _run_analyze_task(task: dict[str, Any]) -> None:
                 language=spec.get("language"), do_summarize=bool(spec.get("summarize", True)),
                 summary_model=None, budget_usd=float(spec.get("budget_usd") or 5.0),
                 whisper_model=None, make_album=bool(spec.get("make_album", True)),
+                make_diarize=bool(spec.get("diarize")), vad_overrides=spec.get("vad"),
+                batched=spec.get("batched"), batch_size=spec.get("batch_size"),
             )
         else:  # analyze-files
             root = _root_by_key(str(spec.get("root") or ""))
@@ -1139,6 +1404,8 @@ def _run_analyze_task(task: dict[str, Any]) -> None:
                 budget_usd=float(spec.get("budget_usd") or 5.0), whisper_model=None,
                 skip_existing=bool(spec.get("skip_existing")),
                 make_album=bool(spec.get("make_album", True)),
+                make_diarize=bool(spec.get("diarize")), vad_overrides=spec.get("vad"),
+                batched=spec.get("batched"), batch_size=spec.get("batch_size"),
             )
     except Exception as exc:
         row.status = "failed"
@@ -1189,6 +1456,10 @@ def _is_album(t: dict[str, Any]) -> bool:
     return t.get("kind") == "album"
 
 
+def _is_diarize(t: dict[str, Any]) -> bool:
+    return t.get("kind") == "diarize"
+
+
 def _analyze_lane_wake() -> None:
     with _ANALYZE_CV:
         _ANALYZE_CV.notify_all()
@@ -1197,6 +1468,11 @@ def _analyze_lane_wake() -> None:
 def _album_lane_wake() -> None:
     with _ALBUM_CV:
         _ALBUM_CV.notify_all()
+
+
+def _diarize_lane_wake() -> None:
+    with _DIARIZE_CV:
+        _DIARIZE_CV.notify_all()
 
 
 def _queue_recover() -> None:
@@ -1248,6 +1524,11 @@ def _queue_requeue(task_id: str) -> str | None:
         row.status = "queued"
         _remember_job(jid, row)
         _album_lane_wake()
+    elif kind == "diarize":
+        row = _JobRow(jid, "diarize", title)
+        row.status = "queued"
+        _remember_job(jid, row)
+        _diarize_lane_wake()
     else:  # analyze-url / analyze-files
         row = _JobRow(jid, "analyze", title)
         row.status = "queued"
@@ -1291,6 +1572,8 @@ def _build_app():  # type: ignore[no-untyped-def]
                              daemon=True, name="analyze-lane").start()
             threading.Thread(target=lambda: _lane_loop(_is_album, _ALBUM_CV, _run_album_task),
                              daemon=True, name="album-lane").start()
+            threading.Thread(target=lambda: _lane_loop(_is_diarize, _DIARIZE_CV, _run_diarize_task),
+                             daemon=True, name="diarize-lane").start()
         yield
         _state.loop = None
 
@@ -1327,6 +1610,7 @@ def _build_app():  # type: ignore[no-untyped-def]
             "cookies_present": is_cookies_present(),
             "cookies_path": str(default_cookies_path()),
             "library": str(_library_path()),
+            "diarize_available": _diarize_available(),
         }
 
     @app.get("/api/settings")
@@ -1487,6 +1771,11 @@ def _build_app():  # type: ignore[no-untyped-def]
         """다운로드 루트들을 스캔해 미디어 + 분석 산출물 현황을 돌려준다."""
         return _scan_overview()
 
+    @app.get("/api/analysis/browse")
+    def analysis_browse(root: str = "", rel: str = "") -> dict[str, Any]:
+        """탐색기식 단일 폴더 조회(하위 폴더 + 파일 + 앨범). 보드 네비게이션용."""
+        return _browse_dir(root, rel)
+
     @app.post("/api/analyze")
     def start_analyze(payload: dict[str, Any]) -> dict[str, Any]:
         """전사·요약 시작. 두 입력 모드:
@@ -1518,6 +1807,28 @@ def _build_app():  # type: ignore[no-untyped-def]
             "whisper_model": clean_model(payload.get("whisper_model")),
         }
 
+        # 화자 구분 / VAD(무음 분할) / 배치 가속 — 전사 후 파이프라인·엔진 옵션.
+        vad_clean: dict[str, Any] = {}
+        vad_in = payload.get("vad") or {}
+        if isinstance(vad_in, dict):
+            for k_dst, caster in (("min_silence_ms", int), ("speech_pad_ms", int), ("threshold", float)):
+                if vad_in.get(k_dst) is not None:
+                    try:
+                        vad_clean[k_dst] = caster(vad_in[k_dst])
+                    except (TypeError, ValueError):
+                        pass
+        b_in = payload.get("batched")
+        try:
+            bs_in = int(payload.get("batch_size")) if payload.get("batch_size") else None
+        except (TypeError, ValueError):
+            bs_in = None
+        extra: dict[str, Any] = {
+            "diarize": bool(payload.get("diarize")),
+            "vad": vad_clean or None,
+            "batched": None if b_in is None else bool(b_in),
+            "batch_size": bs_in,
+        }
+
         # 전사는 CPU 가 무거워 큐의 단일 레인에서 순차 처리한다. 여기선 작업을
         # 'pending' 으로 큐에 넣고 즉시 job_id 를 돌려준다(UI 는 'queued' 로 표시).
         # ── URL 모드: 영상(들) 다운로드 → 전사 ──
@@ -1530,7 +1841,7 @@ def _build_app():  # type: ignore[no-untyped-def]
             _remember_job(jid, row)
             spec = {"url": url, "playlist_all": bool(payload.get("playlist_all")),
                     "language": kwargs["language"], "summarize": kwargs["do_summarize"],
-                    "budget_usd": kwargs["budget_usd"]}
+                    "budget_usd": kwargs["budget_usd"], **extra}
             _queue_add(_new_task("analyze-url", label, spec, status="pending", job_id=jid))
             _analyze_lane_wake()
             return {"job_id": jid}
@@ -1557,10 +1868,49 @@ def _build_app():  # type: ignore[no-untyped-def]
         _remember_job(jid, row)
         spec = {"root": str(payload.get("root")), "files": list(rels),
                 "language": kwargs["language"], "summarize": kwargs["do_summarize"],
-                "budget_usd": kwargs["budget_usd"]}
+                "budget_usd": kwargs["budget_usd"], **extra}
         _queue_add(_new_task("analyze-files", label, spec, status="pending", job_id=jid))
         _analyze_lane_wake()
         return {"job_id": jid}
+
+    @app.post("/api/analyze/upload")
+    async def analyze_upload(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+        """로컬 음원·영상 업로드 → download2read/업로드/ 에 저장 → rel 목록 반환.
+
+        반환한 {root:"read", saved:[{rel,...}]} 을 그대로 /api/analyze 에 넣어
+        전사·요약(+화자 구분/앨범)을 큐에 건다. 미디어 확장자만 허용.
+        """
+        from ycollector.transcribe.config import MEDIA_EXTENSIONS
+
+        base = _read_root() / _UPLOAD_DIRNAME
+        base.mkdir(parents=True, exist_ok=True)
+        saved: list[dict[str, Any]] = []
+        rejected: list[dict[str, str]] = []
+        for file in files:
+            name = _safe_upload_name(file.filename or "audio")
+            ext = Path(name).suffix.lower()
+            if ext not in MEDIA_EXTENSIONS:
+                rejected.append({"name": file.filename or name,
+                                 "reason": f"지원하지 않는 형식({ext or '확장자 없음'})"})
+                continue
+            dest = base / name
+            if dest.exists():
+                dest = base / f"{Path(name).stem}_{uuid.uuid4().hex[:4]}{ext}"
+            size = 0
+            try:
+                with dest.open("wb") as f:
+                    while True:
+                        chunk = await file.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        size += len(chunk)
+            except OSError as exc:
+                rejected.append({"name": file.filename or name, "reason": f"저장 실패: {exc}"})
+                continue
+            saved.append({"rel": dest.relative_to(_read_root()).as_posix(),
+                          "name": dest.name, "bytes": size})
+        return {"root": "read", "folder": _UPLOAD_DIRNAME, "saved": saved, "rejected": rejected}
 
     @app.post("/api/album")
     def start_album(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1584,6 +1934,33 @@ def _build_app():  # type: ignore[no-untyped-def]
         jid = _enqueue_album(folder, frames)
         if jid is None:
             raise HTTPException(400, "앨범 작업 추가 실패 (요약/루트 확인)")
+        return {"job_id": jid}
+
+    @app.post("/api/diarize")
+    def start_diarize(payload: dict[str, Any]) -> dict[str, Any]:
+        """폴더의 전사물에 화자 구분을 붙여 script.md 재작성(화자 구분 레인)."""
+        if not _diarize_available():
+            raise HTTPException(400, "화자 구분 의존성이 없습니다 — "
+                                     "uv sync --extra diarize --native-tls 로 설치하세요.")
+        root = _root_by_key(str(payload.get("root") or ""))
+        if root is None:
+            raise HTTPException(400, "root 가 올바르지 않음")
+        rel = str(payload.get("dir") or "").strip()
+        folder = root if rel in ("", ".") else _safe_join(root, rel)
+        if folder is None or not folder.is_dir():
+            raise HTTPException(400, f"폴더 없음: {rel}")
+        num_speakers = payload.get("num_speakers")
+        try:
+            num_speakers = int(num_speakers) if num_speakers else None
+        except (TypeError, ValueError):
+            num_speakers = None
+        try:
+            threshold = float(payload.get("threshold") or 0.9)
+        except (TypeError, ValueError):
+            threshold = 0.9
+        jid = _enqueue_diarize(folder, num_speakers=num_speakers, threshold=threshold)
+        if jid is None:
+            raise HTTPException(400, "화자 구분 추가 실패 (전사물이 없거나 루트 밖).")
         return {"job_id": jid}
 
     @app.get("/files/{root_key}/{rel:path}")
@@ -1742,6 +2119,29 @@ def _build_app():  # type: ignore[no-untyped-def]
                 rel = folder.get("rel") or ""
                 abs_folder = base if rel in ("", ".") else (base / rel)
                 if _enqueue_album(abs_folder, frames):
+                    added += 1
+        return {"enqueued": added}
+
+    @app.post("/api/queue/scan-diarize")
+    def queue_scan_diarize(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """전사는 됐지만 화자 구분이 안 된 폴더를 화자 구분 큐에 추가(이미 된 곳은 건너뜀)."""
+        if not _diarize_available():
+            raise HTTPException(400, "화자 구분 의존성이 없습니다 — "
+                                     "uv sync --extra diarize --native-tls 로 설치하세요.")
+        added = 0
+        for root in _scan_overview().get("roots", []):
+            base = _root_by_key(root["key"])
+            if base is None:
+                continue
+            for folder in root.get("folders", []):
+                if folder.get("analyzed", 0) <= 0:
+                    continue
+                rel = folder.get("rel") or ""
+                abs_folder = base if rel in ("", ".") else (base / rel)
+                scripts = list((abs_folder / _ANALYSIS_DIRNAME).glob("*.script.md"))
+                if not scripts or all(_script_has_speakers(s) for s in scripts):
+                    continue  # 전사물 없음 / 이미 전부 화자 구분됨.
+                if _enqueue_diarize(abs_folder):
                     added += 1
         return {"enqueued": added}
 

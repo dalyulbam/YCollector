@@ -346,4 +346,13 @@ compute_type = auto
 beam_size = 5
 # VAD(무음 구간 제거) 필터
 vad_filter = true
+# VAD 세부 — '무음마다 끊기' 민감도. 작을수록 더 잘게 끊습니다(기본 2000).
+#   2000=표준 · 700=촘촘 · 300=매우 촘촘.  speech_pad=음성 구간 앞뒤 여유(ms).
+vad_min_silence_ms = 2000
+vad_speech_pad_ms = 400
+# 음성 판정 임계값(0~1, 높을수록 엄격)
+vad_threshold = 0.5
+# 배치 가속(BatchedInferencePipeline) — 긴 파일에서 크게 빨라짐(VAD 강제 ON)
+batched = false
+batch_size = 8
 """

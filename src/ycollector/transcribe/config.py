@@ -57,6 +57,15 @@ class TranscribeConfig:
     beam_size: int = 5
     # VAD(무음 구간 제거) 필터.
     vad_filter: bool = True
+    # VAD 세부 — '무음마다 끊기' 민감도. min_silence 가 작을수록 더 잘게 끊고,
+    # speech_pad 는 각 음성 구간 앞뒤 여유(ms). faster-whisper VadOptions 기본값.
+    vad_min_silence_ms: int = 2000
+    vad_speech_pad_ms: int = 400
+    vad_threshold: float = 0.5
+    # 배치 가속(faster-whisper BatchedInferencePipeline) — VAD 로 자른 구간을 묶어
+    # 배치 추론(긴 파일에서 크게 빨라짐, VAD 강제 ON). batch_size 는 동시 처리 청크 수.
+    batched: bool = False
+    batch_size: int = 8
 
 
 def load_transcribe_config(explicit: Path | None = None) -> tuple[TranscribeConfig, Path | None]:
@@ -95,6 +104,26 @@ def load_transcribe_config(explicit: Path | None = None) -> tuple[TranscribeConf
         pass
     try:
         cfg.vad_filter = t.getboolean("vad_filter", cfg.vad_filter)
+    except ValueError:
+        pass
+    try:
+        cfg.vad_min_silence_ms = t.getint("vad_min_silence_ms", cfg.vad_min_silence_ms)
+    except ValueError:
+        pass
+    try:
+        cfg.vad_speech_pad_ms = t.getint("vad_speech_pad_ms", cfg.vad_speech_pad_ms)
+    except ValueError:
+        pass
+    try:
+        cfg.vad_threshold = t.getfloat("vad_threshold", cfg.vad_threshold)
+    except ValueError:
+        pass
+    try:
+        cfg.batched = t.getboolean("batched", cfg.batched)
+    except ValueError:
+        pass
+    try:
+        cfg.batch_size = t.getint("batch_size", cfg.batch_size)
     except ValueError:
         pass
     return cfg, path

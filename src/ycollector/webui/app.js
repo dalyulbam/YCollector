@@ -64,6 +64,8 @@ async function refreshHealth() {
         badgeKey.className = `badge ${j.openai_api_key ? "ok" : "miss"}`;
         badgeCookies.textContent = `cookies: ${j.cookies_present ? "ok" : "—"}`;
         badgeCookies.className = `badge ${j.cookies_present ? "ok" : "warn"}`;
+        diarAvailable = !!j.diarize_available;
+        applyDiarAvailability();
     } catch (e) {
         badgeKey.textContent = "key: ?";
         badgeKey.className = "badge miss";
@@ -271,12 +273,46 @@ genGo.addEventListener("click", async () => {
     }
 });
 
-// ── 분석(전사·요약) 보드 ───────────────────────────────────────────────
-// 백엔드: GET /api/analysis/overview, POST /api/analyze, POST /api/album,
-//         GET /files/{root}/{rel}  (산출물·앨범 서빙)
+// ── 분석(전사·요약) 보드 — 탐색기식 폴더 네비게이션 ──────────────────────
+// 백엔드: GET /api/analysis/browse?root=&rel= (한 폴더씩), POST /api/analyze,
+//         POST /api/album, GET /files/{root}/{rel}  (산출물·앨범 서빙)
 const anBoard = $("an-board"), anGo = $("an-go"), anRefresh = $("an-refresh");
 const anLang = $("an-lang"), anSum = $("an-sum"), anBudget = $("an-budget");
+const anDiar = $("an-diar"), anVad = $("an-vad"), anBatched = $("an-batched");
 const anSel = new Map();  // "root|rel" → {root, folderRel, rel, name}
+let diarAvailable = false;  // /api/health 의 diarize_available — 화자 구분 가용성.
+
+// 분석 공통 옵션(언어·요약·예산·화자 구분·무음 분할·배치) — 세 입력 모드 공통.
+function anOptions() {
+    const vadMap = {
+        standard: null,
+        fine: { min_silence_ms: 700, speech_pad_ms: 250 },
+        fineous: { min_silence_ms: 300, speech_pad_ms: 150 },
+    };
+    const o = {
+        language: anLang.value,
+        summarize: anSum.checked,
+        budget_usd: parseFloat(anBudget.value) || 5,
+        diarize: !!(anDiar && anDiar.checked && !anDiar.disabled),
+    };
+    const vad = vadMap[anVad ? anVad.value : "standard"];
+    if (vad) o.vad = vad;
+    if (anBatched && anBatched.checked) o.batched = true;
+    return o;
+}
+
+// 화자 구분 가용성(deps 설치 여부)을 UI에 반영 — 체크박스·버튼 활성/비활성.
+function applyDiarAvailability() {
+    const wrap = $("an-diar-wrap");
+    if (anDiar) {
+        anDiar.disabled = !diarAvailable;
+        if (!diarAvailable) anDiar.checked = false;
+    }
+    if (wrap) wrap.title = diarAvailable
+        ? "전사 후 말하는 사람(화자)을 구분해 대본에 화자 라벨"
+        : "화자 구분 비활성 — 서버에서  uv sync --extra diarize --native-tls  설치 필요";
+    loadAnalysisBoard();  // 폴더 액션의 '화자 구분' 버튼 가용성도 반영.
+}
 
 function anUpdateGo() {
     anGo.disabled = anSel.size === 0;
@@ -288,115 +324,222 @@ function fileUrl(rootKey, rel) {
     return `/files/${rootKey}/` + rel.split("/").map(encodeURIComponent).join("/");
 }
 
+// 탐색기식 네비게이션 상태(현재 루트키 + 폴더 rel).
+const anState = { root: "", rel: "" };
+
 async function loadAnalysisBoard() {
+    return browseTo(anState.root, anState.rel);  // 현재 위치 새로고침.
+}
+
+async function browseTo(root, rel) {
     let data;
     try {
-        const r = await fetch("/api/analysis/overview");
+        const qs = new URLSearchParams({ root: root || "", rel: rel || "" });
+        const r = await fetch("/api/analysis/browse?" + qs.toString());
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         data = await r.json();
     } catch (e) {
         anBoard.innerHTML = `<p class="empty">분석 보드 로드 실패: ${escapeHtml(e.message)}</p>`;
         return;
     }
-    anBoard.innerHTML = "";
-    const validKeys = new Set();  // 재렌더 후에도 살아 있는 파일 키들.
-    let total = 0;
-    for (const root of data.roots || []) {
-        for (const folder of root.folders || []) {
-            total++;
-            anBoard.appendChild(renderFolder(root, folder, validKeys));
-        }
+    if (anState.root !== data.root || anState.rel !== data.rel) {
+        anSel.clear(); anUpdateGo();  // 다른 폴더로 이동 → 선택 초기화.
     }
-    // 잡 완료로 보드가 자동 갱신돼도 사용자의 체크 선택은 보존하고,
-    // 사라진 파일의 선택만 정리한다.
-    for (const k of [...anSel.keys()]) if (!validKeys.has(k)) anSel.delete(k);
-    anUpdateGo();
-    if (!total) {
-        anBoard.innerHTML =
-            '<p class="empty">다운로드 폴더에 미디어 파일이 없습니다. 위에서 먼저 다운로드하세요.</p>';
+    anState.root = data.root || "";
+    anState.rel = data.rel || "";
+    renderBrowser(data);
+}
+
+function renderBrowser(data) {
+    anBoard.innerHTML = "";
+
+    // 루트 전환 탭(루트가 여럿일 때).
+    const roots = data.roots || [];
+    if (roots.length > 1) {
+        const tabs = document.createElement("div");
+        tabs.className = "an-roots";
+        for (const rt of roots) {
+            const b = document.createElement("button");
+            b.className = "an-root-tab" + (rt.key === data.root ? " active" : "");
+            b.textContent = rt.name;
+            b.addEventListener("click", () => browseTo(rt.key, ""));
+            tabs.appendChild(b);
+        }
+        anBoard.appendChild(tabs);
+    }
+
+    // 경로(breadcrumb) + 상위로.
+    const bc = document.createElement("div");
+    bc.className = "an-crumbs";
+    (data.crumbs || []).forEach((c, i, arr) => {
+        if (i) {
+            const sep = document.createElement("span");
+            sep.className = "an-crumb-sep"; sep.textContent = "›";
+            bc.appendChild(sep);
+        }
+        const a = document.createElement("button");
+        a.className = "an-crumb" + (i === arr.length - 1 ? " current" : "");
+        a.textContent = c.name;
+        a.addEventListener("click", () => browseTo(data.root, c.rel));
+        bc.appendChild(a);
+    });
+    if (data.rel) {
+        const up = document.createElement("button");
+        up.className = "btn btn-outline btn-sm an-up";
+        up.textContent = "↑ 상위";
+        const parent = data.rel.includes("/") ? data.rel.slice(0, data.rel.lastIndexOf("/")) : "";
+        up.addEventListener("click", () => browseTo(data.root, parent));
+        bc.appendChild(up);
+    }
+    anBoard.appendChild(bc);
+
+    // 현재 폴더 액션(앨범 보기/합본/생성).
+    const acts = renderFolderActions(data);
+    if (acts) anBoard.appendChild(acts);
+
+    // 하위 폴더 그리드(클릭하면 진입).
+    if ((data.folders || []).length) {
+        const grid = document.createElement("div");
+        grid.className = "an-grid";
+        for (const f of data.folders) grid.appendChild(renderFolderCard(data.root, f));
+        anBoard.appendChild(grid);
+    }
+
+    // 이 폴더의 파일들.
+    if ((data.items || []).length) {
+        const head = document.createElement("div");
+        head.className = "an-files-head";
+        head.textContent = `파일 ${data.items.length}개`;
+        anBoard.appendChild(head);
+        const ul = document.createElement("ul");
+        ul.className = "an-items";
+        for (const it of data.items) ul.appendChild(renderFileRow(data.root, it));
+        anBoard.appendChild(ul);
+    }
+
+    if (!(data.folders || []).length && !(data.items || []).length && !data.album) {
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = data.rel
+            ? "이 폴더에 표시할 항목이 없습니다."
+            : "표시할 미디어가 없습니다. 위에서 다운로드/전사하세요.";
+        anBoard.appendChild(p);
     }
 }
 
-function renderFolder(root, folder, validKeys) {
-    const box = document.createElement("div");
-    box.className = "an-folder";
+function renderFolderCard(rootKey, f) {
+    const card = document.createElement("button");
+    card.className = "an-folder-card";
+    const meta = [];
+    if (f.media) meta.push(`영상 ${f.analyzed}/${f.media}`);
+    if (f.subdirs) meta.push(`폴더 ${f.subdirs}`);
+    if (f.album) meta.push("앨범✓");
+    card.innerHTML = `
+        <span class="an-fc-icon">📁</span>
+        <span class="an-fc-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+        <span class="an-fc-meta">${escapeHtml(meta.join(" · "))}</span>`;
+    card.addEventListener("click", () => browseTo(rootKey, f.rel));
+    return card;
+}
 
-    // ── 헤더: 폴더명 + 분석 현황 + 앨범 링크/버튼 ──
-    const head = document.createElement("div");
-    head.className = "an-folder-head";
-    const links = [];
-    if (folder.album)
-        links.push(`<a class="btn btn-outline btn-sm" target="_blank" href="${fileUrl(root.key, folder.album)}">앨범 보기</a>`);
-    for (const st of folder.standalones || [])
-        links.push(`<a class="btn btn-outline btn-sm" target="_blank" href="${fileUrl(root.key, st)}" title="${escapeHtml(st)}">단일 합본</a>`);
-    head.innerHTML = `
-        <h3 title="${escapeHtml(root.path)}">${escapeHtml(folder.name)}</h3>
-        <span class="counter">${folder.analyzed}/${folder.items.length} 분석됨</span>
-        <span class="an-links">${links.join("")}</span>`;
-    if (folder.summarized > 0) {  // 앨범은 summary.md 가 있어야 생성 가능.
-        const albumBtn = document.createElement("button");
-        albumBtn.className = "btn btn-outline btn-sm";
-        albumBtn.textContent = folder.album ? "앨범 갱신" : "앨범 생성";
-        albumBtn.title = "ffmpeg 장면 캡쳐 + HTML 앨범북 생성";
-        albumBtn.addEventListener("click", async () => {
-            albumBtn.disabled = true;
+function renderFolderActions(data) {
+    const hasAlbum = !!data.album, stands = data.standalones || [], canMake = data.summarized > 0;
+    const transcribed = data.transcribed || 0, diarized = data.diarized || 0;
+    if (!hasAlbum && !stands.length && !canMake && transcribed <= 0) return null;
+    const bar = document.createElement("div");
+    bar.className = "an-folder-actions";
+    if (hasAlbum) {
+        const a = document.createElement("a");
+        a.className = "btn btn-primary btn-sm"; a.target = "_blank";
+        a.href = fileUrl(data.root, data.album); a.textContent = "📖 앨범 보기";
+        bar.appendChild(a);
+    }
+    for (const st of stands) {
+        const a = document.createElement("a");
+        a.className = "btn btn-outline btn-sm"; a.target = "_blank";
+        a.href = fileUrl(data.root, st); a.textContent = "단일 합본"; a.title = st;
+        bar.appendChild(a);
+    }
+    if (canMake) {
+        const b = document.createElement("button");
+        b.className = "btn btn-outline btn-sm";
+        b.textContent = hasAlbum ? "앨범 갱신" : "앨범 생성";
+        b.title = "ffmpeg 장면 캡쳐 + HTML 앨범북";
+        b.addEventListener("click", async () => {
+            b.disabled = true;
             try {
                 const r = await fetch("/api/album", {
                     method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ root: root.key, dir: folder.rel }),
+                    body: JSON.stringify({ root: data.root, dir: data.rel }),
                 });
                 if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
                 const j = await r.json();
-                trackJob(j.job_id, "album", `앨범 — ${folder.name}`);
-            } catch (e) {
-                alert(`앨범 생성 시작 실패: ${e.message}`);
-            } finally {
-                albumBtn.disabled = false;
-            }
+                trackJob(j.job_id, "album", `앨범 — ${data.rel || data.root}`);
+            } catch (e) { alert(`앨범 생성 실패: ${e.message}`); }
+            finally { b.disabled = false; }
         });
-        head.querySelector(".an-links").appendChild(albumBtn);
+        bar.appendChild(b);
     }
-    box.appendChild(head);
-
-    // ── 파일 목록: 체크박스(분석 대상 선택) + 요약/대본 뷰어 ──
-    const ul = document.createElement("ul");
-    ul.className = "an-items";
-    for (const it of folder.items) {
-        const li = document.createElement("li");
-        const key = `${root.key}|${it.rel}`;
-        validKeys.add(key);
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = anSel.has(key);  // 재렌더에도 선택 유지.
-        cb.title = it.summary ? "다시 분석(덮어씀)" : "분석 대상으로 선택";
-        cb.addEventListener("change", () => {
-            if (cb.checked) anSel.set(key, { root: root.key, folderRel: folder.rel, rel: it.rel, name: it.name });
-            else anSel.delete(key);
-            anUpdateGo();
+    if (transcribed > 0) {
+        const d = document.createElement("button");
+        d.className = "btn btn-outline btn-sm";
+        const allDone = diarized >= transcribed;
+        d.textContent = `🗣 화자 구분${allDone ? " 갱신" : ""}` + ` (${diarized}/${transcribed})`;
+        d.disabled = !diarAvailable;
+        d.title = diarAvailable
+            ? "전사 대본에 화자(말하는 사람) 라벨을 붙입니다 — speechbrain ECAPA"
+            : "화자 구분 비활성 — 서버에서  uv sync --extra diarize --native-tls  설치 필요";
+        d.addEventListener("click", async () => {
+            d.disabled = true;
+            try {
+                const r = await fetch("/api/diarize", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ root: data.root, dir: data.rel }),
+                });
+                if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+                const j = await r.json();
+                trackJob(j.job_id, "diarize", `화자 구분 — ${data.rel || data.root}`);
+            } catch (e) { alert(`화자 구분 실패: ${e.message}`); d.disabled = false; }
         });
-        li.appendChild(cb);
-
-        const name = document.createElement("span");
-        name.className = "text";
-        name.title = it.rel;
-        name.textContent = it.name;
-        li.appendChild(name);
-
-        const badges = document.createElement("span");
-        badges.className = "an-badges";
-        if (it.summary) badges.appendChild(docButton("요약", root.key, it.summary, it.name));
-        if (it.script) badges.appendChild(docButton("대본", root.key, it.script, it.name));
-        if (!it.summary && !it.script) {
-            const miss = document.createElement("span");
-            miss.className = "an-miss";
-            miss.textContent = "미분석";
-            badges.appendChild(miss);
-        }
-        li.appendChild(badges);
-        ul.appendChild(li);
+        bar.appendChild(d);
     }
-    box.appendChild(ul);
-    return box;
+    return bar;
+}
+
+function renderFileRow(rootKey, it) {
+    const li = document.createElement("li");
+    const key = `${rootKey}|${it.rel}`;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = anSel.has(key);
+    cb.title = it.summary ? "다시 분석(덮어씀)" : "분석 대상으로 선택";
+    cb.addEventListener("change", () => {
+        const folderRel = it.rel.includes("/") ? it.rel.slice(0, it.rel.lastIndexOf("/")) : "";
+        if (cb.checked) anSel.set(key, { root: rootKey, folderRel, rel: it.rel, name: it.name });
+        else anSel.delete(key);
+        anUpdateGo();
+    });
+    li.appendChild(cb);
+    const name = document.createElement("span");
+    name.className = "text"; name.title = it.rel; name.textContent = it.name;
+    li.appendChild(name);
+    const badges = document.createElement("span");
+    badges.className = "an-badges";
+    if (it.summary) badges.appendChild(docButton("요약", rootKey, it.summary, it.name));
+    if (it.script) badges.appendChild(docButton("대본", rootKey, it.script, it.name));
+    if (it.diarized) {
+        const sp = document.createElement("span");
+        sp.className = "an-spk"; sp.textContent = "화자✓";
+        sp.title = "화자 구분됨 — 대본에 화자 라벨 포함";
+        badges.appendChild(sp);
+    }
+    if (!it.summary && !it.script) {
+        const miss = document.createElement("span");
+        miss.className = "an-miss"; miss.textContent = "미분석";
+        badges.appendChild(miss);
+    }
+    li.appendChild(badges);
+    return li;
 }
 
 function docButton(label, rootKey, rel, title) {
@@ -419,18 +562,11 @@ anGo.addEventListener("click", async () => {
     }
     // Claude 키는 서버 .env 의 ANTHROPIC_API_KEY — 없으면 서버가
     // '요약 비활성' 메시지를 보내고 전사만 진행한다(여기서 막지 않음).
-    const summarize = anSum.checked;
     for (const g of groups.values()) {
         try {
             const r = await fetch("/api/analyze", {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    root: g.root,
-                    files: g.files,
-                    language: anLang.value,
-                    summarize,
-                    budget_usd: parseFloat(anBudget.value) || 5,
-                }),
+                body: JSON.stringify({ root: g.root, files: g.files, ...anOptions() }),
             });
             if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
             const j = await r.json();
@@ -449,22 +585,26 @@ loadAnalysisBoard();
 // ── 분석 입력 모드 (폴더에서 선택 / URL 입력) ──────────────────────────────
 // URL 모드는 다운로드 패널과 비슷 — URL(또는 재생목록)을 받아 서버가
 // 영상을 받은 뒤 전사한다. POST /api/analyze 에 files 대신 url 을 보낸다.
-const anTabFolder = $("an-tab-folder"), anTabUrl = $("an-tab-url");
-const anFolderMode = $("an-folder-mode"), anUrlMode = $("an-url-mode");
+const anTabFolder = $("an-tab-folder"), anTabUrl = $("an-tab-url"), anTabUpload = $("an-tab-upload");
+const anFolderMode = $("an-folder-mode"), anUrlMode = $("an-url-mode"), anUploadMode = $("an-upload-mode");
 const anUrl = $("an-url"), anUrlGo = $("an-url-go");
 const anUrlPaste = $("an-url-paste"), anUrlPlaylist = $("an-url-playlist");
 const anUrlPlaylistLabel = $("an-url-playlist-label");
+const anDrop = $("an-drop"), anFile = $("an-file"), anUploadList = $("an-upload-list");
 
-function setAnMode(folder) {
-    anTabFolder.classList.toggle("active", folder);
-    anTabUrl.classList.toggle("active", !folder);
-    anTabFolder.setAttribute("aria-selected", String(folder));
-    anTabUrl.setAttribute("aria-selected", String(!folder));
-    anFolderMode.hidden = !folder;
-    anUrlMode.hidden = folder;
+function setAnMode(mode) {  // 'folder' | 'url' | 'upload'
+    const tabs = { folder: anTabFolder, url: anTabUrl, upload: anTabUpload };
+    const panes = { folder: anFolderMode, url: anUrlMode, upload: anUploadMode };
+    for (const k of Object.keys(tabs)) {
+        const on = k === mode;
+        tabs[k].classList.toggle("active", on);
+        tabs[k].setAttribute("aria-selected", String(on));
+        panes[k].hidden = !on;
+    }
 }
-anTabFolder.addEventListener("click", () => setAnMode(true));
-anTabUrl.addEventListener("click", () => setAnMode(false));
+anTabFolder.addEventListener("click", () => setAnMode("folder"));
+anTabUrl.addEventListener("click", () => setAnMode("url"));
+anTabUpload.addEventListener("click", () => setAnMode("upload"));
 
 let anPlaylistAll = false;
 anUrlPlaylist.addEventListener("click", () => {
@@ -487,13 +627,7 @@ async function startUrlAnalyze() {
     try {
         const r = await fetch("/api/analyze", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                url,
-                playlist_all: anPlaylistAll,
-                language: anLang.value,
-                summarize: anSum.checked,
-                budget_usd: parseFloat(anBudget.value) || 5,
-            }),
+            body: JSON.stringify({ url, playlist_all: anPlaylistAll, ...anOptions() }),
         });
         if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
         const j = await r.json();
@@ -508,12 +642,77 @@ async function startUrlAnalyze() {
 anUrlGo.addEventListener("click", startUrlAnalyze);
 anUrl.addEventListener("keydown", e => { if (e.key === "Enter") startUrlAnalyze(); });
 
+// ── 업로드 모드 — 로컬 음원·영상 → 서버 저장(download2read/업로드) → 바로 전사 ──
+let anUploadBusy = false;
+function renderUploadChips(list) {
+    anUploadList.innerHTML = "";
+    for (const u of list) {
+        const li = document.createElement("li");
+        li.innerHTML = `<span class="kmini">${u.kind === "video" ? "영상" : "음원"}</span>
+            <span class="text" title="${escapeHtml(u.name)}">${escapeHtml(u.name)}</span>
+            <span class="idx">${escapeHtml(u.state)}</span>`;
+        anUploadList.appendChild(li);
+    }
+}
+async function uploadAndAnalyze(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length || anUploadBusy) return;
+    anUploadBusy = true;
+    const chips = files.map(f => ({
+        name: f.name, state: "업로드 중…",
+        kind: (f.type || "").startsWith("video") ? "video" : "audio",
+    }));
+    renderUploadChips(chips);
+    try {
+        const fd = new FormData();
+        for (const f of files) fd.append("files", f);
+        let res;
+        try {
+            const r = await fetch("/api/analyze/upload", { method: "POST", body: fd });
+            if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+            res = await r.json();
+        } catch (e) {
+            chips.forEach(c => c.state = "실패"); renderUploadChips(chips);
+            alert(`업로드 실패: ${e.message}`); return;
+        }
+        if (res.rejected && res.rejected.length)
+            alert("제외된 파일:\n" + res.rejected.map(x => `- ${x.name}: ${x.reason}`).join("\n"));
+        const rels = (res.saved || []).map(s => s.rel);
+        chips.forEach(c => c.state = "저장됨"); renderUploadChips(chips);
+        if (!rels.length) return;
+        const r2 = await fetch("/api/analyze", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ root: res.root, files: rels, ...anOptions() }),
+        });
+        if (!r2.ok) throw new Error(await r2.text() || `HTTP ${r2.status}`);
+        const j = await r2.json();
+        const label = rels.length === 1 ? res.saved[0].name : `업로드 ${rels.length}개`;
+        trackJob(j.job_id, "analyze", label);
+        anUploadList.innerHTML = "";
+        setAnMode("folder");
+        browseTo("read", res.folder);  // 업로드 폴더로 이동해 진행을 보여줌.
+    } catch (e) {
+        alert(`전사 시작 실패: ${e.message}`);
+    } finally {
+        anUploadBusy = false;
+    }
+}
+anDrop.addEventListener("click", () => anFile.click());
+anDrop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); anFile.click(); } });
+anFile.addEventListener("change", () => { uploadAndAnalyze(anFile.files); anFile.value = ""; });
+["dragenter", "dragover"].forEach(ev => anDrop.addEventListener(ev, e => { e.preventDefault(); anDrop.classList.add("drag"); }));
+anDrop.addEventListener("dragleave", e => { e.preventDefault(); anDrop.classList.remove("drag"); });
+anDrop.addEventListener("drop", e => {
+    e.preventDefault(); anDrop.classList.remove("drag");
+    if (e.dataTransfer && e.dataTransfer.files) uploadAndAnalyze(e.dataTransfer.files);
+});
+
 // ── 작업 큐 (영속 — 중단/실패 관리·재시도) ────────────────────────────────
 // 백엔드: GET /api/queue, POST /api/queue/{id}/retry · /retry-all · /scan · /clear,
 //         DELETE /api/queue/{id}
 const qList = $("q-list"), qCounts = $("q-counts");
 const qScan = $("q-scan"), qRetryAll = $("q-retry-all"), qClear = $("q-clear"), qRefresh = $("q-refresh");
-const qAlbumScan = $("q-album-scan");
+const qAlbumScan = $("q-album-scan"), qDiarScan = $("q-diar-scan");
 const Q_STATUS = {
     pending:     { txt: "대기",   cls: "run" },
     running:     { txt: "실행 중", cls: "run" },
@@ -521,7 +720,13 @@ const Q_STATUS = {
     failed:      { txt: "실패",   cls: "fail" },
     interrupted: { txt: "중단됨", cls: "warn" },
 };
-const Q_KIND = { "download": "DL", "analyze-url": "전사·URL", "analyze-files": "전사", "album": "앨범" };
+const Q_KIND = { "download": "DL", "analyze-url": "전사·URL", "analyze-files": "전사", "album": "앨범", "diarize": "화자" };
+// 큐 task kind → 작업 카드(trackJob) kind. analyze-url/analyze-files 는 'analyze' 로,
+// download/album/diarize 는 그대로(라벨이 올바르게 표시되도록).
+function trackKind(taskKind) {
+    if (taskKind === "download" || taskKind === "album" || taskKind === "diarize") return taskKind;
+    return "analyze";
+}
 
 let qBusy = false;     // 폴링 중복 방지(느린 서버에서 요청이 쌓여 순서가 꼬이는 것 방지).
 let qLastSig = null;   // 직전 렌더 시그니처 — 변화 없으면 DOM 재구성 생략(깜빡임 방지).
@@ -615,7 +820,7 @@ function renderTask(t) {
                 const r = await fetch(`/api/queue/${t.id}/retry`, { method: "POST" });
                 if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
                 const j = await r.json();
-                if (j.job_id) trackJob(j.job_id, t.kind === "download" ? "download" : "analyze", t.title);
+                if (j.job_id) trackJob(j.job_id, trackKind(t.kind), t.title);
                 loadQueue(true);
             } catch (e) { alert(`재시도 실패: ${e.message}`); b.disabled = false; }
         });
@@ -665,13 +870,28 @@ qAlbumScan.addEventListener("click", async () => {
     } catch (e) { alert(`앨범 스캔 실패: ${e.message}`); }
     finally { qAlbumScan.disabled = false; }
 });
+qDiarScan.addEventListener("click", async () => {
+    if (!diarAvailable) { alert("화자 구분 비활성 — 서버에서  uv sync --extra diarize --native-tls  로 설치하세요."); return; }
+    if (!confirm("전사됐지만 화자 구분이 안 된 폴더를 모두 화자 구분 큐에 추가할까요?\n이미 화자 구분된 폴더는 건너뜁니다. (ECAPA 임베딩이라 시간이 걸립니다)")) return;
+    qDiarScan.disabled = true;
+    try {
+        const r = await fetch("/api/queue/scan-diarize", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+        const j = await r.json();
+        alert(`화자 구분 큐에 ${j.enqueued}개 폴더를 추가했습니다.`);
+        loadQueue(true);
+    } catch (e) { alert(`화자 구분 스캔 실패: ${e.message}`); }
+    finally { qDiarScan.disabled = false; }
+});
 qRetryAll.addEventListener("click", async () => {
     try {
         const r = await fetch("/api/queue/retry-all", { method: "POST" });
         const j = await r.json();
         // 재시도된 각 작업을 라이브 카드로도 추적(개별 재시도와 동일한 피드백).
         for (const job of j.jobs || []) {
-            trackJob(job.job_id, job.kind === "download" ? "download" : "analyze", job.title || job.job_id);
+            trackJob(job.job_id, trackKind(job.kind), job.title || job.job_id);
         }
         alert(`${j.retried || 0}개 작업을 재시도합니다.`);
         loadQueue(true);
@@ -739,7 +959,7 @@ function trackJob(jobId, kind, label) {
     card.innerHTML = `
         <div>
             <div class="head">
-                <span class="kind ${kind}">${{ download: "DL", generate: "GEN", analyze: "분석", album: "앨범" }[kind] || kind}</span>
+                <span class="kind ${kind}">${{ download: "DL", generate: "GEN", analyze: "분석", album: "앨범", diarize: "화자" }[kind] || kind}</span>
                 <span class="title-line" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
             </div>
             <div class="meta-line">id: ${jobId} · <span class="meta-mid">대기 중</span></div>
@@ -805,8 +1025,8 @@ function trackJob(jobId, kind, label) {
             applyStatus("done", tag);
             mid.textContent = [msg.message, msg.out_path].filter(Boolean).join(" → ") || "완료";
             es.close();
-            // 분석/앨범 완료 → 보드의 요약·대본·앨범 링크 갱신.
-            if (kind === "analyze" || kind === "album") loadAnalysisBoard();
+            // 분석/앨범/화자 구분 완료 → 보드의 요약·대본·앨범·화자 라벨 갱신.
+            if (kind === "analyze" || kind === "album" || kind === "diarize") loadAnalysisBoard();
             loadQueue(true);  // 큐 패널도 즉시 갱신(4초 폴링 기다리지 않게).
         } else if (e === "error") {
             applyStatus("failed", tag);
