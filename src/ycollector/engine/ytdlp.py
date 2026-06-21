@@ -51,6 +51,11 @@ ERROR_PATTERNS: dict[str, str] = {
     "js-runtime":      r"No supported JavaScript runtime|n challenge solving failed",
     "stale-extractor": r"unable to extract|could not find sig function|n[- ]?sig",
     "video-removed":   r"Video unavailable|has been removed",
+    # 백신/프록시 TLS 가로채기로 인증서 검증 실패. yt-dlp 가 모든 HTTP 핸들러에서
+    # 깨지면 "Unable to handle request: N unexpected error(s)" 로 뭉뚱그려 보고하므로
+    # 그 문구도 같이 잡아 '[unknown]' 으로 묻히지 않게 한다. 해결: pip_system_certs
+    # (OS 신뢰 저장소) 또는 settings.ini [network] no_check_certificate = true.
+    "cert-verify":     r"CERTIFICATE_VERIFY_FAILED|unable to get local issuer certificate|Unable to handle request",
     "network":         r"Connection (reset|refused|aborted)|timed out",
     "disk-full":       r"No space left on device|errno 28",
     "throttled":       r"throttled|throttling|slow",
@@ -263,22 +268,27 @@ class YtdlpEngine:
         )
         return result.stdout.strip()
 
-    def list_formats(self, url: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def list_formats(
+        self, url: str, *, no_check_certificate: bool = False
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Return ``(info, formats)`` for ``url``.
 
         ``info`` carries top-level metadata (title, channel, duration, ...);
         ``formats`` is the per-format list yt-dlp surfaces under ``-F``.
         Raises :class:`DownloadError` on failure with classified category.
         """
+        cmd = [
+            str(self.ytdlp_path),
+            "--dump-single-json",
+            "--no-playlist",
+            "--no-warnings",
+            "--no-progress",
+        ]
+        if no_check_certificate:
+            cmd.append("--no-check-certificate")
+        cmd.append(url)
         result = subprocess.run(
-            [
-                str(self.ytdlp_path),
-                "--dump-single-json",
-                "--no-playlist",
-                "--no-warnings",
-                "--no-progress",
-                url,
-            ],
+            cmd,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -320,6 +330,7 @@ class YtdlpEngine:
         retries: int = 10,
         fragment_retries: int = 10,
         throttled_rate: str | None = None,
+        no_check_certificate: bool = False,
         no_playlist: bool = False,
         yes_playlist: bool = False,
         max_downloads: int | None = None,
@@ -390,6 +401,10 @@ class YtdlpEngine:
             cmd += ["--socket-timeout", str(socket_timeout)]
         if throttled_rate:
             cmd += ["--throttled-rate", throttled_rate]
+        # TLS 가로채기 환경에서 OS 신뢰 저장소(pip_system_certs)로도 검증이 안 될 때의
+        # 최후 수단. 켜면 인증서 검증을 끈다(이 PC 는 어차피 백신이 TLS 를 MITM 중).
+        if no_check_certificate:
+            cmd.append("--no-check-certificate")
         # Playlist handling. `no_playlist` wins if both are set.
         if no_playlist:
             cmd.append("--no-playlist")

@@ -35,6 +35,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -246,6 +247,7 @@ def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | No
             cookies_file=cookies_file,
             socket_timeout=s.socket_timeout, retries=s.retries,
             fragment_retries=s.fragment_retries, throttled_rate=s.throttled_rate,
+            no_check_certificate=s.no_check_certificate,
             no_playlist=no_pl, yes_playlist=yes_pl,
             max_downloads=s.max_downloads, playlist_items=s.playlist_items,
             download_archive=archive_path,
@@ -967,6 +969,7 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
             cookies_from_browser=s.cookies_from_browser, cookies_file=cookies_file,
             socket_timeout=s.socket_timeout, retries=s.retries,
             fragment_retries=s.fragment_retries, throttled_rate=s.throttled_rate,
+            no_check_certificate=s.no_check_certificate,
             no_playlist=no_pl, yes_playlist=yes_pl,
             max_downloads=s.max_downloads, playlist_items=s.playlist_items,
             # 아카이브 미사용 — 전사 목적이라 이미 받은 URL 도 파일 경로를 확보해야
@@ -2167,6 +2170,119 @@ def _pick_free_port(preferred: int = 8765) -> int:
         return port
 
 
+# ── 단일 인스턴스 takeover (기존 서버 닫고 새로 열기) ────────────────────────
+# 같은 포트에 이미 우리 서버가 떠 있으면 종료하고 그 포트를 넘겨받는다. 엉뚱한
+# 앱을 죽이지 않도록 반드시 /api/health 로 'YCollector 서버임'을 확인한 뒤에만
+# 종료한다. PID 는 (1) 그 포트의 실제 LISTEN 소유자(netstat) → (2) pidfile 순.
+def _server_pidfile() -> Path:
+    from ycollector.config import user_config_dir
+
+    return user_config_dir() / "server.pid"
+
+
+def _probe_host(host: str) -> str:
+    return host if host not in ("0.0.0.0", "::", "") else "127.0.0.1"
+
+
+def _port_free(host: str, port: int) -> bool:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind((_probe_host(host), port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _is_our_server(host: str, port: int) -> bool:
+    """그 포트에서 YCollector 서버가 응답하는지 /api/health 로 확인."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+            f"http://{_probe_host(host)}:{port}/api/health", timeout=1.5
+        ) as r:
+            doc = json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return False
+    return isinstance(doc, dict) and "library" in doc and "cookies_path" in doc
+
+
+def _pid_listening_on(port: int) -> int | None:
+    """127.0.0.1:port 를 LISTEN 중인 PID (Windows netstat). 못 찾으면 None."""
+    if sys.platform != "win32":
+        return None
+    try:
+        out = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    needle = f":{port}"
+    for line in out.splitlines():
+        parts = line.split()
+        # 예:  TCP    127.0.0.1:8765    0.0.0.0:0    LISTENING    26432
+        if (len(parts) >= 5 and parts[0].upper() == "TCP"
+                and parts[-2].upper() == "LISTENING" and parts[1].endswith(needle)):
+            try:
+                return int(parts[-1])
+            except ValueError:
+                continue
+    return None
+
+
+def _terminate_pid(pid: int) -> None:
+    """Best-effort PID 종료(자식 포함). win=taskkill /T /F, posix=SIGTERM→SIGKILL."""
+    if not pid or pid <= 0 or pid == os.getpid():
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return
+    import signal as _sig
+
+    for sig in (_sig.SIGTERM, _sig.SIGKILL):
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, OSError):
+            return
+        for _ in range(15):  # 최대 ~3초 종료 대기
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return
+            time.sleep(0.2)
+
+
+def _replace_existing_instance(host: str, port: int) -> bool:
+    """포트가 비어 있거나, 우리 서버를 닫고 비웠으면 True. 다른 앱이 점유 중이면 False."""
+    if _port_free(host, port):
+        return True
+    if not _is_our_server(host, port):
+        return False  # 우리 서버가 아님 — 함부로 종료하지 않는다.
+    victim = _pid_listening_on(port)
+    if victim is None:
+        pf = _server_pidfile()
+        if pf.is_file():
+            try:
+                victim = int(pf.read_text(encoding="utf-8").strip() or 0)
+            except (OSError, ValueError):
+                victim = None
+    if victim:
+        print(f"  ⟳ 기존 YCollector 서버(PID {victim}) 종료 후 재기동…", file=sys.stderr)
+        _terminate_pid(victim)
+    for _ in range(40):  # 최대 ~8초 포트 해제 대기
+        if _port_free(host, port):
+            return True
+        time.sleep(0.2)
+    return _port_free(host, port)
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
         for stream in (sys.stdout, sys.stderr):
@@ -2183,6 +2299,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", action="store_true",
                    help="자동 브라우저 띄우기 비활성.")
+    p.add_argument("--no-replace", action="store_true",
+                   help="같은 포트의 기존 인스턴스를 종료하지 않음(충돌 시 그냥 실패). "
+                        "기본은 기존 YCollector 서버를 닫고 새로 연다.")
     args = p.parse_args(argv)
 
     try:
@@ -2197,6 +2316,27 @@ def main(argv: list[str] | None = None) -> int:
 
     app = _build_app()
     port = args.port if args.port != 0 else _pick_free_port(8765)
+
+    # 단일 인스턴스: 같은 포트에 이미 우리 서버가 떠 있으면 닫고 새로 연다.
+    # (--port 0 은 자동으로 빈 포트를 잡으므로 takeover 불필요.)
+    if args.port != 0 and not args.no_replace:
+        if not _replace_existing_instance(args.host, port):
+            print(f"  ✗ 포트 {port} 가 사용 중입니다(다른 앱이거나 응답 없는 서버). "
+                  f"다른 포트로 띄우려면:  uv run ycollector-server --port 0\n",
+                  file=sys.stderr)
+            return 12
+
+    # 다음 실행이 우리를 찾아 닫을 수 있도록 PID 기록(종료 시 정리).
+    pidfile = _server_pidfile()
+    try:
+        pidfile.parent.mkdir(parents=True, exist_ok=True)
+        pidfile.write_text(str(os.getpid()), encoding="utf-8")
+        import atexit
+
+        atexit.register(lambda: pidfile.unlink(missing_ok=True))
+    except OSError:
+        pass
+
     url = f"http://{args.host}:{port}/"
     print(f"\n  ▶ YCollector server: {url}\n", file=sys.stderr)
 

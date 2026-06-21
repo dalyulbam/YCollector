@@ -1377,6 +1377,27 @@ wheels = [
 ]
 
 [[package]]
+name = "pip"
+version = "26.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/91/47e7d486260f618783899587af63ccf7980fb60245c3e63dd4571c6b57ad/pip-26.1.2.tar.gz", hash = "sha256:f49cd134c61cf2fd75e0ce2676db03e4054504a5a4986d00f8299ae632dc4605", size = 1840799, upload-time = "2026-05-31T17:33:58.56Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5d/95/6b5cb3461ea5673ba0995989746db58eb18b91b54dbf331e72f569540946/pip-26.1.2-py3-none-any.whl", hash = "sha256:382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab", size = 1813144, upload-time = "2026-05-31T17:33:56.772Z" },
+]
+
+[[package]]
+name = "pip-system-certs"
+version = "5.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pip" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7d/6a/563b05a4f6c9ddc205c98bb413e74221368efb98b8fb9cca96b578b8930c/pip_system_certs-5.3.tar.gz", hash = "sha256:19c8bf9957bcce7d69c4dbc2d0b2ef13de1984d53f50a59012e6dbbad0af67c6", size = 6395, upload-time = "2025-10-16T06:14:55.217Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/57/752b63c609affae8f26ae0f1d1103d6ea7e707ad45943f62f7422936071d/pip_system_certs-5.3-py3-none-any.whl", hash = "sha256:3fbb5de62e374a99b688b1ad06e64ee5c4aeb633ef23e3a677d32e3e84fd863c", size = 6896, upload-time = "2025-10-16T06:14:54.072Z" },
+]
+
+[[package]]
 name = "playwright"
 version = "1.60.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2589,6 +2610,7 @@ name = "ycollector"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "pip-system-certs" },
     { name = "yt-dlp" },
 ]
 
@@ -2655,6 +2677,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'video-gen'", specifier = ">=1.50.0" },
     { name = "ordered-set", marker = "sys_platform == 'win32' and extra == 'build'", specifier = ">=4.1" },
     { name = "pillow", marker = "extra == 'video-gen'", specifier = ">=10.0.0" },
+    { name = "pip-system-certs", specifier = ">=4.0" },
     { name = "playwright", marker = "extra == 'cookies-headed'", specifier = ">=1.50.0" },
     { name = "pyinstaller", marker = "extra == 'build'", specifier = ">=6.10" },
     { name = "pyside6", marker = "extra == 'build'", specifier = ">=6.8.0" },

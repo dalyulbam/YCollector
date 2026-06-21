@@ -58,6 +58,10 @@ class Settings:
     retries: int = 10
     fragment_retries: int = 10
     throttled_rate: str | None = "100K"
+    # TLS 가로채기(백신/프록시 MITM) 최후 수단 — yt-dlp 인증서 검증을 끈다.
+    # 평소엔 pip_system_certs 가 OS 신뢰 저장소로 검증을 통과시키므로 false 권장.
+    # OS 신뢰 저장소로도 안 될 때(다른 PC·prune 등)만 true 로.
+    no_check_certificate: bool = False
 
 
 # ── loader ─────────────────────────────────────────────────────────────────
@@ -118,6 +122,10 @@ def load_settings(explicit: Path | None = None) -> tuple[Settings, Path | None]:
         s.fragment_retries = _int_or_default(n.get("fragment_retries"), s.fragment_retries)
         tr = (n.get("throttled_rate") or "").strip()
         s.throttled_rate = tr or None
+        try:
+            s.no_check_certificate = n.getboolean("no_check_certificate", s.no_check_certificate)
+        except ValueError:
+            pass
 
     return s, source
 
@@ -148,6 +156,7 @@ def save_settings(s: Settings, path: Path | None = None) -> Path:
         "retries": str(s.retries),
         "fragment_retries": str(s.fragment_retries),
         "throttled_rate": s.throttled_rate or "",
+        "no_check_certificate": str(s.no_check_certificate).lower(),
     }
     with open(dest, "w", encoding="utf-8") as f:
         parser.write(f)
@@ -167,6 +176,7 @@ def settings_to_dict(s: Settings) -> dict[str, object]:
         "socket_timeout": s.socket_timeout, "retries": s.retries,
         "fragment_retries": s.fragment_retries,
         "throttled_rate": s.throttled_rate or "",
+        "no_check_certificate": s.no_check_certificate,
     }
 
 
@@ -218,6 +228,9 @@ def settings_from_dict(d: dict[str, object]) -> Settings:
     if "throttled_rate" in d:
         tr = str(d["throttled_rate"]).strip()
         s.throttled_rate = tr or None
+    if "no_check_certificate" in d:
+        v = d["no_check_certificate"]
+        s.no_check_certificate = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
     return s
 
 
@@ -322,6 +335,10 @@ fragment_retries = 10
 # YouTube의 의도적 단일-연결 throttling 대응에 효과적.
 # 빈 값 = 비활성. 예: 100K (= 100 KB/s), 1M (= 1 MB/s)
 throttled_rate = 100K
+# 백신/프록시 TLS 가로채기 환경 최후 수단 — yt-dlp 인증서 검증 끄기.
+# 평소엔 pip_system_certs 가 OS 신뢰 저장소로 검증을 통과시키므로 false 권장.
+# OS 신뢰 저장소로도 'CERTIFICATE_VERIFY_FAILED' 가 날 때만 true 로.
+no_check_certificate = false
 
 [transcribe]
 # 로컬 음성/영상 전사 (faster-whisper). 사용:

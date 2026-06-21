@@ -278,6 +278,9 @@ def _build_parser(s: Settings) -> argparse.ArgumentParser:
     p.add_argument("--throttled-rate", metavar="RATE", default=s.throttled_rate,
                    help=f"If download rate falls below RATE (e.g. '100K'), restart "
                         f"the connection (default from settings.ini: {s.throttled_rate or 'off'}).")
+    p.add_argument("--no-check-certificate", action="store_true", default=s.no_check_certificate,
+                   help="Skip TLS certificate verification (last resort for AV/proxy MITM "
+                        f"environments; default from settings.ini: {s.no_check_certificate}).")
     p.add_argument("--version", action="version", version=f"ycollector {__version__}")
     return p
 
@@ -436,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
                     retries=args.retries,
                     fragment_retries=args.fragment_retries,
                     throttled_rate=args.throttled_rate,
+                    no_check_certificate=args.no_check_certificate,
                     no_playlist=no_pl,
                     yes_playlist=yes_pl,
                     max_downloads=args.max_downloads,

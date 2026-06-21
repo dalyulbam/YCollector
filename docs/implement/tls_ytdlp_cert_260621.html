@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — TLS 가로채기 환경 yt-dlp 인증서 검증 실패 수정</title>
+<meta name="description" content="구현 기록 · 2026-06-21">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #dc2626; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px; display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.topbar .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.topbar .meta { margin-left: auto; font-size: 0.85rem; color: var(--fg-muted); }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+h1 { font-size: 1.8rem; font-weight: 800; margin: 0 0 8px; }
+h2 { font-size: 1.25rem; font-weight: 700; margin: 40px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: var(--accent); }
+.subtitle { color: var(--fg-muted); margin: 0 0 32px; font-size: 0.95rem; }
+
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code, p code, li code { background: var(--code-bg); color: var(--code-fg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85em; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow-sm); }
+.card h3 { margin-top: 0; }
+.card.accent { border-left: 4px solid var(--accent); }
+
+pre { background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 16px; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge.new { background: #dcfce7; color: #166534; }
+.badge.changed { background: #fef3c7; color: #92400e; }
+.badge.removed { background: #fee2e2; color: #991b1b; }
+.badge.note { background: #e0e7ff; color: #3730a3; }
+@media (prefers-color-scheme: dark) {
+    .badge.new { background: #14532d; color: #86efac; }
+    .badge.changed { background: #78350f; color: #fde68a; }
+    .badge.removed { background: #7f1d1d; color: #fca5a5; }
+    .badge.note { background: #312e81; color: #c7d2fe; }
+}
+
+ul { padding-left: 20px; }
+li { margin: 4px 0; }
+
+.diagram {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 20px; margin: 16px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.82rem;
+    line-height: 1.6; white-space: pre; overflow-x: auto;
+}
+.toc { font-size: 0.9rem; color: var(--fg-muted); }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.callout { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 12px 16px; margin: 16px 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand">YCollector<span class="dot"></span></div>
+    <div class="meta">구현 기록 &middot; 2026-06-21</div>
+</div>
+
+<div class="wrap">
+
+<h1>TLS 가로채기 환경에서 yt-dlp 인증서 검증 실패 수정</h1>
+<p class="subtitle">
+    재생목록 URL 다운로드가 <code>[unknown] ERROR: Unable to handle request: 2 unexpected error(s)</code> 로 실패하던 문제.
+    겉보기엔 yt-dlp 네트워킹 에러였지만 실체는 <strong>백신/프록시 TLS 가로채기로 인한 SSL 인증서 검증 실패</strong>였고,
+    서버가 쓰던 <code>.venv</code> yt-dlp 가 OS 신뢰 저장소를 안 써서 깨졌다. <strong>검증을 켠 채로</strong> 고쳤다.
+</p>
+
+<p class="toc">
+    바로가기 &middot;
+    <a href="#symptom">① 증상</a> &middot;
+    <a href="#trace">② 원인 추적</a> &middot;
+    <a href="#root">③ 진짜 원인</a> &middot;
+    <a href="#fix">④ 수정</a> &middot;
+    <a href="#files">⑤ 변경 파일</a> &middot;
+    <a href="#stack">⑥ 패키지·기술</a> &middot;
+    <a href="#verify">⑦ 검증</a> &middot;
+    <a href="#apply">⑧ 적용</a> &middot;
+    <a href="#takeover">⑨ 서버 재실행 takeover</a>
+</p>
+
+<!-- ── 증상 ──────────────────────────────────────────────────────── -->
+<h2 id="symptom">1. 증상</h2>
+
+<div class="card">
+<p>분석 보드/다운로드 패널에서 재생목록 컨텍스트 URL을 받으면 잡이 곧장 실패했다:</p>
+<pre><code>DL  https://www.youtube.com/watch?v=N3fgTolQON8&list=PLiB54OIQ9yEIkm6Lt0zbVfxmQq8QP9yTs
+id: 4cd02a3e7b10 · 대기 중
+[unknown] ERROR: Unable to handle request: 2 unexpected error(s)</code></pre>
+<ul>
+    <li><code>[unknown]</code> 은 앱의 에러 분류(<code>classify_error</code>)가 알려진 패턴에 못 맞춰 붙인 카테고리.</li>
+    <li><code>Unable to handle request: 2 unexpected error(s)</code> 은 <strong>yt-dlp 네트워킹 계층</strong>이 낸 메시지(우리 코드 아님).</li>
+    <li>혼란 포인트: <strong>콘솔에서 <code>yt-dlp</code> 를 직접 돌리면 잘 됐다.</strong></li>
+</ul>
+</div>
+
+<!-- ── 원인 추적 ──────────────────────────────────────────────────── -->
+<h2 id="trace">2. 원인 추적 (추측 금지 · 직접 재현)</h2>
+
+<h3>① 메시지의 출처</h3>
+<p><code>yt_dlp/networking/exceptions.py</code> 의 <code>NoSupportingHandlers</code> 가 범인. yt-dlp 는 HTTP 요청마다 등록된 핸들러(urllib·requests…)를 차례로 시도하는데(<code>networking/common.py</code> <code>RequestDirector.send</code>):</p>
+<div class="diagram">for handler in handlers:
+    handler.validate(request)            # 실패 → UnsupportedRequest (예상된 거절)
+    handler.send(request)                # 실패(RequestError 아님) → "unexpected error" 로 수집
+                                         #   + 로그: "[urllib] Unexpected error: …"
+모두 실패 → raise NoSupportingHandlers   # → "Unable to handle request: N unexpected error(s)"</div>
+<div class="callout">
+핵심: 진짜 원인은 <code>[urllib] Unexpected error: …</code> / <code>[requests] Unexpected error: …</code> 줄에 들어있는데,
+<code>download()</code> 는 <strong>stderr 의 마지막 줄만</strong> 잡에 표시해서 그 줄이 묻혔다. 그래서 "Unable to handle request" 라는 껍데기만 보였다.
+</div>
+
+<h3>② 숨은 줄을 끄집어내 재현</h3>
+<p>앱과 같은 플래그로 실제 다운로드를 돌려 가려진 스택을 확인하니 정체가 드러났다:</p>
+<pre><code>ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED]
+  certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)
+yt_dlp.networking.exceptions.CertificateVerifyError: [SSL: CERTIFICATE_VERIFY_FAILED] …
+ERROR: [youtube] N3fgTolQON8: Unable to download API page: [SSL: CERTIFICATE_VERIFY_FAILED] …</code></pre>
+<p>즉 이 PC의 <strong>백신/프록시 TLS 가로채기</strong> 문제였다. 가로채는 프록시가 서버 인증서를 자체 CA로 바꿔치는데, 그 CA가 <code>certifi</code> 번들엔 없어서 검증이 깨진다.</p>
+
+<h3>③ "콘솔은 되는데 서버는 안 됨" — 서로 다른 yt-dlp</h3>
+<p>엔진은 <code>shutil.which("yt-dlp")</code> 로 yt-dlp 를 찾는다. <code>uv run</code> 환경에선 <code>.venv\Scripts</code> 가 PATH 앞이라 <strong>venv 의 yt-dlp</strong> 가 잡힌다 — 내 콘솔의 시스템 yt-dlp 와 다른 바이너리:</p>
+<table>
+<tr><th>실행 맥락</th><th>실제 yt-dlp 경로</th><th>버전</th><th>결과</th></tr>
+<tr><td>콘솔 <code>yt-dlp</code></td><td><code>…\Python313\Scripts\yt-dlp</code></td><td>2026.06.09</td><td>✅ 정상</td></tr>
+<tr><td><strong><code>uv run ycollector-server</code></strong></td><td><code>…\.venv\Scripts\yt-dlp.exe</code></td><td>2026.03.17</td><td>❌ SSL 실패</td></tr>
+</table>
+<div class="card accent">
+<p><strong>버전 업으로는 안 고쳐졌다 (가설 폐기).</strong> venv yt-dlp 를 콘솔과 같은 2026.06.09 로 올려도 <em>여전히</em> 동일 SSL 에러. 같은 버전·같은 Python 3.13.13·같은 OpenSSL 3.0.19·같은 certifi 인데도 한쪽만 깨졌다 → 차이는 <strong>yt-dlp 가 아니라 인터프리터 환경</strong>에 있었다.</p>
+</div>
+
+<!-- ── 진짜 원인 ──────────────────────────────────────────────────── -->
+<h2 id="root">3. 진짜 원인 — venv 엔 OS 신뢰 저장소 훅이 없었다</h2>
+
+<div class="card">
+<p>시스템 Python 의 <code>site-packages</code> 엔 <code>pip_system_certs.pth</code> 가 있었고, venv 엔 없었다. 이 <code>.pth</code> 는 <strong>인터프리터 시작 시</strong> Python 의 SSL 을 <strong>OS 인증서 저장소</strong>(가로채는 프록시 CA가 들어있는 Windows 저장소)에 연결한다. 그래서 시스템 Python 으로 도는 yt-dlp 는 자동으로 통과했고, venv yt-dlp 는 <code>certifi</code> 번들로만 검증해 깨졌다.</p>
+</div>
+
+<table>
+<tr><th>요소</th><th>시스템 Python</th><th>.venv (서버)</th></tr>
+<tr><td><code>pip_system_certs.pth</code></td><td>✅ 있음</td><td>❌ 없음 → 원인</td></tr>
+<tr><td><code>truststore</code> 설치</td><td>있음</td><td>있음 (그러나 미주입)</td></tr>
+<tr><td>Python / OpenSSL</td><td>3.13.13 / 3.0.19</td><td>3.13.13 / 3.0.19 (동일)</td></tr>
+<tr><td><code>certifi</code> 번들</td><td>가로채기 CA 없음</td><td>가로채기 CA 없음</td></tr>
+</table>
+
+<div class="callout">
+<strong>왜 truststore 만으론 부족했나:</strong> 프로젝트는 in-process HTTPS(anthropic/openai/whisper)에 <code>truststore.inject_into_ssl()</code> 를 쓴다.
+그런데 yt-dlp 는 <strong>별도 프로세스</strong>라 부모에서 주입해도 자식엔 안 닿는다. <code>.pth</code> 훅(<code>pip_system_certs</code>)은 그 자식 인터프리터가 <em>시작할 때</em> 스스로 OS 저장소를 붙이므로 서브프로세스 yt-dlp 까지 커버한다.
+</div>
+
+<div class="card">
+<h3>막다른 길도 기록 (정직)</h3>
+<p><code>ssl.enum_certificates("ROOT"/"CA")</code> 로 Windows 저장소를 PEM(72개)으로 떠 <code>SSL_CERT_FILE</code> 로 물려도 <strong>실패</strong>했다 — 그 열거 API 엔 가로채기 CA 가 안 잡혔다. 신뢰할 수 있는 길은 CryptoAPI 전체 체인 검증을 쓰는 <code>pip_system_certs</code>/<code>truststore</code> 였다.</p>
+</div>
+
+<!-- ── 수정 ───────────────────────────────────────────────────────── -->
+<h2 id="fix">4. 수정 — 보안 유지 자동 수정 + 최후 수단 + 진단 개선</h2>
+
+<div class="diagram">서버 다운로드 경로
+  server._run_download / _download_collect
+      └─▶ YtdlpEngine.download()  ──(subprocess)──▶  .venv\Scripts\yt-dlp.exe
+                                                          │ 인터프리터 시작 시
+                                                          ▼
+                                              pip_system_certs.pth → SSL = OS 신뢰 저장소
+                                                          │ (프록시 CA 신뢰)
+                                                          ▼
+                                              인증서 검증 통과 (검증 ON 유지)</div>
+
+<h3>① 보안 유지 자동 수정 — <code>pip-system-certs</code> 를 의존성으로</h3>
+<table>
+<tr><th>변경</th><th>내용</th></tr>
+<tr><td><span class="badge new">NEW</span> <code>pyproject.toml</code> base deps</td>
+    <td><code>pip-system-certs&gt;=4.0</code> 추가(설치판 5.3). 인터프리터가 .pth 로 OS 저장소를 자동 사용 → 서브프로세스 yt-dlp 도 통과. <strong>인증서 검증은 켠 채로.</strong></td></tr>
+<tr><td><span class="badge changed">CHANGED</span> <code>uv.lock</code></td>
+    <td><code>uv lock --native-tls</code> 로 기록 — 향후 <code>uv sync</code> prune 에도 살아남게(durable).</td></tr>
+</table>
+<div class="callout">
+in-process API 클라이언트는 각 extra 의 <code>truststore</code> 가 계속 담당하고, 이 패키지는 <strong>subprocess yt-dlp 경로</strong>만 담당한다. 역할 분담이 깔끔하다.
+</div>
+
+<h3>② 최후 수단 설정 — <code>no_check_certificate</code></h3>
+<p>OS 저장소로도 안 될 환경(다른 PC·prune 등) 대비. 기본 <code>false</code>(보안 유지).</p>
+<table>
+<tr><th>구성요소</th><th>변경</th><th>요약</th></tr>
+<tr><td><code>config.py</code> <code>Settings</code></td><td><span class="badge new">NEW</span></td>
+    <td><code>no_check_certificate: bool = False</code> + <code>[network]</code> load/save/to_dict/from_dict/템플릿</td></tr>
+<tr><td><code>engine/ytdlp.py</code></td><td><span class="badge changed">CHANGED</span></td>
+    <td><code>download()</code>·<code>list_formats()</code> 에 <code>no_check_certificate</code> 파라미터 → 켜면 <code>--no-check-certificate</code> 추가</td></tr>
+<tr><td><code>server.py</code></td><td><span class="badge changed">CHANGED</span></td>
+    <td><code>_run_download</code>·<code>_download_collect</code> 에서 <code>no_check_certificate=s.no_check_certificate</code> 전달</td></tr>
+<tr><td><code>cli.py</code></td><td><span class="badge new">NEW</span></td>
+    <td><code>--no-check-certificate</code> 플래그(기본값 settings.ini) → 엔진 전달</td></tr>
+<tr><td><code>settings.ini</code>(루트)</td><td><span class="badge changed">CHANGED</span></td>
+    <td><code>[network] no_check_certificate = false</code> 주석과 함께 동기화</td></tr>
+</table>
+
+<h3>③ 진단 개선 — <code>cert-verify</code> 분류</h3>
+<p>다음부터 이 부류가 <code>[unknown]</code> 으로 묻히지 않게 <code>engine/ytdlp.py</code> <code>ERROR_PATTERNS</code> 에 패턴 추가:</p>
+<pre><code>"cert-verify": r"CERTIFICATE_VERIFY_FAILED|unable to get local issuer certificate|Unable to handle request",</code></pre>
+
+<!-- ── 변경 파일 ──────────────────────────────────────────────────── -->
+<h2 id="files">5. 변경 파일 요약</h2>
+<table>
+<tr><th>파일</th><th>변경</th></tr>
+<tr><td><code>pyproject.toml</code></td><td>base deps += <code>pip-system-certs&gt;=4.0</code></td></tr>
+<tr><td><code>uv.lock</code></td><td><code>pip-system-certs</code> / <code>pip</code> 추가 기록</td></tr>
+<tr><td><code>settings.ini</code></td><td><code>[network] no_check_certificate</code> 항목·주석</td></tr>
+<tr><td><code>src/ycollector/config.py</code></td><td><code>Settings.no_check_certificate</code> 전 경로(load/save/dict/template)</td></tr>
+<tr><td><code>src/ycollector/engine/ytdlp.py</code></td><td><code>--no-check-certificate</code> 플러밍 + <code>cert-verify</code> 분류</td></tr>
+<tr><td><code>src/ycollector/server.py</code></td><td>두 다운로드 경로에 설정 전달 + 단일 인스턴스 takeover(§9)</td></tr>
+<tr><td><code>src/ycollector/cli.py</code></td><td><code>--no-check-certificate</code> 인자</td></tr>
+</table>
+
+<!-- ── 패키지·기술 ────────────────────────────────────────────────── -->
+<h2 id="stack">6. 사용한 패키지·기술</h2>
+<table>
+<tr><th>패키지/기술</th><th>역할</th></tr>
+<tr><td><code>pip-system-certs</code> 5.3</td><td>인터프리터 시작 시 <code>.pth</code> 로 SSL 을 OS 신뢰 저장소에 연결 → <strong>서브프로세스 yt-dlp</strong> 가 가로채기 CA 를 신뢰(검증 유지)</td></tr>
+<tr><td><code>truststore</code></td><td>in-process HTTPS(anthropic/openai/whisper) 용 OS 저장소 주입 — 기존 유지, 역할 분리</td></tr>
+<tr><td><code>yt-dlp</code> 2026.06.09</td><td>다운로드 엔진(서브프로세스). venv 판도 2026.03.17 → 2026.06.09 로 상향(위생 차원)</td></tr>
+<tr><td><code>uv</code> (<code>--native-tls</code>)</td><td>가로채기 환경 설치/락 — Rust native-TLS 로 OS 저장소 사용</td></tr>
+<tr><td>yt-dlp networking</td><td><code>RequestDirector</code>/<code>NoSupportingHandlers</code> 구조 분석으로 메시지 출처 규명</td></tr>
+</table>
+
+<!-- ── 검증 ───────────────────────────────────────────────────────── -->
+<h2 id="verify">7. 검증</h2>
+<div class="card">
+<ul>
+    <li><strong>재현</strong>: venv yt-dlp(2026.03.17/06.09 모두)에서 <code>CERTIFICATE_VERIFY_FAILED</code> 확인. <code>--no-check-certificate</code> 로 통과(exit 0) 확인.</li>
+    <li><strong>보안 유지 수정</strong>: venv 에 <code>pip-system-certs</code> 설치 후 <code>--simulate</code> → <code>VERIFIED-OK</code>(검증 ON, exit 0).</li>
+    <li><strong>E2E(서버 경로)</strong>: venv Python 으로 <code>YtdlpEngine().download(no_check_certificate=False)</code> 실제 다운로드 → <code>using yt-dlp: .venv\Scripts\yt-dlp.EXE</code>, <code>DOWNLOADED OK</code>.</li>
+    <li><strong>설정 라운드트립</strong>: <code>settings_to_dict</code>/<code>from_dict</code>/<code>load_settings</code> 에 <code>no_check_certificate</code> 반영 확인.</li>
+    <li><strong>분류</strong>: <code>classify_error("Unable to handle request: …")</code> → <code>cert-verify</code>, SSL 메시지도 <code>cert-verify</code>.</li>
+    <li><strong>스모크</strong>: <code>config·engine.ytdlp·server·cli</code> import OK. CLI <code>--help</code> 에 <code>--no-check-certificate</code> 노출.</li>
+</ul>
+<p><strong>못 한 것(정직):</strong> 프로젝트 자체 테스트는 없음(<code>pytest</code> 수집 0) — import 스모크 + 실다운로드로 대체. <code>ruff</code> 는 <code>dev</code> extra 미설치라 린트 미실행.</p>
+</div>
+
+<div class="callout">
+<strong>무해한 참고:</strong> <code>uv run</code> 이 "venv 가 3.13.11 로 생성됐는데 현재 3.13.13" 경고를 낸다. 이번 문제와 무관한 기존 환경 드리프트라 건드리지 않았다.
+</div>
+
+<!-- ── 적용 ───────────────────────────────────────────────────────── -->
+<h2 id="apply">8. 적용</h2>
+<pre><code># 이미 적용됨(venv): pip-system-certs 설치 + uv.lock 기록 + yt-dlp 상향.
+# 깨끗한 환경에서 재현/동기화 시:
+uv sync --extra web --native-tls          # pip-system-certs 포함 설치
+
+# 서버 재시작 후 실패 잡 재시도
+uv run ycollector-server                  # → http://127.0.0.1:8765/
+#   큐 패널의 "재시도"(또는 URL 재입력) → 이제 통과
+
+# OS 신뢰 저장소로도 안 되는 환경이라면(최후 수단):
+#   %APPDATA%\YCollector\settings.ini 또는 루트 settings.ini 의
+#   [network] no_check_certificate = true</code></pre>
+
+<!-- ── 서버 재실행 takeover ─────────────────────────────────────────── -->
+<h2 id="takeover">9. 서버 재실행 — 기존 인스턴스 자동 교체</h2>
+
+<div class="card accent">
+<p><strong>문제:</strong> <code>uv run ycollector-server</code> 를 다시 실행하면 <code>failed to remove directory .venv\Lib: 액세스가 거부되었습니다 (os error 5)</code>.
+원인 둘 — ① 떠 있던 서버가 <code>.venv\Lib</code> 의 <code>.pyd/.dll</code> 을 잠가둠, ② <code>pyvenv.cfg</code>(3.13.11) ↔ 시스템 Python(3.13.13) 드리프트로 uv 가 venv 재생성을 시도. 그래서 "닫고 새로 열기" 가 안 됐다.</p>
+</div>
+
+<h3>해결: 서버 시작 시 같은 포트의 기존 YCollector 서버를 닫고 인계</h3>
+<div class="diagram">uv run --no-sync ycollector-server          # ← --no-sync: venv 재생성 건너뜀(잘린 휠 위험 회피)
+   └─▶ main(): 포트 8765 점유? ──no──▶ 그대로 bind
+                     │ yes
+                     ▼
+            GET /api/health 응답이 'YCollector' 인가?   ──no──▶ 종료(다른 앱 보호, exit 12)
+                     │ yes (우리 서버 확정)
+                     ▼
+            포트 소유 PID 종료(netstat→pidfile, taskkill /T)  ─▶ 포트 해제 대기 ─▶ bind</div>
+
+<table>
+<tr><th>구성요소</th><th>변경</th><th>요약</th></tr>
+<tr><td><code>_replace_existing_instance()</code></td><td><span class="badge new">NEW</span></td>
+    <td>포트가 비었으면 통과. 점유 시 <code>/api/health</code> 로 <strong>우리 서버임을 확인한 뒤에만</strong> 종료(엉뚱한 앱 보호)</td></tr>
+<tr><td><code>_is_our_server()</code> / <code>_pid_listening_on()</code> / <code>_terminate_pid()</code></td><td><span class="badge new">NEW</span></td>
+    <td>health 프로브 · Windows <code>netstat</code> 로 포트 소유 PID · win <code>taskkill /T /F</code> / posix <code>SIGTERM→SIGKILL</code></td></tr>
+<tr><td><code>server.pid</code></td><td><span class="badge new">NEW</span></td>
+    <td><code>%APPDATA%\YCollector\server.pid</code> 에 PID 기록(다음 실행의 종료 대상 fallback), 정상 종료 시 삭제</td></tr>
+<tr><td><code>--no-replace</code> / <code>--port 0</code></td><td><span class="badge new">NEW</span> / <span class="badge note">기존</span></td>
+    <td><code>--no-replace</code>: 교체 안 함(충돌 시 실패). <code>--port 0</code>: 빈 포트 자동 선택(교체 불필요)</td></tr>
+</table>
+
+<div class="callout">
+<strong>왜 <code>--no-sync</code> 가 필요한가:</strong> takeover 는 <em>서버 코드 안</em>에서 돈다. 그런데 그냥 <code>uv run</code>(동기화 모드)은 <strong>우리 코드가 실행되기 전에</strong> venv 를 재생성하려다, 기존 서버가 건 락 때문에 거기서 먼저 실패한다. <code>--no-sync</code> 면 재생성을 건너뛰어 <code>main()</code> 이 실행되고 → 기존 서버를 닫고 → 새로 뜬다. 결론: <code>uv run --no-sync ycollector-server</code> 한 줄을 반복 실행하면 항상 "닫고 새로 열기".
+</div>
+
+<h3>검증</h3>
+<div class="card">
+<ul>
+    <li>서버 A(8765, PID 21976) 기동 → 서버 B 를 8765 로 기동 → <strong>A 종료 확인 · B 가 포트 인계 · <code>/api/health</code> HTTP 200</strong>.</li>
+    <li><code>taskkill /T</code> 가 포트 소유(자식)와 함께 <code>uv run</code> 래퍼 트리까지 정리됨을 확인.</li>
+    <li>안전장치: <code>_is_our_server</code> 가 false 면(다른 앱) 종료하지 않고 <code>exit 12</code> + 안내. 자기 자신(<code>os.getpid()</code>)은 종료 대상에서 제외.</li>
+</ul>
+</div>
+<pre><code># 반복 재실행 = 자동 교체
+uv run --no-sync ycollector-server         # 기존 8765 서버를 닫고 새로 연다
+# 기존 인스턴스를 건드리지 않으려면
+uv run --no-sync ycollector-server --no-replace
+# 빈 포트로 별도 기동
+uv run --no-sync ycollector-server --port 0</code></pre>
+
+</div>
+</body>
+</html>

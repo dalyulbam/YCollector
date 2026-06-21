@@ -21,6 +21,13 @@ classifiers = [
 ]
 dependencies = [
     "yt-dlp>=2026.2.0",
+    # 백신/프록시 TLS 가로채기 환경 대응. 인터프리터 시작 시 .pth 로 SSL 을
+    # OS 신뢰 저장소(Windows 인증서 저장소 등)에 연결해, 서브프로세스로 도는
+    # yt-dlp 도 가로채는 루트 CA 를 신뢰하게 한다(certifi 번들엔 그 CA 가 없어
+    # 'CERTIFICATE_VERIFY_FAILED → Unable to handle request' 로 실패하던 문제).
+    # in-process API 클라이언트(anthropic/openai/whisper)는 각 extra 의 truststore
+    # 가 담당하고, 이 패키지는 subprocess yt-dlp 경로를 담당한다.
+    "pip-system-certs>=4.0",
 ]
 
 [project.optional-dependencies]
