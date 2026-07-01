@@ -407,6 +407,8 @@ footer a { color: var(--accent); text-decoration: none; }
     color: var(--accent-3); border: 1px solid color-mix(in srgb, var(--accent-3) 30%, transparent);
 }
 .an-doc:hover { background: color-mix(in srgb, var(--accent-3) 26%, transparent); }
+/* 캡쳐뷰 링크(a.an-doc): 버튼과 동일하게 보이도록 — 밑줄 제거 + 높이 정렬. */
+a.an-doc { display: inline-flex; align-items: center; text-decoration: none; }
 .an-miss {
     font-size: 11px; padding: 2px 10px; border-radius: 999px;
     background: var(--bg-soft); color: var(--fg-soft);

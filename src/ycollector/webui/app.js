@@ -535,6 +535,16 @@ function renderFileRow(rootKey, it) {
     badges.className = "an-badges";
     if (it.summary) badges.appendChild(docButton("요약", rootKey, it.summary, it.name));
     if (it.script) badges.appendChild(docButton("대본", rootKey, it.script, it.name));
+    if (it.html) {
+        // 캡쳐뷰: 전사 전문 + 화면 캡쳐 + 타임스탬프의 standalone HTML — 새 탭으로.
+        const a = document.createElement("a");
+        a.className = "an-doc an-html";
+        a.textContent = "🖼 캡쳐뷰";
+        a.href = fileUrl(rootKey, it.html);
+        a.target = "_blank"; a.rel = "noopener";
+        a.title = "전사 전문 + 화면 캡쳐 + 타임스탬프 (새 탭)";
+        badges.appendChild(a);
+    }
     if (it.diarized) {
         const sp = document.createElement("span");
         sp.className = "an-spk"; sp.textContent = "화자✓";

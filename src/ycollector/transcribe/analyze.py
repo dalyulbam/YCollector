@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             summarizer = None
 
-    from .report import write_reports
+    from .report import write_reports, write_transcript_html
 
     print(f"[설정] whisper={run_cfg.model} ({engine.device})  요약={'off' if summarizer is None else args.summary_model}",
           file=sys.stderr)
@@ -179,6 +179,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         for kind, pth in written.items():
             print(f"  ✓ {kind}: {pth.name}", file=sys.stderr)
+        # 전사하면 항상 캡쳐+타임스탬프 standalone HTML.
+        try:
+            hpath = write_transcript_html(
+                out_dir, src.stem, result.segments, video=src, summary=summary,
+                title=src.stem, language=result.language, duration=result.duration,
+            )
+            print(f"  ✓ html: {hpath.name}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ✗ html 생성 경고: {exc}", file=sys.stderr)
         print("", file=sys.stderr)
 
     # ── 요약 ───────────────────────────────────────────────────────────────

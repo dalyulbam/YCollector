@@ -687,6 +687,7 @@ def _browse_dir(root_key: str, rel: str) -> dict[str, Any]:
                 continue
             summary = analysis_dir / f"{c.stem}.summary.md"
             script = analysis_dir / f"{c.stem}.script.md"
+            html_report = analysis_dir / f"{c.stem}.transcript.html"
             script_exists = script.is_file()
             items.append({
                 "name": c.name,
@@ -694,6 +695,7 @@ def _browse_dir(root_key: str, rel: str) -> dict[str, Any]:
                 "bytes": size,
                 "summary": summary.relative_to(root).as_posix() if summary.is_file() else None,
                 "script": script.relative_to(root).as_posix() if script_exists else None,
+                "html": html_report.relative_to(root).as_posix() if html_report.is_file() else None,
                 "diarized": script_exists and _script_has_speakers(script),
             })
 
@@ -752,12 +754,14 @@ def _scan_overview() -> dict[str, Any]:
                     continue  # 스캔 중 삭제/권한 변경 — 이 파일만 건너뜀.
                 summary = analysis_dir / f"{f.stem}.summary.md"
                 script = analysis_dir / f"{f.stem}.script.md"
+                html_report = analysis_dir / f"{f.stem}.transcript.html"
                 items.append({
                     "name": f.name,
                     "rel": f.relative_to(root).as_posix(),
                     "bytes": size,
                     "summary": summary.relative_to(root).as_posix() if summary.is_file() else None,
                     "script": script.relative_to(root).as_posix() if script.is_file() else None,
+                    "html": html_report.relative_to(root).as_posix() if html_report.is_file() else None,
                 })
             album_index = d / _ALBUM_DIRNAME / "index.html"
             standalones = [
@@ -861,7 +865,7 @@ def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
             job.emit_sync("progress",
                           message=f"요약 비활성 — {exc.message.splitlines()[0]} (전사만 진행)")
 
-    from ycollector.transcribe.report import write_reports
+    from ycollector.transcribe.report import write_reports, write_transcript_html
 
     n = len(files)
     # 파일 1개 안에서의 비중: 요약을 켰으면 전사 85% + 요약 15% (요약이 훨씬 짧다).
@@ -912,6 +916,16 @@ def _run_analyze(job: _JobRow, files: list[Path], *, language: str | None,
 
         write_reports(out_dir, src.stem, result.segments, summary,
                       title=src.stem, language=result.language, duration=result.duration)
+        # 전사하면 항상 캡쳐+타임스탬프 standalone HTML 도 생성(영상 있으면 프레임 캡쳐).
+        try:
+            job.emit_sync("progress", progress=job.progress,
+                          message=f"[{i + 1}/{n}] 캡쳐 HTML 생성 중 · {src.name[:40]}")
+            write_transcript_html(
+                out_dir, src.stem, result.segments, video=src, summary=summary,
+                title=src.stem, language=result.language, duration=result.duration,
+            )
+        except Exception as exc:  # HTML 실패가 전사 완료를 막지 않게.
+            job.emit_sync("progress", message=f"캡쳐 HTML 경고 — {src.name}: {exc}")
         job.progress = (i + 1) / n
         job.emit_sync("progress", progress=job.progress,
                       message=f"[{i + 1}/{n}] 완료 · {src.name[:48]}")
