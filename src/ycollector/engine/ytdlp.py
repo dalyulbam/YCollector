@@ -176,14 +176,18 @@ class MetaInfo:
     channel: str
     duration: str
     video_id: str
+    # 재생목록 위치(단일 영상이면 None). 전사용 다운로드 진행바를
+    # '완료 i / 전체 N' 로 그리는 데 쓴다.
+    playlist_index: int | None = None
+    playlist_count: int | None = None
 
 
 def _parse_meta(payload: str) -> MetaInfo | None:
-    parts = payload.split("\t", 3)
-    while len(parts) < 4:
+    parts = payload.split("\t", 5)
+    while len(parts) < 6:
         parts.append("")
     cleaned = [("" if p in ("NA", "N/A") else p) for p in parts]
-    title, channel, duration, vid_id = cleaned
+    title, channel, duration, vid_id, pl_idx, pl_cnt = cleaned
     if not (title or channel or duration or vid_id):
         return None
     return MetaInfo(
@@ -191,6 +195,8 @@ def _parse_meta(payload: str) -> MetaInfo | None:
         channel=channel or "?",
         duration=duration or "?",
         video_id=vid_id or "?",
+        playlist_index=_int_or_none(pl_idx),
+        playlist_count=_int_or_none(pl_cnt),
     )
 
 
@@ -231,6 +237,9 @@ _FINAL_PATH_MARKER = "YCFINAL:"
 _META_TEMPLATE = (
     "pre_process:YCMETA\t"
     "%(title)s\t%(channel,uploader)s\t%(duration_string,duration)s\t%(id)s"
+    # 재생목록 위치: 단일 영상이면 둘 다 NA. playlist_count 가 없을 때를 대비해
+    # n_entries 로 폴백(둘 다 yt-dlp 가 재생목록 추출 시 채운다).
+    "\t%(playlist_index)s\t%(playlist_count,n_entries)s"
 )
 _META_MARKER = "YCMETA\t"
 
@@ -313,6 +322,59 @@ class YtdlpEngine:
                 raw_stderr=result.stderr or "",
             ) from exc
         return info, list(info.get("formats", []))
+
+    def probe_unavailable(
+        self,
+        url: str,
+        *,
+        no_playlist: bool = False,
+        yes_playlist: bool = False,
+        cookies_file: str | Path | None = None,
+        playlist_items: str | None = None,
+        no_check_certificate: bool = False,
+        timeout: int = 60,
+    ) -> tuple[int, int]:
+        """``--flat-playlist`` 로 빠르게 ``(접근불가_개수, 전체_개수)`` 반환.
+
+        영상을 실제 추출하지 않고 항목만 나열해 '제목 없음(NA)/[Private video]/
+        [Deleted video]/멤버십' 같은 **접근 불가 항목 수**를 센다. 로그인이 필요한지
+        (비공개 재생목록인지) 다운로드 전에 값싸게 판단하는 용도. 실패 시 ``(0, 0)``.
+        """
+        cmd = [
+            str(self.ytdlp_path), "--flat-playlist", "--no-warnings",
+            "--ignore-errors", "--no-progress", "--print", "%(title)s",
+        ]
+        if no_playlist:
+            cmd.append("--no-playlist")
+        elif yes_playlist:
+            cmd.append("--yes-playlist")
+        if playlist_items:
+            cmd += ["--playlist-items", playlist_items]
+        if cookies_file is not None:
+            cmd += ["--cookies", str(cookies_file)]
+        if no_check_certificate:
+            cmd.append("--no-check-certificate")
+        cmd.append(url)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", check=False, timeout=timeout, env=_subprocess_env(),
+            )
+        except (subprocess.SubprocessError, OSError):
+            return 0, 0
+        total = unavailable = 0
+        for line in (result.stdout or "").splitlines():
+            t = line.strip()
+            if not t:
+                continue
+            total += 1
+            low = t.lower()
+            if t in ("NA", "N/A") or (
+                t.startswith("[")
+                and any(k in low for k in ("private", "deleted", "unavailable", "removed", "members"))
+            ):
+                unavailable += 1
+        return unavailable, total
 
     def download(
         self,

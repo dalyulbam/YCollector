@@ -80,6 +80,31 @@ def is_cookies_present(path: Path | None = None) -> bool:
         return False
 
 
+# 로그인(인증) 세션을 나타내는 쿠키들. 하나라도 있어야 '진짜 로그인'이다.
+# 로그인 전엔 NID/PREF/YSC/VISITOR_INFO1_LIVE/__Host-GAPS 같은 것만 있고 아래는 없다
+# → 비공개/멤버십 영상 접근 불가. (2026-07 진단: 파일만 보면 미인증도 '있음'으로 오판.)
+_AUTH_COOKIE_NAMES = ("SAPISID", "__Secure-3PSID", "__Secure-1PSID", "SID", "LOGIN_INFO")
+
+
+def _has_auth_cookies(cookies: list[dict[str, Any]]) -> bool:
+    names = {c.get("name") for c in cookies}
+    return any(n in names for n in _AUTH_COOKIE_NAMES)
+
+
+def is_cookies_authenticated(path: Path | None = None) -> bool:
+    """cookies.txt 가 '실제 로그인' 세션인지(인증 쿠키 포함) 확인.
+
+    파일이 있어도 로그인 전 쿠키뿐이면 False — 이 경우 비공개 영상은 못 받는다.
+    """
+    p = path or default_cookies_path()
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    # Netscape 7컬럼 중 6번째가 name. 탭으로 감싸 매칭.
+    return any(f"\t{name}\t" in text for name in _AUTH_COOKIE_NAMES)
+
+
 # ── Netscape cookies.txt 직렬화 ───────────────────────────────────────────
 _NETSCAPE_HEADER = (
     "# Netscape HTTP Cookie File\n"
@@ -168,8 +193,9 @@ def login_and_save(
     profile_dir: Path | None = None,
     headless: bool = False,
     timeout: int = 600,
+    channel: str = "chrome",
 ) -> Path:
-    """별 Chromium 을 띄워 로그인 → cookies.txt 저장 → 경로 반환.
+    """별 브라우저를 띄워 로그인 → cookies.txt 저장 → 경로 반환.
 
     Args:
         out_path: 저장 경로. None 이면 default_cookies_path().
@@ -177,6 +203,11 @@ def login_and_save(
             재호출 시 같은 dir 을 쓰면 이전 로그인 유지(재로그인 불필요).
         headless: True 면 헤드리스 모드(첫 로그인엔 부적합 — 디버그용).
         timeout: 사용자가 로그인 완료할 때까지 대기할 최대 초.
+        channel: 브라우저 채널. 기본 ``"chrome"`` = 실제 설치된 Google Chrome.
+            Google 은 Playwright **번들 Chromium**(테스트 빌드 + 자동화 플래그)을
+            "안전하지 않은 브라우저"로 보고 로그인을 막는다("다른 브라우저를
+            사용하세요"). 실제 Chrome + 자동화 신호 제거로 그 차단을 우회한다.
+            ``"chromium"`` / ``"bundled"`` / 빈값이면 번들 Chromium.
     """
     try:
         from playwright.sync_api import (
@@ -199,13 +230,35 @@ def login_and_save(
     print(f"[i] Chromium 프로필: {profile_dir}", file=sys.stderr)
     print(f"[i] 저장 위치: {out_path}", file=sys.stderr)
 
+    # Google 의 '자동화/안전하지 않은 브라우저' 로그인 차단 우회:
+    #  (1) 번들 Chromium 대신 실제 설치된 Chrome(channel) 을 쓰고,
+    #  (2) 자동화 탐지 신호 제거 — navigator.webdriver(=AutomationControlled) 와
+    #      "자동화된 테스트 소프트웨어가 제어" 배너(--enable-automation) 를 끈다.
+    launch_kwargs: dict[str, Any] = dict(
+        user_data_dir=str(profile_dir),
+        headless=headless,
+        ignore_default_args=["--enable-automation"],
+        args=[
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+        ],
+        viewport={"width": 1280, "height": 800},
+    )
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=headless,
-            args=["--no-first-run", "--no-default-browser-check"],
-            viewport={"width": 1280, "height": 800},
-        )
+        ctx = None
+        want = (channel or "").strip().lower()
+        if want and want not in ("none", "bundled", "chromium"):
+            try:
+                ctx = p.chromium.launch_persistent_context(channel=channel, **launch_kwargs)
+                print(f"[i] 실제 '{channel}' 브라우저 사용(자동화 탐지 우회).", file=sys.stderr)
+            except Exception as exc:
+                print(f"  [!] channel='{channel}' 실행 실패({exc}). 번들 Chromium 으로 폴백.",
+                      file=sys.stderr)
+        if ctx is None:
+            ctx = p.chromium.launch_persistent_context(**launch_kwargs)
+            print("[i] 번들 Chromium 사용 — Google 이 로그인을 막으면 '--channel chrome' 또는 "
+                  "브라우저에서 cookies.txt 수동 내보내기를 쓰세요.", file=sys.stderr)
 
         # 컨텍스트가 자체 페이지를 들고 시작할 수도, 없을 수도 — 안전하게 한 장.
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -239,23 +292,24 @@ def login_and_save(
             if closed["v"]:
                 print("  [i] 사용자가 창을 닫음 — 마지막 쿠키 저장 시도.", file=sys.stderr)
                 break
+            # 로그인 판정은 아바타 셀렉터(가짜 양성)가 아니라 **인증 쿠키** 유무로.
+            # SAPISID/SID/__Secure-3PSID 등이 생겨야 진짜 로그인 완료다.
             try:
-                logged_in = _is_logged_in(page)
+                authed = _has_auth_cookies(ctx.cookies())
             except PWError:
-                # 페이지가 detach 됐을 수 있음 — 다음 폴링에서 ctx 가 닫혔는지 확인됨.
-                logged_in = False
+                authed = False
 
-            if logged_in:
+            if authed:
                 if confirmed_at is None:
                     confirmed_at = time.monotonic()
                     print(
-                        f"  ✓ 로그인 감지. {_LOGIN_CONFIRM_DELAY:.0f}초 후 자동 저장…",
+                        f"  ✓ 로그인(인증 쿠키) 감지. {_LOGIN_CONFIRM_DELAY:.0f}초 후 저장…",
                         file=sys.stderr,
                     )
                 elif time.monotonic() - confirmed_at >= _LOGIN_CONFIRM_DELAY:
                     break
             else:
-                confirmed_at = None  # 로그아웃이 다시 보이면 카운터 리셋
+                confirmed_at = None  # 아직 미인증 — 카운터 리셋
             time.sleep(_LOGIN_POLL_INTERVAL)
 
         # 쿠키 수집. context 가 이미 닫혔다면 try 가 PWError.
@@ -278,6 +332,18 @@ def login_and_save(
             file=sys.stderr,
         )
         raise SystemExit(2)
+
+    # 인증 쿠키가 없으면 = 로그인 미완료. 기존의 정상 파일을 덮어쓰지 않는다.
+    if not _has_auth_cookies(cookies):
+        print(
+            "\n  ✗ 인증(로그인) 쿠키가 없습니다 — 로그인이 완료되지 않았습니다.\n"
+            "    - 창에서 Google 로그인을 끝까지(2단계 인증 포함) 완료했는지 확인\n"
+            "    - Google 이 자동 브라우저 로그인을 막으면: 평소 브라우저 확장\n"
+            "      'Get cookies.txt LOCALLY' 로 youtube.com 쿠키를 내보내\n"
+            f"      {out_path} 로 저장하세요(그러면 앱이 자동 사용).\n",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
 
     text = to_netscape(cookies)
     out_path.write_text(text, encoding="utf-8")
@@ -319,6 +385,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--headless", action="store_true",
                    help="헤드리스 모드. 첫 로그인엔 비권장 — 이미 프로필 dir 에 "
                         "세션이 있을 때 자동 갱신용.")
+    p.add_argument("--channel", default="chrome",
+                   help="브라우저 채널 (기본 chrome=실제 Chrome). Google 의 자동화 차단을 "
+                        "우회한다. msedge 도 가능. 'chromium'/'bundled'=Playwright 번들.")
     p.add_argument("--print-path", action="store_true",
                    help="기본 저장 경로만 출력하고 종료.")
     args = p.parse_args(argv)
@@ -333,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             profile_dir=args.profile_dir,
             headless=args.headless,
             timeout=args.timeout,
+            channel=args.channel,
         )
     except KeyboardInterrupt:
         print("\n  중단됨 (Ctrl+C).", file=sys.stderr)

@@ -174,6 +174,63 @@ def _library_read() -> dict[str, Any]:
         return {"version": 1, "items": []}
 
 
+# ── 자동 로그인(비공개 재생목록 대응) ─────────────────────────────────────
+# Playwright sync 는 동시에 하나만 — 여러 워커/수동 요청이 겹치지 않게 잠근다.
+_LOGIN_LOCK = threading.Lock()
+
+
+def _maybe_login_for(job: "_JobRow", engine: Any, url: str, *, no_pl: bool, yes_pl: bool,
+                     cookies_file: Path | None, playlist_items: str | None,
+                     no_check_certificate: bool) -> Path | None:
+    """비공개/멤버십 등 '접근 불가' 항목이 있는데 로그인 세션이 없으면 Google 로그인
+    팝업(실제 Chrome)을 자동으로 띄우고, 성공 시 인증 cookies.txt 경로를 반환한다.
+
+    - 이미 인증 쿠키가 있으면 그대로 반환(팝업 없음).
+    - 접근 불가 항목이 0이면 그대로 반환(공개 전용 → 팝업 없음).
+    - 로그인 실패/미완료/미설치면 원래 cookies_file 유지(공개분만 진행).
+    """
+    from ycollector.cookies import (
+        default_cookies_path,
+        is_cookies_authenticated,
+        login_and_save,
+    )
+
+    if is_cookies_authenticated(cookies_file):
+        return cookies_file  # 이미 로그인 세션 — 팝업 불필요.
+    try:
+        unavail, total = engine.probe_unavailable(
+            url, no_playlist=no_pl, yes_playlist=yes_pl, cookies_file=cookies_file,
+            playlist_items=playlist_items, no_check_certificate=no_check_certificate,
+        )
+    except Exception:
+        return cookies_file
+    if unavail <= 0:
+        return cookies_file  # 전부 접근 가능(공개) — 로그인 불필요.
+
+    job.status = "auth"
+    job.emit_sync("status", status="auth",
+                  message=f"접근 제한 영상 {unavail}/{total}개 — 열리는 창에서 Google 로그인하세요.")
+    with _LOGIN_LOCK:
+        # 대기 중 다른 워커가 먼저 로그인해 인증됐을 수 있음.
+        if is_cookies_authenticated(default_cookies_path()):
+            return default_cookies_path()
+        try:
+            login_and_save()
+        except SystemExit as exc:
+            job.emit_sync("progress", message=f"로그인 건너뜀({exc}) — 공개 영상만 진행.")
+            return cookies_file
+        except Exception as exc:  # noqa: BLE001
+            job.emit_sync("progress", message=f"로그인 실패({exc}) — 공개 영상만 진행.")
+            return cookies_file
+    if is_cookies_authenticated(default_cookies_path()):
+        job.emit_sync("progress", message="로그인 완료 — 인증 쿠키로 진행합니다.")
+        return default_cookies_path()
+    job.emit_sync("progress",
+                  message="로그인 미완료 — 공개 영상만 진행. 확장 'Get cookies.txt LOCALLY' 로 "
+                          "수동 내보내기도 가능합니다.")
+    return cookies_file
+
+
 # ── download 워커 (yt-dlp via existing engine) ──────────────────────────
 def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | None = None) -> None:
     from ycollector.config import load_settings, settings_from_dict, user_config_dir
@@ -220,6 +277,12 @@ def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | No
         no_pl, yes_pl = True, False
     else:
         no_pl, yes_pl = False, False
+
+    # 비공개/멤버십 영상이면 자동으로 Google 로그인 팝업 → 인증 쿠키로 진행.
+    cookies_file = _maybe_login_for(
+        job, engine, url, no_pl=no_pl, yes_pl=yes_pl, cookies_file=cookies_file,
+        playlist_items=s.playlist_items, no_check_certificate=s.no_check_certificate,
+    )
 
     def on_progress(ev: Any) -> None:
         job.progress = (ev.percent or 0.0) / 100.0
@@ -934,8 +997,29 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
     # 사용자가 '전체' 면 재생목록 펼침, 아니면 단일(모호 URL 도 단일 취급).
     no_pl, yes_pl = (False, True) if playlist_all else (True, False)
 
+    # 비공개/멤버십 영상이면 자동으로 Google 로그인 팝업 → 인증 쿠키로 진행.
+    cookies_file = _maybe_login_for(
+        job, engine, url, no_pl=no_pl, yes_pl=yes_pl, cookies_file=cookies_file,
+        playlist_items=s.playlist_items, no_check_certificate=s.no_check_certificate,
+    )
+
     collected: list[Path] = []
     seen: set[str] = set()
+    pl = {"index": 0, "count": 0}   # 재생목록 현재 인덱스/총개수(on_meta 가 갱신)
+    last_p = [0.0]                   # 진행바 단조 증가 보장(다운로드 중 거꾸로 안 튀게)
+
+    def _bar(file_frac: float) -> tuple[float, str]:
+        """(진행바 0~1, 'i/N' 라벨). 재생목록이면 완료개수+현재파일%, 단일이면 파일%."""
+        n, i = pl["count"], pl["index"]
+        if n and n > 1:
+            p = (max(i, 1) - 1 + file_frac) / n
+            pos = f"{max(i, 1)}/{n}"
+        else:
+            p = file_frac
+            pos = f"{len(collected) + 1}"
+        p = max(last_p[0], min(0.999, p))   # 단조 + 다운로드는 99.9%까지(전사 단계가 0→100 채움)
+        last_p[0] = p
+        return p, pos
 
     def on_file(p: Path) -> None:
         key = str(p).lower()
@@ -943,20 +1027,37 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
             return
         seen.add(key)
         collected.append(p)
-        job.emit_sync("progress", status="downloading",
+        prog, _ = _bar(0.0)
+        job.progress = prog
+        job.emit_sync("progress", progress=prog, status="downloading",
                       message=f"받음 {len(collected)}개 · {p.name[:48]}")
 
     def on_progress(ev: Any) -> None:
-        # 진행바는 전사 단계(이후 _run_analyze)가 0→100 으로 단조 증가시킨다.
-        # 다운로드 중에는 바를 건드리지 않고 속도/ETA/개수만 메시지로 보여
-        # 전사 시작 시 바가 거꾸로 튀지 않게 한다.
+        # 다운로드 진행률을 진행바로 노출한다. 재생목록은 '완료 i/N + 현재 파일 %' 로,
+        # 단일 영상은 파일 % 로. 전사 단계로 넘어갈 때 _run_url_analyze 가 바를 0 으로
+        # 리셋하므로(상태 라벨도 전사로 바뀜) 거꾸로 튀어 보이지 않는다.
+        file_frac = (ev.percent or 0.0) / 100.0
+        prog, pos = _bar(file_frac)
+        job.progress = prog
+        job.status = "downloading"
         pct = f"{ev.percent:.0f}%" if ev.percent is not None else "…"
-        job.emit_sync("progress", status="downloading", speed=ev.speed, eta=ev.eta,
-                      message=f"다운로드 중 {pct} ({len(collected)}개 완료)")
+        job.emit_sync("progress", progress=prog, status="downloading", speed=ev.speed,
+                      eta=ev.eta, message=f"다운로드 {pos} · {pct} ({len(collected)}개 완료)")
 
     def on_meta(meta: Any) -> None:
+        # 영상마다 추출(YouTube 접근·player.js·n-sig 풀이) 직후 1회. 재생목록 위치를
+        # 갱신해 진행바 기준을 잡고, '추출 중 i/N' 으로 그 느린 단계를 가시화한다.
         job.title = meta.title
+        if meta.playlist_count:
+            pl["count"] = meta.playlist_count
+        if meta.playlist_index:
+            pl["index"] = meta.playlist_index
         job.emit_sync("meta", title=meta.title, channel=meta.channel, duration=meta.duration)
+        prog, pos = _bar(0.0)
+        job.progress = prog
+        job.status = "downloading"
+        job.emit_sync("progress", progress=prog, status="downloading",
+                      message=f"추출 중 {pos} · {meta.title[:42]}")
 
     job.status = "downloading"
     job.emit_sync("status", status="downloading",
@@ -1023,7 +1124,11 @@ def _run_url_analyze(job: _JobRow, url: str, *, playlist_all: bool,
         job.emit_sync("error", category="download", message=job.error["message"])
         return
 
-    job.emit_sync("progress", message=f"다운로드 완료 {len(files)}개 — 전사 시작")
+    # 다운로드 단계 끝 — 진행바를 전사 단계(0→100)로 전환. 상태도 transcribing 으로
+    # 바뀌므로 바가 다운로드 100% → 전사 0% 로 리셋돼도 '단계가 바뀐 것'으로 읽힌다.
+    job.progress = 0.0
+    job.emit_sync("progress", progress=0.0, status="transcribing",
+                  message=f"다운로드 완료 {len(files)}개 — 전사 시작")
     # 이어서 전사+요약 — 완료 시 _run_analyze 가 done 을 쏘고 (화자 구분/)앨범을 enqueue 한다.
     _run_analyze(job, files, language=language, do_summarize=do_summarize,
                  summary_model=summary_model, budget_usd=budget_usd,
@@ -1606,14 +1711,47 @@ def _build_app():  # type: ignore[no-untyped-def]
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        from ycollector.cookies import default_cookies_path, is_cookies_present
+        from ycollector.cookies import (
+            default_cookies_path,
+            is_cookies_authenticated,
+            is_cookies_present,
+        )
         return {
             "ok": True,
             "openai_api_key": bool(os.environ.get("OPENAI_API_KEY")),
             "cookies_present": is_cookies_present(),
+            # 파일이 있어도 인증 세션이 아니면 비공개 영상은 못 받는다.
+            "cookies_authenticated": is_cookies_authenticated(),
             "cookies_path": str(default_cookies_path()),
+            "login_in_progress": _LOGIN_LOCK.locked(),
             "library": str(_library_path()),
             "diarize_available": _diarize_available(),
+        }
+
+    @app.post("/api/login")
+    def start_login() -> dict[str, Any]:
+        """Google 로그인 팝업(실제 Chrome)을 띄워 인증 cookies.txt 를 갱신(비동기).
+
+        비공개/멤버십 재생목록 다운로드 시엔 자동으로도 뜨지만, 수동 로그인·재로그인용.
+        """
+        from ycollector.cookies import is_cookies_authenticated
+
+        if _LOGIN_LOCK.locked():
+            return {"ok": False, "message": "이미 로그인 진행 중입니다."}
+
+        def _run() -> None:
+            from ycollector.cookies import login_and_save
+            with _LOGIN_LOCK:
+                try:
+                    login_and_save()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {
+            "ok": True,
+            "authenticated": is_cookies_authenticated(),
+            "message": "로그인 창을 열었습니다. 창에서 Google 로그인을 완료하세요.",
         }
 
     @app.get("/api/settings")

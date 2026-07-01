@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — URL 전사는 왜 느린가: 추출·비공개 영상·진행률 (초보 개발자용)</title>
+<meta name="description" content="교육 가이드 · 2026-06-30">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #0d9488; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px; display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.topbar .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.topbar .meta { margin-left: auto; font-size: 0.85rem; color: var(--fg-muted); }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+h1 { font-size: 1.8rem; font-weight: 800; margin: 0 0 8px; }
+h2 { font-size: 1.25rem; font-weight: 700; margin: 40px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: var(--accent); }
+.subtitle { color: var(--fg-muted); margin: 0 0 32px; font-size: 0.95rem; }
+
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code, p code, li code { background: var(--code-bg); color: var(--code-fg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85em; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow-sm); }
+.card h3 { margin-top: 0; }
+.card.accent { border-left: 4px solid var(--accent); }
+
+pre { background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 16px; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge.ok { background: #dcfce7; color: #166534; }
+.badge.warn { background: #fef3c7; color: #92400e; }
+.badge.err { background: #fee2e2; color: #991b1b; }
+.badge.note { background: #e0e7ff; color: #3730a3; }
+@media (prefers-color-scheme: dark) {
+    .badge.ok { background: #14532d; color: #86efac; }
+    .badge.warn { background: #78350f; color: #fde68a; }
+    .badge.err { background: #7f1d1d; color: #fca5a5; }
+    .badge.note { background: #312e81; color: #c7d2fe; }
+}
+
+ul { padding-left: 20px; }
+li { margin: 4px 0; }
+
+.diagram {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 20px; margin: 16px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.82rem;
+    line-height: 1.6; white-space: pre; overflow-x: auto;
+}
+.toc { font-size: 0.9rem; color: var(--fg-muted); }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.callout { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 12px 16px; margin: 16px 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand">YCollector<span class="dot"></span></div>
+    <div class="meta">교육 가이드 &middot; 2026-06-30</div>
+</div>
+
+<div class="wrap">
+
+<h1>URL 전사는 왜 느린가 — 추출·비공개 영상·진행률</h1>
+<p class="subtitle">
+    "재생목록 URL 전사가 유독 오래 걸린다. 다운로드가 느린 건가?"에 대한 <strong>측정 기반</strong> 설명.
+    핵심: 느린 건 다운로드 속도가 아니라 ① 영상마다의 <strong>YouTube 추출(~16초)</strong>과
+    ② <strong>비공개 영상</strong>을 인증 없이 건너뛰는 낭비다. 진행바를 어떻게 보이게 했는지도 함께 다룬다.
+</p>
+
+<p class="toc">
+    바로가기 &middot;
+    <a href="#pipe">① 파이프라인</a> &middot;
+    <a href="#extract">② 진짜 병목: 추출</a> &middot;
+    <a href="#private">③ 비공개 영상 · 접근 권한</a> &middot;
+    <a href="#slow">④ "다운로드 하나"보다 느린 이유</a> &middot;
+    <a href="#progress">⑤ 진행률 가시화</a> &middot;
+    <a href="#evidence">⑥ 실측 근거</a> &middot;
+    <a href="#faster">⑦ 더 빠르게</a>
+</p>
+
+<!-- ── 파이프라인 ─────────────────────────────────────────────────── -->
+<h2 id="pipe">1. URL 전사 파이프라인 한눈에</h2>
+<div class="diagram">URL(재생목록) ─▶ [_download_collect]  재생목록 "전체"를 먼저 다운로드
+                        │  (영상마다: 추출 → 다운로드 → 병합)
+                        ▼
+                 [_run_analyze]      받은 파일들을 그 다음 "전부" 전사
+                        │  (Whisper: 파일마다 0→100%)
+                        ▼
+                 _analysis/*.script.md (+ .summary.md)</div>
+<p>핵심 성질 두 가지:</p>
+<ul>
+    <li><strong>다운로드-전부 → 전사-전부</strong> 순서다(인터리빙 아님). 그래서 재생목록이 다 받아질 때까지 전사 산출물(<code>_analysis</code>)이 하나도 안 보인다.</li>
+    <li>다운로드는 <code>yt-dlp</code>가 재생목록 항목을 <strong>한 개씩 순차</strong>로 처리한다.</li>
+</ul>
+
+<!-- ── 추출 ──────────────────────────────────────────────────────── -->
+<h2 id="extract">2. 진짜 병목 — 영상마다의 "추출" 단계</h2>
+<div class="card accent">
+<p>바이트(영상 데이터)가 흐르기 <em>전에</em>, yt-dlp는 영상 1개마다 아래를 한다. 실측 <strong>약 16초</strong>(다운로드 0바이트 기준):</p>
+</div>
+<div class="diagram">[youtube] Downloading webpage              ← 영상 페이지
+[youtube] Downloading android vr player API JSON ← 포맷 메타(innertube API)
+[youtube] Downloading player 7a37f05b-main ← player.js (서명 함수 들어있음)
+[youtube] [jsc:deno] Solving JS challenges using deno ← n-sig(JS 챌린지) 풀이!
+[youtube] Downloading m3u8 information      ← 스트림 목록
+[info] Downloading 1 format(s): 136+251     ← 여기서야 다운로드 시작</div>
+<p>가장 무거운 건 <strong>n-sig 풀이</strong>다. YouTube는 스트림 URL에 자바스크립트로 변형된 서명을 요구하는데, yt-dlp가 <code>deno</code>(JS 런타임) 서브프로세스를 띄워 그 챌린지를 푼다. 이게 네트워크 왕복 + 로컬 CPU 모두를 쓴다.</p>
+<div class="callout">즉 이 16초는 "느린 인터넷"이 아니라 <strong>YouTube 접근 + JS 챌린지 해석</strong>에 드는 고정 비용이다. 영상 1개면 한 번만 내지만, <strong>재생목록 N개면 N번</strong> 낸다.</div>
+
+<!-- ── 비공개 ─────────────────────────────────────────────────────── -->
+<h2 id="private">3. 비공개 영상 &amp; 접근 권한 <span class="badge err">핵심</span></h2>
+<p>이번 재생목록을 실제로 조사하니 <strong>총 120개</strong>인데 다수가 <code>Private video</code>였다:</p>
+<pre><code>ERROR: [youtube] oz1aC5Hjp0w: Private video. Sign in if you've been granted
+  access to this video. Use --cookies-from-browser or --cookies ...</code></pre>
+<ul>
+    <li>비공개 영상은 <strong>로그인(쿠키)</strong> 없이는 접근 불가. yt-dlp는 <code>--ignore-errors</code> 덕에 그런 항목을 <strong>건너뛴다</strong> → 공개분만 받힌다(예: 120개 중 31개).</li>
+    <li>그런데 <strong>건너뛰기 전에도 추출은 시도</strong>한다 → 비공개 1개마다 십수 초 쓰고 산출물 0. 이게 "대기"를 크게 늘린다.</li>
+    <li>"내 개인 채널 영상인데 왜?" → 비공개/멤버십/연령제한 영상은 <strong>그 채널 소유 계정으로 로그인</strong>해야 도구가 접근한다.</li>
+</ul>
+
+<h3>권한 주는 법 — 로그인 쿠키</h3>
+<table>
+<tr><th>방법</th><th>명령 / 설정</th><th>메모</th></tr>
+<tr><td><span class="badge ok">권장</span> A. ycollector-login</td>
+    <td><code>uv pip install "playwright&gt;=1.50.0" --native-tls</code><br>
+        <code>uv run --no-sync playwright install chromium</code><br>
+        <code>uv run --no-sync ycollector-login</code></td>
+    <td>별도 Chromium 창에서 본인 계정 로그인 → <code>%APPDATA%\YCollector\cookies.txt</code> 자동 저장. <strong>메인 Chrome 안 닫아도 됨.</strong> 서버/CLI가 자동 사용</td></tr>
+<tr><td>B. 브라우저 쿠키</td>
+    <td><code>[output] cookies_from_browser = chrome</code></td>
+    <td>그 브라우저를 <strong>완전 종료</strong>해야 함(파일 락 충돌)</td></tr>
+<tr><td>C. 쿠키 파일 직접</td>
+    <td><code>[output] cookies_file = ...\cookies.txt</code></td>
+    <td>Netscape 형식. 우선순위 <code>cookies_file &gt; cookies_from_browser</code></td></tr>
+</table>
+<div class="callout"><code>uv sync --extra cookies-headed</code> 대신 <code>uv pip install playwright</code>를 쓰는 이유: <code>uv sync</code>는 지정 안 한 다른 extra(web/transcribe 등)를 <strong>prune</strong>하고 venv 재생성을 시도할 수 있어서다(이 환경 특유 함정).</div>
+
+<!-- ── 느린 이유 ──────────────────────────────────────────────────── -->
+<h2 id="slow">4. "다운로드 하나"보다 느리게 느껴지는 이유</h2>
+<table>
+<tr><th>요인</th><th>설명</th></tr>
+<tr><td>개수</td><td>다운로드 패널은 보통 영상 1개, URL 전사 '전체'는 재생목록 <strong>N개</strong>(여기선 120). per-영상 추출 16초 × N.</td></tr>
+<tr><td>비공개 낭비</td><td>비공개 항목도 추출 시도 후 스킵 → 시간만 쓰고 산출 0.</td></tr>
+<tr><td>풀영상 바이트</td><td>전사엔 오디오만 필요한데 기본은 <strong>1080p 영상 + 병합 + 자막</strong>을 받는다(영상 1개 100~300MB vs 오디오 5~15MB).</td></tr>
+<tr><td>진행바 정지(과거)</td><td>예전엔 다운로드 중 진행바를 안 움직여 "멈춤"처럼 보였다 → §5에서 수정.</td></tr>
+</table>
+<div class="callout"><strong>중요:</strong> per-byte 다운로드 <em>속도</em>는 다운로드 패널과 동일하다(같은 yt-dlp, 같은 옵션). 길어지는 건 "받는 양 × 개수 + 추출/비공개 오버헤드"지 속도 저하가 아니다.</div>
+
+<!-- ── 진행률 ─────────────────────────────────────────────────────── -->
+<h2 id="progress">5. 진행률을 보이게 한 방법</h2>
+<p>"다운로드도 몇 %인지 알려줘야지"에 대한 구현. 이제 다운로드 단계도 진행바가 움직인다.</p>
+<div class="diagram">추출 중   8/120 · 제목…           ← on_meta: 재생목록 위치로 바 갱신(느린 추출 구간 가시화)
+다운로드 8/120 · 73% (7개 완료)   ← on_progress: (완료수 + 현재파일%) / 전체
+─────────────────────────────────
+다운로드 완료 → 진행바 0 리셋, 상태 '전사'로 전환 → 전사 0→100%</div>
+<table>
+<tr><th>레이어</th><th>변경</th></tr>
+<tr><td><code>engine/ytdlp.py</code></td>
+    <td><code>MetaInfo</code>에 <code>playlist_index/playlist_count</code> 추가, <code>_META_TEMPLATE</code>에 <code>%(playlist_index)s</code>·<code>%(playlist_count,n_entries)s</code> 추가, <code>_parse_meta</code> 6필드 파싱</td></tr>
+<tr><td><code>server.py</code> <code>_download_collect</code></td>
+    <td><code>_bar()</code> 헬퍼: 재생목록이면 <code>(i-1+파일%)/N</code>, 단일이면 파일%. <strong>단조 증가</strong> 보장(거꾸로 안 튐). on_meta/on_progress/on_file 가 <code>job.progress</code> emit</td></tr>
+<tr><td><code>server.py</code> <code>_run_url_analyze</code></td>
+    <td>다운로드→전사 전환 시 <code>progress=0</code>, <code>status="transcribing"</code> 로 리셋(단계 구분)</td></tr>
+</table>
+<p>웹은 SSE <code>progress</code> 이벤트의 <code>progress</code>(바)·<code>status</code>(상태)·<code>speed/eta/message</code>(텍스트)를 그대로 그린다(<code>webui/app.js</code> trackJob).</p>
+
+<!-- ── 근거 ──────────────────────────────────────────────────────── -->
+<h2 id="evidence">6. 실측 근거</h2>
+<table>
+<tr><th>측정</th><th>결과</th></tr>
+<tr><td>단일 영상 추출(다운로드 0바이트)</td><td><span class="badge note">~16초</span> (webpage→API→player.js→deno n-sig→m3u8)</td></tr>
+<tr><td>재생목록 총 개수</td><td><code>cnt=120</code> (실측, 공개 항목의 <code>playlist_count</code>)</td></tr>
+<tr><td>비공개 항목</td><td>1~7번 등 다수 <code>Private video</code> 에러 → 스킵</td></tr>
+<tr><td>진행률 필드 채워짐</td><td><code>YCMETA idx=08 cnt=120</code> (공개 영상에서 index/count 정상)</td></tr>
+<tr><td>이미 받은 공개분</td><td><code>download2read/Orang_fantasy</code> 31개(~4.1GB)</td></tr>
+</table>
+
+<!-- ── 더 빠르게 ──────────────────────────────────────────────────── -->
+<h2 id="faster">7. 더 빠르게 하려면</h2>
+<ul>
+    <li><strong>쿠키 설정</strong>(§3) — 비공개 접근. "헛도는 16초"가 실제 산출로 바뀐다. 본인 채널이면 필수.</li>
+    <li><strong>오디오 전용 다운로드</strong>(앨범 OFF일 때) — <code>bestaudio/best</code>로 받으면 10~20배↓. 전사엔 오디오면 충분(단 장면 앨범은 영상 필요 → 조건 분기).</li>
+    <li><strong>범위 제한</strong> — <code>[playlist] items = 1-10</code> 또는 <code>max_downloads</code> 로 일부만.</li>
+    <li><strong>yt-dlp 최신</strong> — <code>uv pip install -U yt-dlp --native-tls</code>. 구버전은 YouTube 변경에 취약하고 추출이 더 자주 깨진다.</li>
+    <li>(설계) 다운로드↔전사 <strong>인터리빙</strong> — 1개 받자마자 전사(GPU) 시작하면 첫 결과가 빨리 나오고 I/O와 연산이 겹친다.</li>
+</ul>
+
+<div class="callout">관련 문서: <code>docs/error/transcribe_setup_260629.html</code>(faster-whisper 설치·HF 경고), <code>docs/implement/tls_ytdlp_cert_260621.html</code>(TLS 가로채기 대응).</div>
+
+</div>
+</body>
+</html>

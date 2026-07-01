@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — 전사 설치 오류 &amp; HuggingFace 경고 정리</title>
+<meta name="description" content="에러 기록 · 2026-06-29">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #d97706; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px; display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.topbar .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.topbar .meta { margin-left: auto; font-size: 0.85rem; color: var(--fg-muted); }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+h1 { font-size: 1.8rem; font-weight: 800; margin: 0 0 8px; }
+h2 { font-size: 1.25rem; font-weight: 700; margin: 40px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: var(--accent); }
+.subtitle { color: var(--fg-muted); margin: 0 0 32px; font-size: 0.95rem; }
+
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code, p code, li code { background: var(--code-bg); color: var(--code-fg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85em; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow-sm); }
+.card h3 { margin-top: 0; }
+.card.accent { border-left: 4px solid var(--accent); }
+
+pre { background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 16px; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge.err { background: #fee2e2; color: #991b1b; }
+.badge.warn { background: #fef3c7; color: #92400e; }
+.badge.ok { background: #dcfce7; color: #166534; }
+.badge.note { background: #e0e7ff; color: #3730a3; }
+@media (prefers-color-scheme: dark) {
+    .badge.err { background: #7f1d1d; color: #fca5a5; }
+    .badge.warn { background: #78350f; color: #fde68a; }
+    .badge.ok { background: #14532d; color: #86efac; }
+    .badge.note { background: #312e81; color: #c7d2fe; }
+}
+
+ul { padding-left: 20px; }
+li { margin: 4px 0; }
+
+.diagram {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 20px; margin: 16px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.82rem;
+    line-height: 1.6; white-space: pre; overflow-x: auto;
+}
+.toc { font-size: 0.9rem; color: var(--fg-muted); }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.callout { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 12px 16px; margin: 16px 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand">YCollector<span class="dot"></span></div>
+    <div class="meta">에러 기록 &middot; 2026-06-29</div>
+</div>
+
+<div class="wrap">
+
+<h1>전사(transcribe) 설치 오류 &amp; HuggingFace 경고 정리</h1>
+<p class="subtitle">
+    음원·영상 전사를 돌렸더니 <code>[not-installed] faster-whisper</code> 로 막혔고, 설치 후 첫 실행에서 HuggingFace 경고 2개가 떴다.
+    하나(설치)는 <strong>진짜 에러</strong>, 둘(HF)은 <strong>무해한 경고</strong>다. 원인·해결·구분을 정리한다.
+</p>
+
+<p class="toc">
+    바로가기 &middot;
+    <a href="#e1">① faster-whisper 미설치</a> &middot;
+    <a href="#why-pip">② 왜 uv sync 가 아니라 uv pip</a> &middot;
+    <a href="#w1">③ HF_TOKEN 경고</a> &middot;
+    <a href="#w2">④ 심볼릭 링크 경고</a> &middot;
+    <a href="#tls">⑤ TLS 곁가지</a> &middot;
+    <a href="#cheat">⑥ 요약 치트시트</a>
+</p>
+
+<!-- ── 에러 1 ─────────────────────────────────────────────────────── -->
+<h2 id="e1">1. <span class="badge err">ERROR</span> faster-whisper 미설치</h2>
+
+<div class="card accent">
+<pre><code>[not-installed] faster-whisper 가 설치돼 있지 않습니다.
+  설치: uv sync --extra transcribe --native-tls
+  실행: uv run --extra transcribe ycollector transcribe ...
+(import 오류: No module named 'faster_whisper')</code></pre>
+</div>
+
+<h3>원인</h3>
+<ul>
+    <li><code>transcribe</code> extra(= <code>faster-whisper</code> + <code>truststore</code>)가 <strong>venv 에 실제로 설치돼 있지 않았다.</strong></li>
+    <li>헷갈렸던 점: <strong>재생목록 전사(analyze-url)는 다운로드 단계까지는 통과</strong>한다(yt-dlp 는 faster-whisper 불필요). 그래서 영상 31개(~4.1GB)는 받아졌지만, <em>전사 단계에 진입하는 순간</em> 이 에러가 났다.</li>
+    <li>또 <code>diarize_available: true</code> 였어도 무관 — <strong>diarize 와 transcribe 는 별개 extra</strong>다.</li>
+    <li>설치 점검 결과 transcribe 계열이 전부 빠져 있었다(아래). 과거 <code>uv sync --extra &lt;something&gt;</code> 의 <strong>prune</strong> 흔적으로 보인다(다음 절 참고).</li>
+</ul>
+<pre><code># uv run --no-sync python -c "..."  결과 (모두 없음)
+faster_whisper   --- 없음      ctranslate2      --- 없음
+av               --- 없음      onnxruntime      --- 없음
+tokenizers       --- 없음      huggingface_hub  --- 없음
+truststore       --- 없음</code></pre>
+
+<h3>해결</h3>
+<pre><code>uv pip install "faster-whisper>=1.1.0" "truststore>=0.9.0" --native-tls</code></pre>
+<p>faster-whisper 가 ctranslate2 / av / onnxruntime / tokenizers / huggingface-hub 등을 끌어와 <strong>26개 패키지</strong>가 설치됐다(<code>faster-whisper 1.2.1</code>, <code>ctranslate2 4.8.0</code>, <code>av 17.1.0</code>, <code>onnxruntime 1.27.0</code>, <code>truststore 0.10.4</code>, <code>numpy 2.5.0</code> …).</p>
+
+<h3>검증</h3>
+<div class="card">
+<ul>
+    <li><code>faster_whisper 1.2.1</code> import OK</li>
+    <li><code>ctranslate2 4.8.0</code> import + <strong>DLL 로드 OK</strong>(= 잘린 휠 아님 — 가로채기 환경의 단골 함정 통과)</li>
+    <li>서버/CLI 가 쓰는 <code>transcribe.whisper</code> · <code>transcribe.cli</code> import OK</li>
+</ul>
+</div>
+<div class="callout">
+<strong>설치 후 서버 재시작 필요.</strong> 실행 중이던 서버 프로세스는 import 캐시 때문에 새 패키지를 못 본다. takeover 가 있으니 <code>uv run --no-sync ycollector-server</code> 한 줄이면 기존을 닫고 새로 뜬다(인식됨).
+</div>
+
+<!-- ── 왜 uv pip ──────────────────────────────────────────────────── -->
+<h2 id="why-pip">2. 왜 <code>uv sync</code> 가 아니라 <code>uv pip install</code> 인가</h2>
+
+<p>에러 메시지는 <code>uv sync --extra transcribe</code> 를 안내하지만, <strong>이 환경에서는 그걸 쓰면 안 된다.</strong> 이유 둘:</p>
+<table>
+<tr><th>위험</th><th>설명</th></tr>
+<tr><td><span class="badge err">prune</span> 다른 extra 제거</td>
+    <td><code>uv sync --extra transcribe</code> 는 env 를 "transcribe + base" 와 <em>정확히 일치</em>시키려 한다 →
+        지정 안 한 <code>web</code> / <code>video-gen</code> / <code>summarize</code> / <code>diarize</code> 를 <strong>지워버린다</strong>.
+        (실행 중인 서버의 fastapi/uvicorn 까지 날아갈 수 있음.)</td></tr>
+<tr><td><span class="badge err">recreate</span> venv 재생성</td>
+    <td><code>pyvenv.cfg</code>(3.13.11) ↔ 시스템 Python(3.13.13) 드리프트 때문에 <code>uv sync</code> 가 venv 통째로 재생성을 시도 →
+        가로채기 네트워크로 <strong>전부 재다운로드</strong>(잘린 휠 위험) + 서버가 떠 있으면 <code>.venv\Lib</code> 락으로 삭제 실패.</td></tr>
+</table>
+<div class="card accent">
+<p><strong>그래서 additive 한 <code>uv pip install</code></strong> — 기존 패키지(web/diarize 등)를 건드리지 않고 faster-whisper 만 더한다. prune 없음, recreate 없음. 가로채기 환경 대응으로 <code>--native-tls</code> 만 붙인다.</p>
+<p><code>transcribe</code> extra 는 이미 <code>pyproject.toml</code> · <code>uv.lock</code> 에 등록돼 있으므로 <strong>소스 변경/커밋 불필요</strong> — venv 에 물리적으로 깔기만 하면 된다.</p>
+</div>
+
+<!-- ── 경고 1 ─────────────────────────────────────────────────────── -->
+<h2 id="w1">3. <span class="badge warn">WARN</span> HF_TOKEN 미설정 — 무해</h2>
+<pre><code>Warning: You are sending unauthenticated requests to the HF Hub.
+Please set a HF_TOKEN to enable higher rate limits and faster downloads.</code></pre>
+<ul>
+    <li>공개 모델(<code>mobiuslabsgmbh/faster-whisper-large-v3-turbo</code>)을 <strong>익명으로</strong> 받는 것이라 토큰 불필요.</li>
+    <li>토큰은 <strong>속도/레이트리밋</strong>에만 영향. 모델은 한 번 받으면 캐시되어 재다운로드 없음.</li>
+    <li>조치: 보통 <strong>무시</strong>. 반복 요청으로 <code>HTTP 429</code> 가 날 때만 <code>HF_TOKEN</code> 환경변수 설정.</li>
+</ul>
+<div class="callout">덤: 이 메시지의 모델명이 설정값 <code>[transcribe] model = large-v3-turbo</code> 의 CT2 변환본이다 → <strong>엔진이 제대로 로드돼 모델을 받는 중</strong>이라는 정상 신호.</div>
+
+<!-- ── 경고 2 ─────────────────────────────────────────────────────── -->
+<h2 id="w2">4. <span class="badge warn">WARN</span> Windows 심볼릭 링크 미지원 — 무해</h2>
+<pre><code>UserWarning: `huggingface_hub` cache-system uses symlinks by default ...
+your machine does not support them in C:\Users\user\.cache\huggingface\hub\...
+Caching files will still work but in a degraded version that might require more space.
+To support symlinks on Windows, activate Developer Mode or run Python as administrator.</code></pre>
+<ul>
+    <li>Windows 에서 심링크 권한이 없어 HF 캐시가 <strong>복사 모드</strong>로 동작. <strong>기능은 정상</strong>, 디스크만 더 쓴다(모델 ~1.6GB 가 <code>blobs</code>+<code>snapshots</code> 로 중복 → 약 2배).</li>
+</ul>
+<table>
+<tr><th>목적</th><th>조치</th></tr>
+<tr><td>디스크 절약</td><td>Windows <strong>개발자 모드</strong> 켜기(설정 → 개발자용) 또는 관리자로 실행 → 심링크 사용</td></tr>
+<tr><td>경고만 끄기</td><td>환경변수 <code>HF_HUB_DISABLE_SYMLINKS_WARNING=1</code></td></tr>
+<tr><td>그냥 두기</td><td>무방 — 디스크 조금 더 쓰는 정도</td></tr>
+</table>
+
+<!-- ── TLS 곁가지 ─────────────────────────────────────────────────── -->
+<h2 id="tls">5. 곁가지 — TLS 가로채기 대응이 전사에도 적용됨</h2>
+<div class="card">
+<p>HF 모델 다운로드가 <code>CERTIFICATE_VERIFY_FAILED</code> 없이 진행된 것 = 앞서 base 의존성에 추가한 <code>pip_system_certs</code> 가 <strong>venv 의 모든 Python 프로세스</strong>(yt-dlp 서브프로세스뿐 아니라 transcribe CLI/서버, 그리고 HuggingFace·Claude·OpenAI 호출까지)에 OS 신뢰 저장소를 적용하기 때문이다. 가로채기 환경 대응이 전사 경로에도 공짜로 먹은 셈.</p>
+<p>자세한 배경: <code>docs/implement/tls_ytdlp_cert_260621.html</code>.</p>
+</div>
+<div class="callout">
+<strong>주의(잠재):</strong> 이번에 <code>numpy 2.5.0</code> 이 들어왔다. 나중에 <strong>화자 구분(diarize)</strong> 실행 시 torch 가 <code>compiled against numpy 1.x</code> 류 에러를 내면 torch/numpy 버전을 맞춰야 한다(지금 전사에는 영향 없음).
+</div>
+
+<!-- ── 치트시트 ───────────────────────────────────────────────────── -->
+<h2 id="cheat">6. 요약 치트시트</h2>
+<table>
+<tr><th>증상</th><th>판정</th><th>조치</th></tr>
+<tr><td><code>No module named 'faster_whisper'</code> / <code>[not-installed]</code></td><td><span class="badge err">에러</span></td>
+    <td><code>uv pip install "faster-whisper&gt;=1.1.0" "truststore&gt;=0.9.0" --native-tls</code> → 서버 재시작</td></tr>
+<tr><td><code>unauthenticated requests to the HF Hub</code></td><td><span class="badge ok">무해</span></td>
+    <td>무시(공개 모델). 429 나면 <code>HF_TOKEN</code></td></tr>
+<tr><td><code>does not support symlinks</code></td><td><span class="badge ok">무해</span></td>
+    <td>무시 / 개발자 모드 / <code>HF_HUB_DISABLE_SYMLINKS_WARNING=1</code></td></tr>
+<tr><td>설치인데 <code>uv sync --extra transcribe</code> 썼다</td><td><span class="badge warn">하지 말 것</span></td>
+    <td>다른 extra prune + venv 재생성 위험 → <code>uv pip install</code> 사용</td></tr>
+</table>
+
+<pre><code># 이미 받아둔 폴더를 바로 전사(재다운로드 없이)
+uv run --no-sync ycollector transcribe "download2read/Orang_fantasy" --language ko --format srt
+# 또는 웹: 분석 보드 "📁 폴더" 탭 → Orang_fantasy → 전사</code></pre>
+
+</div>
+</body>
+</html>
