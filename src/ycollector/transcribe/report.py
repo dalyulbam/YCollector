@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import base64
 import html as _htmllib
+import json
+import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
@@ -316,3 +319,159 @@ header h1{font-weight:800;font-size:1.6rem;line-height:1.35;margin:.2em 0}
 .plain .ts{color:var(--accent);font-size:.8rem;font-weight:600;font-variant-numeric:tabular-nums}
 @media (max-width:720px){.blk{grid-template-columns:1fr}.shot{position:static}}
 """
+
+
+# ── 기존 산출물에서 HTML 백필(재전사 없이) ──────────────────────────────────
+# 이 기능 이전에 전사돼 .md/.srt 만 있는 영상에도 캡쳐 HTML 을 만들어 준다.
+# whisper 재실행 없이 기존 전사 파일(.json/.srt/.vtt, 없으면 .script.md)에서
+# 세그먼트를 되살리고, .summary.md 가 있으면 상단 요약도 복원한다.
+@dataclass
+class _PSeg:
+    start: float
+    end: float
+    text: str
+
+
+_TS_RE = re.compile(
+    r"(\d{1,3}:\d{2}:\d{2}[.,]\d{1,3}|\d{1,3}:\d{2}[.,]\d{1,3})\s*-->\s*"
+    r"(\d{1,3}:\d{2}:\d{2}[.,]\d{1,3}|\d{1,3}:\d{2}[.,]\d{1,3})"
+)
+# script.md 한 줄: **[H:MM:SS]** 본문  /  **[H:MM:SS] 화자1:** 본문
+_SCRIPT_RE = re.compile(r"^\*\*\[(\d{1,3}:\d{2}:\d{2})\][^*]*\*\*\s*(.*)$")
+
+
+def _ts_to_sec(s: str) -> float:
+    parts = s.strip().replace(",", ".").split(":")
+    sec = 0.0
+    try:
+        for p in parts:
+            sec = sec * 60.0 + float(p)
+    except ValueError:
+        return 0.0
+    return sec
+
+
+def _parse_cues(text: str) -> list[_PSeg]:
+    """SRT/VTT 큐 파싱 → 세그먼트. 인덱스줄·WEBVTT 헤더·NOTE·인라인 태그 무시."""
+    segs: list[_PSeg] = []
+    body = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    for block in re.split(r"\n[ \t]*\n", body):
+        lines = block.split("\n")
+        ts_i = None
+        start = end = 0.0
+        for i, ln in enumerate(lines):
+            m = _TS_RE.search(ln)
+            if m:
+                ts_i, start, end = i, _ts_to_sec(m.group(1)), _ts_to_sec(m.group(2))
+                break
+        if ts_i is None:
+            continue
+        txt = " ".join(ln.strip() for ln in lines[ts_i + 1:] if ln.strip())
+        txt = re.sub(r"<[^>]+>", "", txt).strip()  # VTT 인라인 태그 제거.
+        if txt:
+            segs.append(_PSeg(start, end, txt))
+    return segs
+
+
+def _parse_script_md(text: str) -> list[_PSeg]:
+    """대본(script.md)에서 타임스탬프 단락 되살리기(최후 폴백 — 화자 라벨은 버림)."""
+    segs: list[_PSeg] = []
+    for ln in text.splitlines():
+        m = _SCRIPT_RE.match(ln.strip())
+        if m:
+            t = _ts_to_sec(m.group(1))
+            body = m.group(2).strip()
+            if body:
+                segs.append(_PSeg(t, t, body))
+    return segs
+
+
+def _load_transcript(
+    analysis_dir: Path, stem: str
+) -> tuple[list[_PSeg], str | None, float | None]:
+    """(_analysis, stem) → (세그먼트, 언어|None, 길이초|None). json>srt>vtt>script.md 순."""
+    jp = analysis_dir / f"{stem}.json"
+    if jp.is_file():
+        try:
+            data = json.loads(jp.read_text(encoding="utf-8"))
+            segs = [
+                _PSeg(float(s["start"]), float(s["end"]), str(s.get("text", "")).strip())
+                for s in data.get("segments", [])
+                if str(s.get("text", "")).strip()
+            ]
+            if segs:
+                dur = data.get("duration")
+                return segs, data.get("language"), (float(dur) if dur else None)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    for ext in ("srt", "vtt"):
+        p = analysis_dir / f"{stem}.{ext}"
+        if p.is_file():
+            try:
+                segs = _parse_cues(p.read_text(encoding="utf-8"))
+            except OSError:
+                segs = []
+            if segs:
+                return segs, None, None
+    sp = analysis_dir / f"{stem}.script.md"
+    if sp.is_file():
+        try:
+            segs = _parse_script_md(sp.read_text(encoding="utf-8"))
+        except OSError:
+            segs = []
+        if segs:
+            return segs, None, None
+    return [], None, None
+
+
+def backfill_transcript_html(
+    analysis_dir: Path,
+    stem: str,
+    *,
+    video: Path | None,
+    title: str | None = None,
+    target_captures: int = 40,
+    overwrite: bool = True,
+) -> Path | None:
+    """기존 전사 산출물에서 ``<stem>.transcript.html`` 을 재생성(전사 재실행 없음).
+
+    전사물(.json/.srt/.vtt/.script.md)이 하나도 없으면 None. ``overwrite=False`` 면
+    이미 HTML 이 있을 때 캡쳐를 다시 뜨지 않고 기존 경로를 그대로 돌려준다(일괄 스캔용).
+    ``.summary.md`` 가 있으면 상단 요약과 언어/길이도 함께 복원한다.
+    """
+    dest = analysis_dir / f"{stem}.transcript.html"
+    if dest.is_file() and not overwrite:
+        return dest
+
+    segments, language, duration = _load_transcript(analysis_dir, stem)
+    if not segments:
+        return None
+
+    # .summary.md 가 있으면 상단 요약 + 언어/길이 폴백 복원(album 파서 재사용).
+    summary = None
+    smd = analysis_dir / f"{stem}.summary.md"
+    if smd.is_file():
+        try:
+            from ycollector.transcribe.album import Book, parse_summary
+
+            bk = Book(stem=stem)
+            parse_summary(smd.read_text(encoding="utf-8"), bk)
+            if language is None and bk.language and bk.language != "?":
+                language = bk.language
+            if (duration is None or duration <= 0) and bk.duration:
+                duration = bk.duration
+            if bk.overview or bk.key_points:
+                summary = bk  # render 는 .overview / .key_points 만 사용.
+        except (OSError, ValueError, ImportError):
+            pass
+
+    if duration is None or duration <= 0:
+        duration = max((s.end for s in segments), default=0.0) or max(
+            (s.start for s in segments), default=0.0
+        )
+
+    return write_transcript_html(
+        analysis_dir, stem, segments, video=video, title=title or stem,
+        language=language or "?", duration=duration, summary=summary,
+        target_captures=target_captures,
+    )

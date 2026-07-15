@@ -63,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="요약 전체 비용 상한 USD (기본: 5).")
     p.add_argument("-o", "--output-dir", type=Path, default=None,
                    help="산출물 폴더 (기본: 입력 폴더의 _analysis/ 하위).")
+    p.add_argument("--html-only", action="store_true",
+                   help="전사하지 않고, 기존 전사물(.srt/.json 등)에서 캡쳐 HTML 만 재생성한다.")
     args = p.parse_args(argv)
 
     print(f"settings: {cfg_path if cfg_path else '(none)'}", file=sys.stderr)
@@ -84,6 +86,33 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     out_dir = args.output_dir or (files[0].parent / "_analysis")
+
+    # ── HTML 전용 모드: 전사·요약 없이 기존 산출물에서 캡쳐 HTML 만 재생성 ──────
+    if args.html_only:
+        from .report import backfill_transcript_html
+
+        made = 0
+        skipped = 0
+        for i, src in enumerate(files, 1):
+            analysis_dir = args.output_dir or (src.parent / "_analysis")
+            print(f"[{i}/{len(files)}] {src.name}", file=sys.stderr)
+            try:
+                hpath = backfill_transcript_html(
+                    analysis_dir, src.stem, video=src, title=src.stem,
+                )
+            except Exception as exc:
+                print(f"  ✗ HTML 실패: {exc}", file=sys.stderr)
+                continue
+            if hpath is None:
+                skipped += 1
+                print(f"  - 전사물 없음(.srt/.json/.script.md) — 건너뜀: {analysis_dir}",
+                      file=sys.stderr)
+            else:
+                made += 1
+                print(f"  ✓ html: {hpath.name}", file=sys.stderr)
+        print(f"{'=' * 70}", file=sys.stderr)
+        print(f"[완료] 캡쳐 HTML {made}/{len(files)} 생성 (건너뜀 {skipped})", file=sys.stderr)
+        return 0 if made or not skipped else 1
 
     lang = (args.language or "").strip()
     run_cfg = TranscribeConfig(

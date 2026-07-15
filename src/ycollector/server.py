@@ -1396,6 +1396,139 @@ def _enqueue_diarize(folder: Path, *, make_album: bool = False,
     return jid
 
 
+# ── HTML 백필 워커 (재전사 없이 기존 .srt/.json → <stem>.transcript.html) ──
+# 이 기능 이전에 전사돼 캡쳐 HTML 이 없는 영상에도, whisper 재실행 없이 기존
+# 전사물에서 캡쳐+타임스탬프 HTML 을 만든다. ffmpeg 캡쳐라 앨범과 같은 성질(CPU).
+def _run_html(job: _JobRow, folder: Path, stems: list[str] | None,
+              *, only_missing: bool) -> None:
+    from ycollector.transcribe.config import MEDIA_EXTENSIONS
+    from ycollector.transcribe.report import backfill_transcript_html
+
+    job.status = "rendering"
+    job.emit_sync("status", status="rendering",
+                  message="캡쳐 HTML 생성 중 (ffmpeg 프레임 캡쳐 — 몇 초~분)")
+    analysis_dir = folder / _ANALYSIS_DIRNAME
+    try:
+        media = [x for x in folder.iterdir()
+                 if x.is_file() and x.suffix.lower() in MEDIA_EXTENSIONS]
+    except OSError:
+        media = []
+    if stems:
+        want = set(stems)
+        media = [x for x in media if x.stem in want]
+    # 전사물이 있는 것만 대상(있어야 재구성 가능). only_missing 이면 HTML 이 이미
+    # 있는 건 건너뛴다(일괄 스캔 — 캡쳐를 다시 뜨지 않게).
+    targets: list[Path] = []
+    for m in media:
+        has_src = any((analysis_dir / f"{m.stem}.{ext}").is_file()
+                      for ext in ("srt", "vtt", "json", "script.md"))
+        if not has_src:
+            continue
+        if only_missing and (analysis_dir / f"{m.stem}.transcript.html").is_file():
+            continue
+        targets.append(m)
+
+    if not targets:
+        job.status = "done"
+        job.progress = 1.0
+        job.message = "생성할 대상 없음 (전사물이 없거나 이미 HTML 있음)"
+        job.emit_sync("done", message=job.message)
+        return
+
+    n = len(targets)
+    ok = 0
+    last: Path | None = None
+    for i, m in enumerate(targets):
+        job.progress = i / n
+        job.emit_sync("progress", progress=job.progress,
+                      message=f"[{i + 1}/{n}] 캡쳐 HTML · {m.name[:44]}")
+        try:
+            p = backfill_transcript_html(analysis_dir, m.stem, video=m, title=m.stem)
+            if p is not None:
+                ok += 1
+                last = p
+        except Exception as exc:  # 한 파일 실패가 나머지를 막지 않게.
+            job.emit_sync("progress", message=f"경고 — {m.name}: {exc}")
+
+    if ok == 0:
+        job.status = "failed"
+        job.error = {"category": "html",
+                     "message": f"HTML 생성 0/{n} — 전사물을 못 읽었습니다."}
+        job.emit_sync("error", category="html", message=job.error["message"])
+        return
+    job.status = "done"
+    job.progress = 1.0
+    job.out_path = str(last or analysis_dir)
+    job.message = f"캡쳐 HTML {ok}/{n}"
+    job.emit_sync("done", out_path=job.out_path, message=job.message)
+
+
+def _run_html_task(task: dict[str, Any]) -> None:
+    """큐의 html 작업 — spec {root, dir, stems?, only_missing?}."""
+    spec = task.get("spec") or {}
+    jid = task.get("job_id") or uuid.uuid4().hex[:12]
+    row = _state.jobs.get(jid) or _JobRow(jid, "html", task.get("title") or jid)
+    _remember_job(jid, row)
+    if task.get("job_id") != jid:
+        _queue_update(task["id"], job_id=jid)
+    root = _root_by_key(str(spec.get("root") or ""))
+    folder = None
+    if root is not None:
+        rel = str(spec.get("dir") or "").strip()
+        folder = root if rel in ("", ".") else _safe_join(root, rel)
+    if folder is None or not folder.is_dir():
+        row.status = "failed"
+        row.error = {"category": "html", "message": "대상 폴더 없음(이동·삭제됨)."}
+        row.emit_sync("error", category="html", message=row.error["message"])
+    else:
+        try:
+            _run_html(row, folder, spec.get("stems"),
+                      only_missing=bool(spec.get("only_missing")))
+        except Exception as exc:
+            row.status = "failed"
+            row.error = {"category": "internal", "message": str(exc)}
+            row.emit_sync("error", category="internal", message=str(exc))
+    _queue_outcome(task["id"], row)
+
+
+def _enqueue_html(folder: Path, stems: list[str] | None = None,
+                  *, only_missing: bool = False) -> str | None:
+    """폴더에 전사물이 있으면 캡쳐 HTML 백필 작업을 큐(html 레인)에 추가하고 job_id 반환.
+
+    같은 (폴더, stems) 조합의 작업이 이미 pending/running 이면 그 job_id 를 돌려준다
+    (중복 방지). 전사물(.srt/.vtt/.json/.script.md) 없거나 루트 밖이면 None.
+    """
+    ad = folder / _ANALYSIS_DIRNAME
+    ref = _root_ref_for(folder)
+    if ref is None:
+        return None
+    key, rel = ref
+    stems = list(stems) if stems else None
+    with _QUEUE_LOCK:  # 전사물 검사 + 중복 검사 + 추가를 한 잠금 안에서(TOCTOU 방지).
+        if not any(any(ad.glob(f"*.{ext}")) for ext in ("srt", "vtt", "json", "script.md")):
+            return None
+        tasks = _queue_read()
+        for t in tasks:
+            spec = t.get("spec") or {}
+            if (t.get("kind") == "html" and t.get("status") in ("pending", "running")
+                    and spec.get("root") == key and spec.get("dir") == rel
+                    and (spec.get("stems") or None) == stems):
+                return t.get("job_id")
+        jid = uuid.uuid4().hex[:12]
+        label = (f"HTML — {folder.name or key}" if not stems or len(stems) != 1
+                 else f"HTML — {stems[0][:40]}")
+        row = _JobRow(jid, "html", label)
+        row.status = "queued"
+        _remember_job(jid, row)
+        tasks.append(_new_task("html", label,
+                               {"root": key, "dir": rel, "stems": stems,
+                                "only_missing": bool(only_missing)},
+                               status="pending", job_id=jid))
+        _queue_write(tasks)
+    _html_lane_wake()
+    return jid
+
+
 # ── 영속 작업 큐 (다운로드/전사 — 중단되면 리스트로 관리·재시도) ────────────
 # queue.json 에 작업을 영속 저장한다. 다운로드는 즉시 실행하되 추적하고(실패·
 # 중단 시 리스트에 남아 재시도 가능), 전사(analyze)는 CPU 가 무거워 단일 레인에서
@@ -1409,6 +1542,7 @@ _QUEUE_LOCK = threading.RLock()
 _ANALYZE_CV = threading.Condition()  # 전사 레인 wake 신호.
 _ALBUM_CV = threading.Condition()    # 앨범 레인 wake 신호(ffmpeg=CPU, 전사와 동시 진행).
 _DIARIZE_CV = threading.Condition()  # 화자 구분 레인 wake 신호(ECAPA, 전사와 동시 진행).
+_HTML_CV = threading.Condition()     # 캡쳐 HTML 백필 레인 wake 신호(ffmpeg=CPU).
 _QUEUE_STATUSES = ("pending", "running", "done", "failed", "interrupted")
 
 
@@ -1582,6 +1716,10 @@ def _is_diarize(t: dict[str, Any]) -> bool:
     return t.get("kind") == "diarize"
 
 
+def _is_html(t: dict[str, Any]) -> bool:
+    return t.get("kind") == "html"
+
+
 def _analyze_lane_wake() -> None:
     with _ANALYZE_CV:
         _ANALYZE_CV.notify_all()
@@ -1595,6 +1733,11 @@ def _album_lane_wake() -> None:
 def _diarize_lane_wake() -> None:
     with _DIARIZE_CV:
         _DIARIZE_CV.notify_all()
+
+
+def _html_lane_wake() -> None:
+    with _HTML_CV:
+        _HTML_CV.notify_all()
 
 
 def _queue_recover() -> None:
@@ -1651,6 +1794,11 @@ def _queue_requeue(task_id: str) -> str | None:
         row.status = "queued"
         _remember_job(jid, row)
         _diarize_lane_wake()
+    elif kind == "html":
+        row = _JobRow(jid, "html", title)
+        row.status = "queued"
+        _remember_job(jid, row)
+        _html_lane_wake()
     else:  # analyze-url / analyze-files
         row = _JobRow(jid, "analyze", title)
         row.status = "queued"
@@ -1696,6 +1844,8 @@ def _build_app():  # type: ignore[no-untyped-def]
                              daemon=True, name="album-lane").start()
             threading.Thread(target=lambda: _lane_loop(_is_diarize, _DIARIZE_CV, _run_diarize_task),
                              daemon=True, name="diarize-lane").start()
+            threading.Thread(target=lambda: _lane_loop(_is_html, _HTML_CV, _run_html_task),
+                             daemon=True, name="html-lane").start()
         yield
         _state.loop = None
 
@@ -2297,6 +2447,42 @@ def _build_app():  # type: ignore[no-untyped-def]
                 if not scripts or all(_script_has_speakers(s) for s in scripts):
                     continue  # 전사물 없음 / 이미 전부 화자 구분됨.
                 if _enqueue_diarize(abs_folder):
+                    added += 1
+        return {"enqueued": added}
+
+    @app.post("/api/analysis/html")
+    def analysis_html(payload: dict[str, Any]) -> dict[str, Any]:
+        """행별 캡쳐 HTML 생성 — {root, rel(미디어파일)} 하나를 재전사 없이 백필."""
+        root = _root_by_key(str((payload or {}).get("root") or ""))
+        if root is None:
+            raise HTTPException(400, "알 수 없는 root")
+        rel = str((payload or {}).get("rel") or "").strip()
+        media = _safe_join(root, rel) if rel else None
+        if media is None or not media.is_file():
+            raise HTTPException(404, "대상 파일이 없습니다 (이동·삭제됨).")
+        jid = _enqueue_html(media.parent, [media.stem])
+        if jid is None:
+            raise HTTPException(
+                400, "전사물(.srt/.json 등)이 없어 HTML 을 만들 수 없습니다. 먼저 전사하세요.")
+        return {"job_id": jid, "title": media.name}
+
+    @app.post("/api/queue/scan-html")
+    def queue_scan_html(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """전사는 됐지만 캡쳐 HTML(.transcript.html)이 없는 파일을 HTML 큐에 추가.
+        이미 HTML 이 있는 파일은 폴더 작업 안에서 자동으로 건너뛴다."""
+        added = 0
+        for root in _scan_overview().get("roots", []):
+            base = _root_by_key(root["key"])
+            if base is None:
+                continue
+            for folder in root.get("folders", []):
+                # HTML 이 없는데 전사물(summary/script)은 있는 파일이 하나라도 있으면 대상.
+                if not any(it.get("html") is None and (it.get("script") or it.get("summary"))
+                           for it in folder.get("items", [])):
+                    continue
+                rel = folder.get("rel") or ""
+                abs_folder = base if rel in ("", ".") else (base / rel)
+                if _enqueue_html(abs_folder, only_missing=True):
                     added += 1
         return {"enqueued": added}
 

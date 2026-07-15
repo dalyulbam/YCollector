@@ -544,6 +544,29 @@ function renderFileRow(rootKey, it) {
         a.target = "_blank"; a.rel = "noopener";
         a.title = "전사 전문 + 화면 캡쳐 + 타임스탬프 (새 탭)";
         badges.appendChild(a);
+    } else if (it.script || it.summary) {
+        // 전사는 됐지만 캡쳐 HTML 이 없는 예전 산출물 — 재전사 없이 백필.
+        const b = document.createElement("button");
+        b.className = "an-doc an-html";
+        b.textContent = "🖼 HTML 생성";
+        b.title = "재전사 없이 기존 전사물로 캡쳐+타임스탬프 HTML 을 만듭니다 (ffmpeg 캡쳐)";
+        b.addEventListener("click", async () => {
+            b.disabled = true; b.textContent = "큐에 넣는 중…";
+            try {
+                const r = await fetch("/api/analysis/html", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ root: rootKey, rel: it.rel }),
+                });
+                if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+                const j = await r.json();
+                trackJob(j.job_id, "html", it.name);
+                b.textContent = "생성 중… (작업 패널)";
+            } catch (e) {
+                alert(`HTML 생성 실패: ${e.message}`);
+                b.disabled = false; b.textContent = "🖼 HTML 생성";
+            }
+        });
+        badges.appendChild(b);
     }
     if (it.diarized) {
         const sp = document.createElement("span");
@@ -730,7 +753,7 @@ anDrop.addEventListener("drop", e => {
 //         DELETE /api/queue/{id}
 const qList = $("q-list"), qCounts = $("q-counts");
 const qScan = $("q-scan"), qRetryAll = $("q-retry-all"), qClear = $("q-clear"), qRefresh = $("q-refresh");
-const qAlbumScan = $("q-album-scan"), qDiarScan = $("q-diar-scan");
+const qAlbumScan = $("q-album-scan"), qDiarScan = $("q-diar-scan"), qHtmlScan = $("q-html-scan");
 const Q_STATUS = {
     pending:     { txt: "대기",   cls: "run" },
     running:     { txt: "실행 중", cls: "run" },
@@ -738,11 +761,11 @@ const Q_STATUS = {
     failed:      { txt: "실패",   cls: "fail" },
     interrupted: { txt: "중단됨", cls: "warn" },
 };
-const Q_KIND = { "download": "DL", "analyze-url": "전사·URL", "analyze-files": "전사", "album": "앨범", "diarize": "화자" };
+const Q_KIND = { "download": "DL", "analyze-url": "전사·URL", "analyze-files": "전사", "album": "앨범", "diarize": "화자", "html": "HTML" };
 // 큐 task kind → 작업 카드(trackJob) kind. analyze-url/analyze-files 는 'analyze' 로,
-// download/album/diarize 는 그대로(라벨이 올바르게 표시되도록).
+// download/album/diarize/html 은 그대로(라벨이 올바르게 표시되도록).
 function trackKind(taskKind) {
-    if (taskKind === "download" || taskKind === "album" || taskKind === "diarize") return taskKind;
+    if (taskKind === "download" || taskKind === "album" || taskKind === "diarize" || taskKind === "html") return taskKind;
     return "analyze";
 }
 
@@ -903,6 +926,20 @@ qDiarScan.addEventListener("click", async () => {
     } catch (e) { alert(`화자 구분 스캔 실패: ${e.message}`); }
     finally { qDiarScan.disabled = false; }
 });
+qHtmlScan.addEventListener("click", async () => {
+    if (!confirm("전사는 됐지만 캡쳐 HTML 이 없는 파일을 모두 HTML 큐에 추가할까요?\n재전사 없이 기존 전사물로 만듭니다. ffmpeg 프레임 캡쳐라 시간이 걸립니다. 이미 HTML 있는 파일은 건너뜁니다.")) return;
+    qHtmlScan.disabled = true;
+    try {
+        const r = await fetch("/api/queue/scan-html", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+        const j = await r.json();
+        alert(`HTML 큐에 ${j.enqueued}개 폴더를 추가했습니다.`);
+        loadQueue(true);
+    } catch (e) { alert(`HTML 스캔 실패: ${e.message}`); }
+    finally { qHtmlScan.disabled = false; }
+});
 qRetryAll.addEventListener("click", async () => {
     try {
         const r = await fetch("/api/queue/retry-all", { method: "POST" });
@@ -977,7 +1014,7 @@ function trackJob(jobId, kind, label) {
     card.innerHTML = `
         <div>
             <div class="head">
-                <span class="kind ${kind}">${{ download: "DL", generate: "GEN", analyze: "분석", album: "앨범", diarize: "화자" }[kind] || kind}</span>
+                <span class="kind ${kind}">${{ download: "DL", generate: "GEN", analyze: "분석", album: "앨범", diarize: "화자", html: "HTML" }[kind] || kind}</span>
                 <span class="title-line" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
             </div>
             <div class="meta-line">id: ${jobId} · <span class="meta-mid">대기 중</span></div>
@@ -1043,8 +1080,8 @@ function trackJob(jobId, kind, label) {
             applyStatus("done", tag);
             mid.textContent = [msg.message, msg.out_path].filter(Boolean).join(" → ") || "완료";
             es.close();
-            // 분석/앨범/화자 구분 완료 → 보드의 요약·대본·앨범·화자 라벨 갱신.
-            if (kind === "analyze" || kind === "album" || kind === "diarize") loadAnalysisBoard();
+            // 분석/앨범/화자 구분/HTML 완료 → 보드의 요약·대본·앨범·캡쳐뷰 라벨 갱신.
+            if (kind === "analyze" || kind === "album" || kind === "diarize" || kind === "html") loadAnalysisBoard();
             loadQueue(true);  // 큐 패널도 즉시 갱신(4초 폴링 기다리지 않게).
         } else if (e === "error") {
             applyStatus("failed", tag);
