@@ -38,6 +38,7 @@ from queue import Queue
 from typing import Any
 
 from ycollector import __version__
+from ycollector.config import _sleep_or_none as _sleep_arg
 from ycollector.config import load_settings
 from ycollector.engine import (
     AudioPref,
@@ -49,6 +50,7 @@ from ycollector.engine import (
     ProgressEvent,
     Quality,
     YtdlpEngine,
+    compose_format_sort,
     compose_format_spec,
 )
 from ycollector.engine.ytdlp import _find_deno_dir, is_ambiguous_playlist_url
@@ -181,9 +183,13 @@ class _Worker(threading.Thread):
             codec = CodecPref(s.get("codec", "auto"))
             audio = AudioPref(s.get("audio", "best"))
             container = Container(s.get("container", "mp4"))
-            format_spec = s.get("format") or compose_format_spec(
-                FormatChoice(quality=quality, container=container, codec=codec, audio=audio)
+            _choice = FormatChoice(
+                quality=quality, container=container, codec=codec, audio=audio
             )
+            format_spec = s.get("format") or compose_format_spec(_choice)
+            # raw format 을 직접 준 경우엔 그 선택자를 존중하고 -S 를 붙이지 않는다.
+            # 화질 상한이 -f 가 아닌 -S 인 이유는 compose_format_sort() 참고.
+            format_sort = None if s.get("format") else compose_format_sort(_choice)
         except Exception as exc:
             _emit({
                 "event": "error", "job_id": job_id,
@@ -276,6 +282,11 @@ class _Worker(threading.Thread):
             path = self.engine.download(
                 url,
                 format=format_spec,
+                format_sort=format_sort,
+                player_client=(s.get("player_client") or None),
+                sleep_requests=_sleep_arg(s.get("sleep_requests")),
+                sleep_interval=_sleep_arg(s.get("sleep_interval")),
+                max_sleep_interval=_sleep_arg(s.get("max_sleep_interval")),
                 output_dir=output_dir,
                 merge_format=container.value,
                 write_subs=write_subs,
@@ -353,6 +364,10 @@ def run() -> int:
             "retries": settings.retries,
             "fragment_retries": settings.fragment_retries,
             "throttled_rate": settings.throttled_rate or "",
+            "player_client": settings.player_client or "",
+            "sleep_requests": settings.sleep_requests,
+            "sleep_interval": settings.sleep_interval,
+            "max_sleep_interval": settings.max_sleep_interval,
         },
     })
 

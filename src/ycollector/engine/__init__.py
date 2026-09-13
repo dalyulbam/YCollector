@@ -9,6 +9,7 @@ from .format_spec import (
     Container,
     FormatChoice,
     Quality,
+    compose_format_sort,
     compose_format_spec,
     spec_for_format_id,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "Quality",
     "YtdlpEngine",
     "classify_error",
+    "compose_format_sort",
     "compose_format_spec",
     "spec_for_format_id",
 ]

@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -248,6 +249,18 @@ _META_MARKER = "YCMETA\t"
 #   [download] downloads\foo\bar [id].mp4 has already been downloaded
 _ALREADY_DOWNLOADED_RE = re.compile(r"^\[download\]\s+(.+?)\s+has already been downloaded$")
 
+# --download-archive 로 걸러진 항목. 위와 달리 **경로가 없고 영상 ID 만** 찍히므로
+# final_path 를 만들 수 없다. 그래서 개수만 세어 두었다가, 모든 항목이 이렇게
+# 건너뛰어져 final_path 가 하나도 없을 때 '실패' 가 아니라 '할 일 없음' 으로
+# 보고하는 데 쓴다. 예:
+#   [download] uiIt8eEzN8o: has already been recorded in the archive
+#   [download] uiIt8eEzN8o: 어떤 제목 has already been recorded in the archive
+# (yt-dlp YoutubeDL.py:1645-1660 은 title 을 아는 재생목록 항목엔 제목을 끼워
+#  넣고, URL 단계 조기 검사(:1710)는 ID 만 찍는다. 둘 다 잡아야 한다.)
+_ARCHIVE_SKIP_RE = re.compile(
+    r"^\[download\]\s+.*has already been recorded in the archive$"
+)
+
 # yt-dlp 가 `--max-downloads N` 에 도달했을 때 사용하는 정상 종료 코드.
 # 정확히 N 개를 받은 뒤 깨끗하게 멈췄다는 신호로 실패가 아니다.
 _MAX_DOWNLOADS_REACHED_EXIT = 101
@@ -380,7 +393,8 @@ class YtdlpEngine:
         self,
         url: str,
         *,
-        format: str = "bv*[height<=1080]+ba/b[height<=1080]",
+        format: str = "bv*+ba/b",
+        format_sort: str | None = "res:1080",
         output_dir: Path = Path("downloads"),
         output_template: str = "%(uploader)s/%(title)s [%(id)s].%(ext)s",
         merge_format: str = "mp4",
@@ -392,7 +406,11 @@ class YtdlpEngine:
         retries: int = 10,
         fragment_retries: int = 10,
         throttled_rate: str | None = None,
+        sleep_requests: float | None = None,
+        sleep_interval: float | None = None,
+        max_sleep_interval: float | None = None,
         no_check_certificate: bool = False,
+        player_client: str | None = None,
         no_playlist: bool = False,
         yes_playlist: bool = False,
         max_downloads: int | None = None,
@@ -411,6 +429,19 @@ class YtdlpEngine:
         failure. Re-running the same command will automatically resume from
         the partial ``.part`` file (yt-dlp's default behaviour).
 
+        Resolution cap:
+          - ``format`` carries codec/container preferences only; the size cap
+            is ``format_sort`` (yt-dlp ``-S``), e.g. ``"res:1080"``. ``res`` is
+            ``min(width, height)``, so the cap applies to the *short* edge and
+            a portrait Short keeps its native 1080x1920 instead of being
+            downgraded to 608x1080 by a ``[height<=1080]`` filter. Pass
+            ``None`` for no cap (``quality = best``), or when ``format`` is a
+            raw user-supplied selector that already expresses its own limits.
+
+        YouTube 추출 클라이언트:
+          - ``player_client`` (예: ``"web_embedded"``): yt-dlp 의 기본 클라이언트
+            선택이 403 을 맞을 때의 우회. ``None`` 이면 yt-dlp 기본값.
+
         Stall mitigation:
           - ``socket_timeout`` (sec): abort socket if no data arrives within N
             seconds and retry. Default 30 — yt-dlp's own default is ~600s.
@@ -419,6 +450,15 @@ class YtdlpEngine:
           - ``throttled_rate`` (e.g. ``"100K"``): if download rate falls below
             this for too long, restart the connection. Useful against
             YouTube throttling. Disabled by default.
+
+        Request pacing (bot-detection avoidance):
+          - ``sleep_requests`` (sec): pause between *metadata* requests.
+          - ``sleep_interval`` / ``max_sleep_interval`` (sec): pause between
+            *downloads*; with both set yt-dlp picks a random value in range,
+            which looks less machine-like than a fixed delay.
+          All default to ``None`` (no pacing) — that is fine for a handful of
+          videos, but a few hundred back-to-back items will get the session
+          blocked with a ``bot-detect`` error.
 
         Cancellation:
           - ``on_process(proc)`` callback receives the live ``Popen`` so that
@@ -455,6 +495,7 @@ class YtdlpEngine:
             "--ignore-errors",
             "-f", format,
             "--merge-output-format", merge_format,
+            *(("-S", format_sort) if format_sort else ()),
             "-o", outtmpl,
             "--retries", str(retries),
             "--fragment-retries", str(fragment_retries),
@@ -463,10 +504,29 @@ class YtdlpEngine:
             cmd += ["--socket-timeout", str(socket_timeout)]
         if throttled_rate:
             cmd += ["--throttled-rate", throttled_rate]
+        # 요청 사이 간격. 수백 개짜리 재생목록을 쉬지 않고 긁으면 YouTube 가
+        # 'Sign in to confirm you are not a bot' 으로 막아 버린다(실측: 쇼츠
+        # 37개째부터 나머지 313개 전부 차단). sleep_requests 는 메타데이터
+        # 요청 사이, sleep_interval/max_sleep_interval 은 영상 다운로드 사이.
+        if sleep_requests:
+            cmd += ["--sleep-requests", str(sleep_requests)]
+        if sleep_interval or max_sleep_interval:
+            # --max-sleep-interval 는 단독으로 못 쓴다(yt-dlp usage error).
+            # min 만 설정하면 고정 대기, 둘 다 설정하면 그 사이 랜덤.
+            cmd += ["--sleep-interval", str(sleep_interval or 0)]
+            if max_sleep_interval:
+                cmd += ["--max-sleep-interval", str(max_sleep_interval)]
         # TLS 가로채기 환경에서 OS 신뢰 저장소(pip_system_certs)로도 검증이 안 될 때의
         # 최후 수단. 켜면 인증서 검증을 끈다(이 PC 는 어차피 백신이 TLS 를 MITM 중).
         if no_check_certificate:
             cmd.append("--no-check-certificate")
+        # YouTube 추출 클라이언트 강제. 기본 체인(android_vr 등)이 SABR/PO-token
+        # 실험에 걸리면 메타데이터·포맷 목록은 멀쩡한데 미디어 fetch 만
+        # 'HTTP Error 403: Forbidden' 으로 죽는다(yt-dlp #12482). 그 경우
+        # "web_embedded" 같은 다른 클라이언트로 전환하면 살아난다. 빈 값이면
+        # yt-dlp 기본 동작 그대로.
+        if player_client:
+            cmd += ["--extractor-args", f"youtube:player_client={player_client}"]
         # Playlist handling. `no_playlist` wins if both are set.
         if no_playlist:
             cmd.append("--no-playlist")
@@ -510,6 +570,23 @@ class YtdlpEngine:
 
         final_path: Path | None = None
         stderr_lines: list[str] = []
+        archived_skips = 0
+
+        # stderr 를 별도 스레드가 곧바로 비운다. 예전엔 stdout 을 EOF 까지 다 읽은
+        # *뒤에* stderr 를 읽었는데, --ignore-errors 로 도는 수백 개짜리 재생목록은
+        # 항목마다 ERROR/WARNING 을 뱉어 stderr 파이프(기본 ~64KB)를 채운다. 그러면
+        # yt-dlp 는 stderr 쓰기에서 블록되고 부모는 stdout 을 기다려 교착 — 진행률이
+        # 멈춘 채 끝나지 않는다. 수집만 스레드가 하고 on_log 디스패치는 예전처럼
+        # 메인 스레드가 이어서 하므로, 콜백이 두 스레드에서 동시에 불릴 일은 없다.
+        def _drain_stderr() -> None:
+            assert proc.stderr is not None
+            for raw in proc.stderr:
+                line = raw.rstrip()
+                if line:
+                    stderr_lines.append(line)
+
+        stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        stderr_thread.start()
 
         try:
             assert proc.stdout is not None
@@ -548,14 +625,23 @@ class YtdlpEngine:
                         final_path = Path(m.group(1))
                         if on_file:
                             on_file(final_path)
+                    elif _ARCHIVE_SKIP_RE.match(line):
+                        archived_skips += 1
 
-            assert proc.stderr is not None
-            for raw in proc.stderr:
-                line = raw.rstrip()
-                if line:
-                    stderr_lines.append(line)
-                    if on_log:
-                        on_log(line)
+            # stdout 이 EOF 면 yt-dlp 는 끝났거나 끝나는 중 — stderr 드레인이
+            # 마무리되길 기다린 뒤, 모아 둔 라인을 예전과 같은 순서·같은
+            # 스레드로 흘려보낸다.
+            stderr_thread.join(timeout=30)
+            if stderr_thread.is_alive():
+                # 여기 오면 stderr 가 아직 열려 있다는 뜻 — 아래 dispatch 는
+                # 그 시점까지 모인 것만 본다. 조용히 삼키면 '에러가 없었다' 로
+                # 오인되므로 경고 한 줄을 직접 끼워 넣는다.
+                stderr_lines.append(
+                    "WARNING: yt-dlp stderr 를 30초 안에 다 읽지 못했습니다 — 아래 진단 목록이 잘렸을 수 있습니다."
+                )
+            if on_log:
+                for line in list(stderr_lines):
+                    on_log(line)
         finally:
             # Make sure subprocess never outlives this function.
             if proc.poll() is None:
@@ -564,6 +650,9 @@ class YtdlpEngine:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+            # 프로세스가 죽으면 stderr 도 EOF — 리더를 회수해서 종료 직전
+            # 진단까지 stderr_lines 에 들어오게 한다(아래 분류가 이걸 본다).
+            stderr_thread.join(timeout=5)
 
         # exit 101 = --max-downloads 도달. yt-dlp 가 의도적으로 일찍 멈춘
         # 신호이므로 success 와 동등 취급 (final_path 는 이미 마지막 영상에서 set).
@@ -590,6 +679,17 @@ class YtdlpEngine:
                 )
 
         if final_path is None:
+            # 받을 게 남아 있지 않았을 뿐인 정상 종료. 이걸 '파일명 미보고'
+            # 실패로 올리면 완료된 작업을 재실행할 때마다 거짓 실패가 난다.
+            if archived_skips:
+                raise DownloadError(
+                    category="already-archived",
+                    message=(
+                        f"{archived_skips}개 항목이 download-archive 에 이미 "
+                        f"기록되어 있어 전부 건너뛰었습니다 — 새로 받은 항목 없음."
+                    ),
+                    raw_stderr="\n".join(stderr_lines),
+                )
             raise DownloadError(
                 category="unknown",
                 message="Download completed but no filename reported",

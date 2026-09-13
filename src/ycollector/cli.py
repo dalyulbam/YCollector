@@ -31,6 +31,7 @@ from ycollector.engine import (
     ProgressEvent,
     Quality,
     YtdlpEngine,
+    compose_format_sort,
     compose_format_spec,
 )
 from ycollector.engine.ytdlp import _find_deno_dir, is_ambiguous_playlist_url
@@ -42,6 +43,13 @@ _ACTIVITY_RE = re.compile(r"^\[(?P<src>\w+)\]\s+(?P<msg>.+?)$")
 # 11자 YouTube video-ID 프리픽스. `[youtube]`/`[info]` 메시지에서만 떼어낸다 —
 # `[download] Destination:` 의 "Destination" 도 11자 영문이라 무조건 떼면 오인.
 _VID_ID_PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]{11}:\s+")
+
+# 재생목록 중간에 실패한 항목. `--ignore-errors` 때문에 전체는 계속 진행되고,
+# 이 라인들은 `[src] msg` 형태가 아니라서 _ACTIVITY_RE 에 안 걸려 그대로 사라진다.
+# 350개짜리 작업에서 70개가 403 이어도 "→ 마지막 경로" 한 줄만 남는 상황을 막는다.
+_PROBLEM_RE = re.compile(r"^(?:ERROR|WARNING):\s*\S")
+# 실패가 많을 때 메모리/출력 폭주 방지. 초과분은 개수만 센다.
+_MAX_PROBLEMS = 200
 
 
 def _format_activity_msg(line: str) -> str | None:
@@ -100,6 +108,9 @@ class _StatusLine:
         self._is_tty = sys.stderr.isatty()
         self._frame_idx = 0
         self._last_log_t = 0.0
+        # yt-dlp 가 뱉은 ERROR/WARNING 원문(최대 _MAX_PROBLEMS 개) 과 총 개수.
+        self.problems: list[str] = []
+        self.problem_count = 0
 
     def on_meta(self, meta: MetaInfo) -> None:
         """yt-dlp pre_process — 다운로드 시작 전 제목/채널/길이가 알려진 시점."""
@@ -113,7 +124,18 @@ class _StatusLine:
         sys.stderr.flush()
 
     def on_log(self, line: str) -> None:
-        """yt-dlp 의 모든 stdout/stderr 라인을 받아 spinner 활동 라벨을 갱신."""
+        """yt-dlp 의 모든 stdout/stderr 라인을 받아 spinner 활동 라벨을 갱신.
+
+        ``ERROR:`` / ``WARNING:`` 라인은 스피너용 라벨이 아니라 :attr:`problems`
+        에 따로 모은다 — 재생목록 실행이 끝난 뒤 무엇이 실패했는지 보고하려면
+        이게 유일한 출처다(엔진은 --ignore-errors 로 계속 진행한다).
+        """
+        if _PROBLEM_RE.match(line):
+            with self._lock:
+                self.problem_count += 1
+                if len(self.problems) < _MAX_PROBLEMS:
+                    self.problems.append(line.rstrip())
+            return
         msg = _format_activity_msg(line)
         if msg is not None:
             if len(msg) > 70:
@@ -266,6 +288,14 @@ def _build_parser(s: Settings) -> argparse.ArgumentParser:
                         f"{s.max_downloads or 'unlimited'}).")
     p.add_argument("--playlist-items", default=s.playlist_items, metavar="SPEC",
                    help="Which items of a playlist to download (e.g. '1-3,7,10-').")
+    p.add_argument("--download-archive", metavar="PATH", type=Path, default=None,
+                   help="이미 받은 영상 ID 를 이 파일에 기록하고, 다음 실행에서는 "
+                        "건너뜁니다(yt-dlp --download-archive 패스스루). 수백 개짜리 "
+                        "채널/해시태그 작업을 중단 후 재개할 때 권장 — 파일명 기반 "
+                        "스킵과 달리 추출 전에 걸러내므로 재개가 즉시입니다. "
+                        "실패한 항목은 기록되지 않으므로 재실행하면 자동 재시도됩니다. "
+                        "주의: 출력 폴더마다 다른 파일을 쓰세요(폴더가 달라도 "
+                        "같은 archive 를 쓰면 받지도 않은 영상을 건너뜁니다).")
     # ── stall mitigation (defaults from settings.ini) ──────────────────────
     p.add_argument("--socket-timeout", type=int, default=s.socket_timeout, metavar="SEC",
                    help=f"Abort hung sockets after N seconds and retry "
@@ -281,6 +311,26 @@ def _build_parser(s: Settings) -> argparse.ArgumentParser:
     p.add_argument("--no-check-certificate", action="store_true", default=s.no_check_certificate,
                    help="Skip TLS certificate verification (last resort for AV/proxy MITM "
                         f"environments; default from settings.ini: {s.no_check_certificate}).")
+    p.add_argument("--sleep-requests", type=float, default=s.sleep_requests,
+                   metavar="SEC",
+                   help="메타데이터 요청 사이 대기(초). 수백 개짜리 재생목록에서 "
+                        "YouTube 봇 감지를 피하는 데 필요 "
+                        f"(기본값 settings.ini: {s.sleep_requests}).")
+    p.add_argument("--sleep-interval", type=float, default=s.sleep_interval,
+                   metavar="SEC",
+                   help="영상 다운로드 사이 대기(초). --max-sleep-interval 과 "
+                        "같이 주면 그 사이 랜덤 "
+                        f"(기본값 settings.ini: {s.sleep_interval}).")
+    p.add_argument("--max-sleep-interval", type=float, default=s.max_sleep_interval,
+                   metavar="SEC",
+                   help="--sleep-interval 과 함께 랜덤 대기의 상한 "
+                        f"(기본값 settings.ini: {s.max_sleep_interval}).")
+    p.add_argument("--player-client", metavar="CLIENT", default=s.player_client,
+                   help="YouTube 추출 클라이언트 강제 (yt-dlp --extractor-args "
+                        "youtube:player_client). 기본 체인이 SABR/PO-token 실험에 "
+                        "걸려 미디어 fetch 만 'HTTP Error 403' 으로 죽을 때 우회용. "
+                        f"예: web_embedded, android, ios (기본값 settings.ini: "
+                        f"{s.player_client or 'yt-dlp 기본'}).")
     p.add_argument("--version", action="version", version=f"ycollector {__version__}")
     return p
 
@@ -383,6 +433,11 @@ def main(argv: list[str] | None = None) -> int:
     if cookies_file is not None:
         print(f"cookies: {cookies_file}", file=sys.stderr)
 
+    # 화질 상한은 -f 필터가 아니라 -S(format_sort) 가 담당한다. 자세한 이유는
+    # compose_format_sort() 도크스트링 참고 — 세로 영상에서 [height<=N] 은
+    # 네이티브 화질을 떨어뜨린다. 사용자가 -f 를 직접 준 경우엔 그 선택자가
+    # 이미 자체 제한을 담고 있다고 보고 -S 를 붙이지 않는다.
+    format_sort: str | None = None
     if args.format is None:
         choice = FormatChoice(
             quality=Quality(args.quality),
@@ -391,9 +446,19 @@ def main(argv: list[str] | None = None) -> int:
             audio=AudioPref(args.audio),
         )
         args.format = compose_format_spec(choice)
-        print(f"format spec: {args.format}", file=sys.stderr)
+        format_sort = compose_format_sort(choice)
+        print(f"format spec: {args.format}"
+              f"{f'   sort: {format_sort}' if format_sort else ''}", file=sys.stderr)
+
+    archive_path: Path | None = args.download_archive
+    if archive_path is not None:
+        print(f"download archive: {archive_path}", file=sys.stderr)
 
     failures: list[tuple[str, DownloadError]] = []
+    # 재생목록 *내부* 항목 실패. URL 단위 failures 와 달리 --ignore-errors 로
+    # 삼켜지므로 yt-dlp 로그에서 직접 긁어모은다.
+    item_problems: list[str] = []
+    item_problem_count = 0
     interrupted_at: int | None = None
     try:
         for i, url in enumerate(urls, start=1):
@@ -429,6 +494,7 @@ def main(argv: list[str] | None = None) -> int:
                 path = engine.download(
                     url,
                     format=args.format,
+                    format_sort=format_sort,
                     output_dir=args.output_dir,
                     merge_format=args.container,
                     write_subs=not args.no_subs,
@@ -439,24 +505,36 @@ def main(argv: list[str] | None = None) -> int:
                     retries=args.retries,
                     fragment_retries=args.fragment_retries,
                     throttled_rate=args.throttled_rate,
+                    sleep_requests=args.sleep_requests,
+                    sleep_interval=args.sleep_interval,
+                    max_sleep_interval=args.max_sleep_interval,
                     no_check_certificate=args.no_check_certificate,
+                    player_client=args.player_client,
                     no_playlist=no_pl,
                     yes_playlist=yes_pl,
                     max_downloads=args.max_downloads,
                     playlist_items=args.playlist_items,
+                    download_archive=archive_path,
                     on_progress=status.on_progress,
                     on_log=status.on_log,
                     on_meta=status.on_meta,
                 )
             except DownloadError as exc:
-                failures.append((url, exc))
-                print(f"  ✗ {exc}", file=sys.stderr)
+                # 전부 archive 에 있어 새로 받을 게 없었던 정상 종료 —
+                # 재실행/재개 때마다 거짓 실패로 세지 않는다.
+                if exc.category == "already-archived":
+                    print(f"  = {exc.message}", file=sys.stderr)
+                else:
+                    failures.append((url, exc))
+                    print(f"  ✗ {exc}", file=sys.stderr)
             else:
                 print(f"  → {path}", file=sys.stderr)
             finally:
                 # KeyboardInterrupt 가 download() 한가운데서 발생해도
                 # 페인터 스레드가 단정하게 멈춘다.
                 status.stop()
+                item_problem_count += status.problem_count
+                item_problems.extend(status.problems)
     except KeyboardInterrupt:
         interrupted_at = i  # noqa: F821 - bound by `for` above when this runs
         print(
@@ -465,6 +543,21 @@ def main(argv: list[str] | None = None) -> int:
             "  → 멈춤이 잦으면: --socket-timeout 15 --throttled-rate 100K",
             file=sys.stderr,
         )
+
+    # 재생목록 내부에서 건너뛴 항목 보고. --ignore-errors 로 전체는 성공 처리되므로
+    # 이 요약이 없으면 350개 중 70개가 실패해도 화면엔 마지막 경로 한 줄만 남는다.
+    # (종료 코드는 일부러 바꾸지 않는다 — sidecar/서버 등 기존 소비자의 계약 유지.)
+    if item_problem_count:
+        print(f"\n재생목록 항목 경고/실패 {item_problem_count}건:", file=sys.stderr)
+        for line in item_problems:
+            print(f"  - {line}", file=sys.stderr)
+        if item_problem_count > len(item_problems):
+            print(f"  … 외 {item_problem_count - len(item_problems)}건 생략",
+                  file=sys.stderr)
+        if archive_path is not None:
+            print("  💡 실패 항목은 archive 에 기록되지 않습니다 — 같은 명령을 "
+                  "다시 실행하면 성공분은 건너뛰고 실패분만 재시도합니다.",
+                  file=sys.stderr)
 
     if interrupted_at is not None:
         print(f"  진행: {interrupted_at - 1}/{len(urls)} 완료, 1개 중단", file=sys.stderr)

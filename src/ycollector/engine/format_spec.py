@@ -102,15 +102,20 @@ class FormatChoice:
 def compose_format_spec(choice: FormatChoice) -> str:
     """Translate a :class:`FormatChoice` into a yt-dlp ``-f`` spec.
 
+    The resolution cap is **not** expressed here — it lives in the companion
+    ``-S`` value from :func:`compose_format_sort`, because a ``-f`` filter
+    cannot express "short edge ≤ N" (see that function's docstring). Callers
+    must pass both, or the download is uncapped.
+
     Examples
     --------
     Default (1080p mp4 auto-codec best-audio)::
 
-        bv*[height<=1080]+ba/b[height<=1080]
+        bv*+ba/b            (with -S res:1080)
 
     4K + AV1 + opus::
 
-        bv*[height<=2160][vcodec^=av01]+ba[ext=webm]/b[height<=2160]
+        bv*[vcodec^=av01]+ba[ext=webm]/b      (with -S res:2160)
 
     Audio only + m4a::
 
@@ -120,16 +125,36 @@ def compose_format_spec(choice: FormatChoice) -> str:
         f = _AUDIO_FILTER.get(choice.audio, "")
         return f"bestaudio{f}/bestaudio" if f else "bestaudio/best"
 
-    height = choice.quality.height
-    height_filter = f"[height<={height}]" if height is not None else ""
     codec_filter = _VCODEC_FILTER.get(choice.codec, "")
     audio_filter = _AUDIO_FILTER.get(choice.audio, "")
 
-    video = f"bv*{height_filter}{codec_filter}"
+    video = f"bv*{codec_filter}"
     audio = f"ba{audio_filter}" if audio_filter else "ba"
-    fallback = f"b{height_filter}"
 
-    return f"{video}+{audio}/{fallback}"
+    return f"{video}+{audio}/b"
+
+
+def compose_format_sort(choice: FormatChoice) -> str | None:
+    """Translate a :class:`FormatChoice` into a yt-dlp ``-S`` value, or ``None``.
+
+    Why this exists instead of a ``[height<=N]`` filter: yt-dlp's ``height`` is
+    the *long* edge on a portrait video, so ``[height<=1080]`` rejects a
+    1080x1920 Short's native rung (height 1920) and silently settles for
+    608x1080 — a 3.2x pixel loss, exit code 0, no warning. yt-dlp's ``res``
+    sort field is ``min(width, height)``, so ``res:1080`` means "short edge at
+    most 1080" and caps landscape (3840x2160 → 1920x1080) and portrait
+    (1080x1920 → 1080x1920, untouched) by the same rule.
+
+    ``-S`` is a *preference*, not a hard filter: a video published only above
+    the cap still downloads, at the rung closest above it, rather than failing
+    the way ``[height<=N]`` did.
+
+    Returns ``None`` for ``best`` / ``audio`` (no cap to apply).
+    """
+    if choice.quality in (Quality.BEST, Quality.AUDIO):
+        return None
+    height = choice.quality.height
+    return f"res:{height}" if height is not None else None
 
 
 def spec_for_format_id(fmt: dict) -> str:

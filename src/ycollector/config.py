@@ -17,6 +17,7 @@ migrate while keeping the same Settings dataclass surface.
 from __future__ import annotations
 
 import configparser
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -62,6 +63,33 @@ class Settings:
     # 평소엔 pip_system_certs 가 OS 신뢰 저장소로 검증을 통과시키므로 false 권장.
     # OS 신뢰 저장소로도 안 될 때(다른 PC·prune 등)만 true 로.
     no_check_certificate: bool = False
+    # YouTube 추출 클라이언트 강제(yt-dlp --extractor-args youtube:player_client).
+    # 빈 값 = yt-dlp 기본. 기본 체인이 SABR/PO-token 실험에 걸려 미디어 fetch 만
+    # 403 으로 죽을 때 "web_embedded" 등으로 우회한다.
+    player_client: str | None = None
+    # 요청 사이 간격(초). 수백 개짜리 재생목록에서 YouTube 봇 감지를 피하려면
+    # 필요하다. 0/빈 값 = 간격 없음.
+    sleep_requests: float = 0.0
+    sleep_interval: float = 0.0
+    max_sleep_interval: float = 0.0
+
+
+def _sleep_or_none(raw: object) -> float | None:
+    """대기 시간(초) 파싱. 못 쓸 값이면 ``None`` — 호출부가 기본값을 유지한다.
+
+    nan / inf 를 걸러내는 이유는 yt-dlp 뿐 아니라 웹 서버 때문이다. Starlette 의
+    JSONResponse 는 ``allow_nan=False`` 라, nan 이 Settings 에 들어오면
+    ``/api/settings`` 응답 자체가 터진다. 음수는 yt-dlp 가 거부하므로 같이 막는다.
+    """
+    if raw is None or raw == '':
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(val) or val < 0:
+        return None
+    return val
 
 
 # ── loader ─────────────────────────────────────────────────────────────────
@@ -126,6 +154,12 @@ def load_settings(explicit: Path | None = None) -> tuple[Settings, Path | None]:
             s.no_check_certificate = n.getboolean("no_check_certificate", s.no_check_certificate)
         except ValueError:
             pass
+        pc = (n.get("player_client") or "").strip()
+        s.player_client = pc or None
+        for key in ("sleep_requests", "sleep_interval", "max_sleep_interval"):
+            val = _sleep_or_none((n.get(key) or '').strip())
+            if val is not None:
+                setattr(s, key, val)
 
     return s, source
 
@@ -157,6 +191,10 @@ def save_settings(s: Settings, path: Path | None = None) -> Path:
         "fragment_retries": str(s.fragment_retries),
         "throttled_rate": s.throttled_rate or "",
         "no_check_certificate": str(s.no_check_certificate).lower(),
+        "player_client": s.player_client or "",
+        "sleep_requests": str(s.sleep_requests),
+        "sleep_interval": str(s.sleep_interval),
+        "max_sleep_interval": str(s.max_sleep_interval),
     }
     with open(dest, "w", encoding="utf-8") as f:
         parser.write(f)
@@ -177,6 +215,10 @@ def settings_to_dict(s: Settings) -> dict[str, object]:
         "fragment_retries": s.fragment_retries,
         "throttled_rate": s.throttled_rate or "",
         "no_check_certificate": s.no_check_certificate,
+        "player_client": s.player_client or "",
+        "sleep_requests": s.sleep_requests,
+        "sleep_interval": s.sleep_interval,
+        "max_sleep_interval": s.max_sleep_interval,
     }
 
 
@@ -231,6 +273,14 @@ def settings_from_dict(d: dict[str, object]) -> Settings:
     if "no_check_certificate" in d:
         v = d["no_check_certificate"]
         s.no_check_certificate = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
+    if "player_client" in d:
+        pc = str(d["player_client"] or "").strip()
+        s.player_client = pc or None
+    for key in ("sleep_requests", "sleep_interval", "max_sleep_interval"):
+        if key in d:
+            val = _sleep_or_none(d[key])
+            if val is not None:
+                setattr(s, key, val)
     return s
 
 
@@ -339,6 +389,21 @@ throttled_rate = 100K
 # 평소엔 pip_system_certs 가 OS 신뢰 저장소로 검증을 통과시키므로 false 권장.
 # OS 신뢰 저장소로도 'CERTIFICATE_VERIFY_FAILED' 가 날 때만 true 로.
 no_check_certificate = false
+# YouTube 추출 클라이언트 강제(yt-dlp --extractor-args youtube:player_client).
+# 빈 값 = yt-dlp 기본 선택. 기본 체인이 YouTube 의 SABR/PO-token 실험에 걸리면
+# 메타데이터/포맷 목록은 정상인데 실제 미디어 fetch 만 'HTTP Error 403' 으로
+# 죽는다(yt-dlp #12482). 그럴 때 web_embedded 로 우회한다.
+# 값 예: web_embedded | android | ios | tv  (쉼표로 여러 개 = 순서대로 시도)
+player_client = web_embedded,default
+# 요청 사이 간격(초). 0 = 간격 없음.
+# 수백 개짜리 채널/해시태그를 쉬지 않고 긁으면 YouTube 가
+# 'Sign in to confirm you are not a bot' 으로 세션을 막는다(실측: 쇼츠 37개째부터
+# 나머지 313개 전부 차단). sleep_requests 는 메타데이터 요청 사이,
+# sleep_interval~max_sleep_interval 은 영상 사이의 랜덤 대기.
+# 영상 몇 개만 받을 땐 0 이어도 되고, 대량 작업엔 1 / 2~5 정도를 권장.
+sleep_requests = 0
+sleep_interval = 0
+max_sleep_interval = 0
 
 [transcribe]
 # 로컬 음성/영상 전사 (faster-whisper). 사용:

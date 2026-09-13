@@ -237,7 +237,7 @@ def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | No
     from ycollector.cookies import default_cookies_path, is_cookies_present
     from ycollector.engine import (
         AudioPref, CodecPref, Container, FormatChoice, Quality,
-        YtdlpEngine, compose_format_spec, DownloadError,
+        YtdlpEngine, compose_format_sort, compose_format_spec, DownloadError,
     )
     from ycollector.engine.ytdlp import is_ambiguous_playlist_url
 
@@ -257,10 +257,13 @@ def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | No
         job.emit_sync("error", category="not-installed",
                       message=f"yt-dlp 를 찾을 수 없습니다 — 설치 후 다시 시도하세요. ({exc})")
         return
-    fmt = compose_format_spec(FormatChoice(
+    _choice = FormatChoice(
         quality=Quality(s.quality), container=Container(s.container),
         codec=CodecPref(s.codec), audio=AudioPref(s.audio),
-    ))
+    )
+    fmt = compose_format_spec(_choice)
+    # 화질 상한은 -f 가 아니라 -S 담당 — 세로 영상이 깎이지 않게(compose_format_sort 참고).
+    fmt_sort = compose_format_sort(_choice)
     cookies_file = None
     if s.cookies_file:
         cookies_file = Path(s.cookies_file)
@@ -303,13 +306,16 @@ def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | No
     try:
         archive_path = user_config_dir() / "archive.txt"
         path = engine.download(
-            url, format=fmt, output_dir=Path(s.output_dir),
+            url, format=fmt, format_sort=fmt_sort, player_client=s.player_client,
+            output_dir=Path(s.output_dir),
             merge_format=s.container, write_subs=s.embed_subs,
             sub_langs=s.sub_langs,
             cookies_from_browser=s.cookies_from_browser,
             cookies_file=cookies_file,
             socket_timeout=s.socket_timeout, retries=s.retries,
             fragment_retries=s.fragment_retries, throttled_rate=s.throttled_rate,
+            sleep_requests=s.sleep_requests, sleep_interval=s.sleep_interval,
+            max_sleep_interval=s.max_sleep_interval,
             no_check_certificate=s.no_check_certificate,
             no_playlist=no_pl, yes_playlist=yes_pl,
             max_downloads=s.max_downloads, playlist_items=s.playlist_items,
@@ -317,6 +323,13 @@ def _run_download(job: _JobRow, url: str, settings_override: dict[str, Any] | No
             on_progress=on_progress, on_meta=on_meta,
         )
     except DownloadError as exc:
+        # 전부 archive.txt 에 있어 새로 받을 게 없었던 정상 종료. 실패로 칠하면
+        # 같은 URL 을 다시 누를 때마다 빨간 카드가 뜬다 — 받아 둔 파일은 멀쩡한데도.
+        if exc.category == "already-archived":
+            job.status = "done"
+            job.progress = 1.0
+            job.emit_sync("done", out_path="", message=exc.message)
+            return
         job.status = "failed"
         job.error = {"category": exc.category, "message": exc.message}
         job.emit_sync("error", category=exc.category, message=exc.message)
@@ -990,16 +1003,19 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
     from ycollector.cookies import default_cookies_path, is_cookies_present
     from ycollector.engine import (
         AudioPref, CodecPref, Container, DownloadError, FormatChoice, Quality,
-        YtdlpEngine, compose_format_spec,
+        YtdlpEngine, compose_format_sort, compose_format_spec,
     )
     from ycollector.transcribe.config import MEDIA_EXTENSIONS
 
     s, _ = load_settings(None)
     engine = YtdlpEngine()
-    fmt = compose_format_spec(FormatChoice(
+    _choice = FormatChoice(
         quality=Quality(s.quality), container=Container(s.container),
         codec=CodecPref(s.codec), audio=AudioPref(s.audio),
-    ))
+    )
+    fmt = compose_format_spec(_choice)
+    # 화질 상한은 -f 가 아니라 -S 담당 — 세로 영상이 깎이지 않게(compose_format_sort 참고).
+    fmt_sort = compose_format_sort(_choice)
     cookies_file: Path | None = None
     if s.cookies_file:
         cookies_file = Path(s.cookies_file)
@@ -1079,11 +1095,14 @@ def _download_collect(job: _JobRow, url: str, *, playlist_all: bool) -> list[Pat
     try:
         engine.download(
             # 전사용 다운로드는 일반 다운로드(downloads/)와 섞이지 않게 전용 폴더로.
-            url, format=fmt, output_dir=_read_root(),
+            url, format=fmt, format_sort=fmt_sort, player_client=s.player_client,
+            output_dir=_read_root(),
             merge_format=s.container, write_subs=s.embed_subs, sub_langs=s.sub_langs,
             cookies_from_browser=s.cookies_from_browser, cookies_file=cookies_file,
             socket_timeout=s.socket_timeout, retries=s.retries,
             fragment_retries=s.fragment_retries, throttled_rate=s.throttled_rate,
+            sleep_requests=s.sleep_requests, sleep_interval=s.sleep_interval,
+            max_sleep_interval=s.max_sleep_interval,
             no_check_certificate=s.no_check_certificate,
             no_playlist=no_pl, yes_playlist=yes_pl,
             max_downloads=s.max_downloads, playlist_items=s.playlist_items,

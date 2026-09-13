@@ -61,6 +61,7 @@ from ycollector.engine import (
     ProgressEvent,
     Quality,
     YtdlpEngine,
+    compose_format_sort,
     compose_format_spec,
     spec_for_format_id,
 )
@@ -104,11 +105,21 @@ class DownloadWorker(QObject):
         playlist_mode: str = "auto",
         max_downloads: int | None = None,
         playlist_items: str | None = None,
+        format_sort: str | None = None,
+        player_client: str | None = None,
+        sleep_requests: float | None = None,
+        sleep_interval: float | None = None,
+        max_sleep_interval: float | None = None,
     ) -> None:
         super().__init__()
         self._urls = urls
         self._output_dir = output_dir
         self._format = format_spec
+        self._format_sort = format_sort
+        self._player_client = player_client
+        self._sleep_requests = sleep_requests
+        self._sleep_interval = sleep_interval
+        self._max_sleep_interval = max_sleep_interval
         self._container = container
         self._write_subs = write_subs
         self._sub_langs = sub_langs
@@ -175,6 +186,11 @@ class DownloadWorker(QObject):
                 path = engine.download(
                     url,
                     format=self._format,
+                    format_sort=self._format_sort,
+                    player_client=self._player_client,
+                    sleep_requests=self._sleep_requests,
+                    sleep_interval=self._sleep_interval,
+                    max_sleep_interval=self._max_sleep_interval,
                     output_dir=self._output_dir,
                     merge_format=self._container,
                     write_subs=self._write_subs,
@@ -383,6 +399,13 @@ class FormatPanel(QGroupBox):
 
     def current_spec(self) -> str:
         return self._override or compose_format_spec(self.choice())
+
+    def current_format_sort(self) -> str | None:
+        """yt-dlp ``-S`` 값(화질 상한). 사용자가 raw -f 를 덮어썼으면 ``None``.
+
+        상한이 ``-f`` 가 아니라 여기 있는 이유는 :func:`compose_format_sort` 참고.
+        """
+        return None if self._override else compose_format_sort(self.choice())
 
     def current_container(self) -> str:
         return self.container.value() or Container.MP4.value
@@ -779,6 +802,11 @@ class MainWindow(QMainWindow):
             urls=urls,
             output_dir=self.output_panel.output_dir,
             format_spec=self.format_panel.current_spec(),
+            format_sort=self.format_panel.current_format_sort(),
+            player_client=self._settings.player_client,
+            sleep_requests=self._settings.sleep_requests,
+            sleep_interval=self._settings.sleep_interval,
+            max_sleep_interval=self._settings.max_sleep_interval,
             container=self.format_panel.current_container(),
             write_subs=bool(self.output_panel.sub_languages()),
             sub_langs=self.output_panel.sub_languages(),
