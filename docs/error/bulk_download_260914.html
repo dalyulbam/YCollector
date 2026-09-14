@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YCollector — 대량 다운로드 &amp; 전사 에러 정리</title>
+<meta name="description" content="에러 기록 · 2026-09-14">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root { --page-accent: #dc2626; }
+
+:root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --fg: #1e293b;
+    --fg-muted: #64748b;
+    --fg-soft: #94a3b8;
+    --border: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --accent: var(--page-accent, #4f46e5);
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, white);
+    --code-bg: #f8fafc;
+    --code-fg: #0f172a;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+    --shadow: 0 4px 16px rgb(15 23 42 / 0.06);
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b1120;
+        --bg-soft: #111827;
+        --bg-card: #131c2e;
+        --fg: #e5e7eb;
+        --fg-muted: #9ca3af;
+        --fg-soft: #6b7280;
+        --border: #1f2937;
+        --border-soft: #1a2333;
+        --accent-soft: color-mix(in srgb, var(--accent) 22%, #0b1120);
+        --code-bg: #0f172a;
+        --code-fg: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+        --shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+body {
+    margin: 0;
+    background: var(--bg-soft);
+    color: var(--fg);
+    font-family: 'Inter', 'Pretendard', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+    position: sticky; top: 0; z-index: 30;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    height: 60px; display: flex; align-items: center; padding: 0 24px; gap: 24px;
+}
+.topbar .brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.topbar .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.topbar .meta { margin-left: auto; font-size: 0.85rem; color: var(--fg-muted); }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 32px 24px 80px; }
+
+h1 { font-size: 1.8rem; font-weight: 800; margin: 0 0 8px; }
+h2 { font-size: 1.25rem; font-weight: 700; margin: 40px 0 12px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: var(--accent); }
+.subtitle { color: var(--fg-muted); margin: 0 0 32px; font-size: 0.95rem; }
+
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+th, td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; white-space: nowrap; }
+td code, p code, li code { background: var(--code-bg); color: var(--code-fg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85em; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow-sm); }
+.card h3 { margin-top: 0; }
+.card.accent { border-left: 4px solid var(--accent); }
+
+pre { background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 16px; overflow-x: auto; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge.err { background: #fee2e2; color: #991b1b; }
+.badge.warn { background: #fef3c7; color: #92400e; }
+.badge.ok { background: #dcfce7; color: #166534; }
+.badge.note { background: #e0e7ff; color: #3730a3; }
+@media (prefers-color-scheme: dark) {
+    .badge.err { background: #7f1d1d; color: #fca5a5; }
+    .badge.warn { background: #78350f; color: #fde68a; }
+    .badge.ok { background: #14532d; color: #86efac; }
+    .badge.note { background: #312e81; color: #c7d2fe; }
+}
+
+ul { padding-left: 20px; }
+li { margin: 4px 0; }
+
+.diagram {
+    background: var(--code-bg); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 20px; margin: 16px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.82rem;
+    line-height: 1.6; white-space: pre; overflow-x: auto;
+}
+.toc { font-size: 0.9rem; color: var(--fg-muted); }
+.toc a { color: var(--accent); text-decoration: none; }
+.toc a:hover { text-decoration: underline; }
+.callout { background: var(--accent-soft); border-radius: var(--radius-sm); padding: 12px 16px; margin: 16px 0; font-size: 0.9rem; }
+
+h4 { font-size: 0.95rem; font-weight: 700; margin: 18px 0 6px; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="brand">YCollector<span class="dot"></span></div>
+    <div class="meta">에러 기록 &middot; 2026-09-14</div>
+</div>
+
+<div class="wrap">
+
+<h1>대량 다운로드 &amp; 전사 작업 중 발생한 에러 정리</h1>
+<p class="subtitle">
+    채널 2개의 원본 영상 96개와 쇼츠 2종(목표 1,062개)을 받아 전부 전사하는 작업에서 나온 에러 기록.
+    <strong>가장 위험했던 부류는 예외를 던지지 않는 에러</strong>였다 — 화질이 조용히 깎이고, 313개가 실패해도
+    종료 코드는 0이었다. 아래는 그 12건과 조치다.
+</p>
+
+<p class="toc">
+    바로가기 &middot;
+    <a href="#silent">① 조용한 실패 3건</a> &middot;
+    <a href="#access">② YouTube 접근 차단 3건</a> &middot;
+    <a href="#robust">③ 대량 실행 견고성 3건</a> &middot;
+    <a href="#pacing">④ 속도 조절 도입 후 3건</a> &middot;
+    <a href="#env">⑤ 실행 환경 3건</a> &middot;
+    <a href="#mine">⑥ 내 판단 오류</a> &middot;
+    <a href="#open">⑦ 미해결</a> &middot;
+    <a href="#cheat">⑧ 요약</a>
+</p>
+
+<div class="callout">
+<strong>이 문서가 다루는 범위.</strong> 코드 결함과 실행 중 실제로 부딪힌 오류만 다룬다. 설계 논의나 성능 수치는
+제외했다. <strong>관측한 현상과 코드에서 확인한 결함, 그리고 인과를 확정하지 못한 추정을 구분해</strong> 적었다 —
+추정인 것은 본문에 그렇게 표시했다.
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="silent">1. 조용한 실패 — 예외도 경고도 없이 잘못되던 것들</h2>
+
+<h3><span class="badge err">ERROR</span> 1-1. 세로 영상 화질이 3.2배 손실되고 있었다</h3>
+
+<p><code>settings.ini</code> 의 <code>quality = 1080p</code> 는 다음 선택자로 번역됐다.</p>
+<div class="card accent">
+<pre><code>bv*[height&lt;=1080]+ba/b[height&lt;=1080]</code></pre>
+</div>
+
+<p>
+    yt-dlp 의 <code>height</code> 는 <strong>세로 영상에서 긴 변</strong>이다. 1080&times;1920 쇼츠는 height 가
+    1920 이라 네이티브 포맷이 필터에서 탈락하고, 조건을 만족하는 608&times;1080 이 선택됐다.
+    픽셀 수로 3.16배 손실인데 <strong>종료 코드 0, 경고 없음</strong>이었다.
+</p>
+
+<h4>재현</h4>
+<pre><code>$ yt-dlp -f "bv*[height&lt;=1080]+ba/b[height&lt;=1080]" --print "%(format_id)s %(resolution)s" &lt;shorts&gt;
+788+251-2  608x1080      ← 깎임
+
+$ yt-dlp -f "bv*+ba/b" -S "res:1080" --print "%(format_id)s %(resolution)s" &lt;shorts&gt;
+399+251-2  1080x1920     ← 정상</code></pre>
+
+<h4>수정</h4>
+<p>
+    상한을 <code>-f</code> 필터에서 <code>-S</code>(format sort)로 옮겼다. yt-dlp 의 <code>res</code> 정렬 필드는
+    <code>min(width, height)</code> 이라, 짧은 변을 기준으로 가로·세로에 같은 규칙이 적용된다.
+</p>
+<div class="callout">
+    <strong><code>res:N</code> 은 하드 상한이 아니라 정렬 선호다.</strong> 짧은 변 N 이하를 우선하되, 선택 가능한
+    포맷이 전부 N 을 초과하면 초과 포맷을 받는다. 예전 <code>[height&lt;=N]</code> 필터는 그런 경우 아예 실패했으므로
+    이쪽이 더 안전하지만, "절대 N 을 넘지 않는다"는 보장은 아니다.
+</div>
+<p>아래는 해당 화질대 포맷이 실제로 존재했던 영상에서 <strong>관측된 결과</strong>다.</p>
+<table>
+<tr><th>대상</th><th>원본</th><th><code>-S res:1080</code> 결과</th></tr>
+<tr><td>세로 쇼츠</td><td>1080&times;1920</td><td>1080&times;1920 <em>(그대로)</em></td></tr>
+<tr><td>가로 4K</td><td>3840&times;2160</td><td>1920&times;1080 <em>(캡)</em></td></tr>
+<tr><td>가로 4K, <code>res:720</code></td><td>3840&times;2160</td><td>1280&times;720</td></tr>
+</table>
+<p>
+    <code>compose_format_spec()</code> 은 코덱/오디오 선호만 담고, 새 <code>compose_format_sort()</code> 가 상한을 맡는다.
+    <strong>주의</strong>: 상한이 <code>-f</code> 를 떠났으므로 <strong>사용자가 고른 화질을 반영하려면
+    <code>compose_format_sort()</code> 결과도 함께 넘겨야 한다.</strong> 엔진 호출에서 인자를 아예 생략하면
+    기본값 <code>res:1080</code> 이 적용되고(<code>ytdlp.py:397</code>), <code>None</code> 을 명시하면 <code>-S</code> 가
+    빠진다. 즉 "720p 로 설정했는데 1080p 가 받아지는" 형태로 어긋난다. cli / server(2곳) / gui / sidecar
+    5곳을 모두 갱신했다. 사용자가 raw <code>-f</code> 를 직접 준 경로는 그 선택자를 존중해 <strong>의도적으로</strong>
+    sort 를 붙이지 않는다.
+</p>
+
+<h4>검증</h4>
+<div class="card">
+<p>최종 다운로드 469개를 ffprobe 로 전수 확인(읽기 실패 0):</p>
+<pre><code>373  1080x1920   세로 — 네이티브 유지
+ 95  1920x1080   가로 — 정확히 캡
+  1  1280x720    원본 최대가 720p 인 영상
+
+짧은 변 1080 초과: 0개</code></pre>
+</div>
+
+<h3><span class="badge err">ERROR</span> 1-2. 313개가 실패해도 화면엔 성공 한 줄</h3>
+<p>
+    쇼츠 350개 작업이 <code>files=37 rc=0</code> 으로 끝났다. 나머지 313개는 전부 실패했는데 아무 표시도 없었다.
+    원인은 세 가지가 겹친 것이다.
+</p>
+<table>
+<tr><th>위치</th><th>동작</th></tr>
+<tr><td><code>cli.py</code> <code>_ACTIVITY_RE</code></td><td><code>^\[</code> 로 시작하는 줄만 매치 → <code>ERROR:</code> / <code>WARNING:</code> 줄을 통째로 폐기</td></tr>
+<tr><td><code>ytdlp.py</code></td><td><code>--ignore-errors</code> 가 항상 켜져 있어 항목 실패로 멈추지 않음</td></tr>
+<tr><td><code>ytdlp.py</code> 종료 처리</td><td>파일을 하나라도 받았으면 non-zero exit 를 부분 성공으로 흡수</td></tr>
+</table>
+<h4>수정</h4>
+<p>
+    <code>_PROBLEM_RE</code> 로 <code>ERROR:</code>/<code>WARNING:</code> 줄을 따로 모아 실행 종료 후 요약 출력.
+    종료 코드는 일부러 바꾸지 않았다 — sidecar/서버 등 기존 소비자의 계약을 유지하기 위해서다.
+</p>
+<p>
+    <strong>보관 한도는 입력 URL 단위로 200줄</strong>이다(<code>cli.py:52, 491, 537</code>). URL 마다
+    <code>_StatusLine</code> 이 새로 생기고 그 결과가 전체 목록에 누적되므로, URL 을 여러 개 주면 요약은
+    200줄을 넘을 수 있다. 엔진의 <code>stderr_lines</code> 버퍼에는 한도가 없다.
+</p>
+<div class="callout">
+    이 수정이 없었으면 봇 차단(2-2)을 <strong>아예 발견하지 못했을 것</strong>이다. 실제로 이 요약이 처음
+    <code>재생목록 항목 경고/실패 586건</code> 을 찍으면서 문제가 드러났다.
+    단, <strong>586 은 매치된 로그 줄 수이지 실패한 영상 수가 아니다</strong> — 영상 하나가 ERROR 와 WARNING 을
+    함께 남기기 때문이다. 실제 실패는 313개였다.
+</div>
+
+<h3><span class="badge warn">WARN</span> 1-3. 완료된 작업 재실행이 거짓 실패로 보고됐다</h3>
+<p>
+    <code>--download-archive</code> 를 쓰는 작업을 두 번째 실행하면 받을 게 없어 <code>final_path</code> 가 안 생기고,
+    엔진이 이를 <code>Download completed but no filename reported</code> 실패로 올렸다(exit 2).
+</p>
+<h4>수정</h4>
+<p>
+    archive 스킵 로그를 센 뒤, <strong>종료 코드가 0 또는 101 이고 <code>final_path</code> 가 없으며 스킵
+    로그가 하나 이상이면</strong> <code>already-archived</code> 로 구분하고 CLI·서버가 성공으로 처리한다
+    (<code>ytdlp.py:681-684</code>, <code>cli.py:525</code>, <code>server.py:328</code>).
+    스킵 수를 전체 항목 수와 대조하지는 않으므로 엄밀한 "전량 스킵" 검증은 아니다.
+    정규식은 yt-dlp 의 <strong>두 가지 메시지 변형</strong>을 모두 잡아야 한다 —
+    재생목록 항목은 제목이 끼어든다(<code>YoutubeDL.py:1645-1660</code> vs <code>:1710</code>,
+    <strong>이 프로젝트가 실제로 실행하는 yt-dlp 2026.06.09 기준</strong>. 엔진이
+    <code>shutil.which("yt-dlp")</code> 로 PATH 의 바이너리를 쓰므로 venv 사본과는 줄 번호가 다르다).
+</p>
+<pre><code>[download] &lt;id&gt;: has already been recorded in the archive           ← URL 단계
+[download] &lt;id&gt;: &lt;제목&gt; has already been recorded in the archive   ← 재생목록 항목</code></pre>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="access">2. YouTube 접근 차단</h2>
+
+<h3><span class="badge err">ERROR</span> 2-1. HTTP 403 — 메타데이터는 되는데 다운로드만 실패</h3>
+<div class="card accent">
+<pre><code>ERROR: unable to download video data: HTTP Error 403: Forbidden</code></pre>
+</div>
+<p>
+    기본 클라이언트 설정에서 <strong>포맷 목록은 정상으로 나오는데 실제 미디어 fetch 만 죽었고</strong>,
+    클라이언트를 바꾸자 성공했다. yt-dlp 가 <code>android_vr</code> 을 골랐다는 것까지는 로그로 확인했다.
+    <span class="badge note">추정</span> SABR/PO-token 관련 문제를 의심했지만
+    (<a href="https://github.com/yt-dlp/yt-dlp/issues/12482">yt-dlp #12482</a>),
+    <strong>이번 403 의 직접 원인은 확정하지 못했다</strong> — 해당 이슈는 web 클라이언트가 SABR 로
+    적응형 포맷 URL 을 잃는 사례를 다루므로 이번 건과 같다고 단정할 수 없다.
+</p>
+<h4>수정</h4>
+<p>
+    <code>[network] player_client</code> 설정과 <code>--player-client</code> 플래그를 추가해
+    <code>--extractor-args youtube:player_client=&lt;값&gt;</code> 로 전달한다. 값은
+    <code>web_embedded,default</code> — <strong>순서가 중요하다.</strong>
+</p>
+<div class="callout">
+    <code>default</code> 를 뒤에 붙이는 것은 "앞 클라이언트로 받아 보고 실패하면 다음으로 넘어간다"가 아니다.
+    yt-dlp 는 요청한 클라이언트들을 <strong>모두 처리해 포맷을 한데 모은 뒤</strong> 정렬로 고른다. 그래서
+    기본 클라이언트의 포맷이 선택돼 다시 403 이 날 여지가 남는다(<a href="#open">미해결</a> 참고).
+    실측에서는 <code>web_embedded</code> 를 앞에 둔 경우 403 나던 영상이 모두 성공했다.
+</div>
+<table>
+<tr><th>player_client</th><th>403 나던 영상</th></tr>
+<tr><td><code>web_embedded</code></td><td>1080&times;1920 성공</td></tr>
+<tr><td><code>web_embedded,default</code></td><td>1080&times;1920 성공 <em>(채택 — 기본 클라이언트들도 추출 대상에 포함됨)</em></td></tr>
+<tr><td><code>default,web_embedded</code></td><td>403 실패</td></tr>
+</table>
+
+<h3><span class="badge err">ERROR</span> 2-2. 봇 감지 — 37개째부터 313개 전량 차단</h3>
+<div class="card accent">
+<pre><code>ERROR: [youtube] &lt;id&gt;: Sign in to confirm you're not a bot.
+       Use --cookies-from-browser or --cookies for the authentication.</code></pre>
+</div>
+<p>
+    쇼츠를 쉬지 않고 연속 요청하던 중 세션이 차단됐다. 같은 날 장편 영상 96개(항목당 처리 시간이 긴 쪽)는
+    실패 0건이었다. <span class="badge note">추정</span> 이 차이를 근거로 <strong>요청 빈도를 유력한
+    원인으로 봤다</strong>. URL 유형·세션·시간대 같은 변수를 분리해 검증하지는 않았다.
+</p>
+<h4>수정</h4>
+<p>엔진에 요청 간격 옵션이 아예 없었다. 세 개를 추가했다.</p>
+<table>
+<tr><th>옵션</th><th>역할</th></tr>
+<tr><td><code>--sleep-requests</code></td><td>메타데이터 요청 사이 대기</td></tr>
+<tr><td><code>--sleep-interval</code> / <code>--max-sleep-interval</code></td><td>영상 다운로드 사이 랜덤 대기</td></tr>
+</table>
+<p>
+    <code>--sleep-requests 1 --sleep-interval 2 --max-sleep-interval 4</code> 로 재개했을 때 코믹한영어 쇼츠
+    350개를 <strong>봇 차단 0건</strong>으로 완주했다. 다만 차단이 한 번 걸리면 즉시 풀리지는 않는다 —
+    이번엔 <strong>약 하루</strong> 뒤에 해제된 것을 단건 요청으로 확인하고 재개했다.
+</p>
+<div class="callout">
+    <strong>미해결로 남는 부분.</strong> 해시태그 쇼츠 작업에서는 하루 뒤 재개했음에도 21개만에 다시 차단됐다.
+    같은 날 이미 470개가량을 받은 뒤였다. <strong>일일 총량에도 제한이 있는 것으로 보이나, 수치는 확인하지 못했다.</strong>
+</div>
+
+<h3><span class="badge err">ERROR</span> 2-3. 익명 쿠키가 오히려 다운로드를 깨뜨렸다</h3>
+<p>
+    마지막 5개가 계속 <code>Video unavailable</code> 로 실패했다. 삭제된 영상인 줄 알았으나
+    <code>availability</code> 를 찍어 보니 <code>public</code> 이었다. 범인은 CLI 가 자동 감지해 넘기던
+    <code>%APPDATA%\YCollector\cookies.txt</code> 였다 — 로그인 세션이 아니라 <strong>오래된 익명 consent 쿠키</strong>다.
+</p>
+<pre><code>--cookies &lt;익명 cookies.txt&gt;  →  ERROR: Video unavailable
+쿠키 없이                      →  1080x1920 정상</code></pre>
+<h4>조치</h4>
+<p>
+    이번 작업은 존재하지 않는 경로를 <code>--cookies</code> 로 줘서 자동 감지를 무력화했다(CLI 가 파일이 아니면
+    경고 후 무시한다). 그 즉시 5개가 모두 성공해 <strong>350/350</strong> 이 됐다.
+    <span class="badge note">TODO</span> 깔끔한 <code>--no-cookies</code> 플래그는 아직 없다.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="robust">3. 대량 실행 견고성</h2>
+
+<h3><span class="badge err">ERROR</span> 3-1. stderr 파이프 교착</h3>
+<p>
+    엔진이 <code>stdout</code> 을 EOF 까지 다 읽은 <em>뒤에야</em> <code>stderr</code> 를 읽고 있었다.
+    <code>--ignore-errors</code> 로 도는 수백 개짜리 재생목록은 항목마다 진단을 뱉는다. stderr 파이프가 가득 차면
+    yt-dlp 는 stderr 쓰기에서, 부모는 stdout 읽기에서 서로 막힌다. <strong>진행률이 멈춘 채 끝나지 않는다.</strong>
+    (파이프 용량은 OS 가 정하며 이 환경에서 실측하지는 않았다.)
+</p>
+<h4>수정</h4>
+<p>
+    전용 데몬 스레드가 stderr 를 즉시 드레인해 리스트에 모으고, <code>on_log</code> 디스패치는 예전처럼
+    <code>download()</code> 를 호출한 스레드가 이어서 한다 — 콜백이 두 스레드에서 동시에 불릴 일이 없다.
+</p>
+<p>
+    <strong>회수에는 한계가 있다.</strong> stdout EOF 후 리더를 최대 30초 기다리고, 그때까지 안 끝나면
+    <em>"진단이 잘렸을 수 있다"</em> 경고를 목록에 직접 끼워 넣는다. 종료 정리에서 5초를 더 기다리지만,
+    <strong>최초 디스패치 이후에 수집된 줄은 <code>on_log</code> 로 다시 보내지 않는다</strong>
+    (<code>ytdlp.py:634, 642</code>). 교착은 사라졌지만 극단적인 경우 마지막 몇 줄은 요약에서 빠질 수 있다.
+</p>
+
+<h3><span class="badge warn">WARN</span> 3-2. CLI 에 재개 수단이 없었다</h3>
+<p>
+    엔진은 <code>download_archive</code> 를 지원했지만 넘기는 건 <code>server.py</code> 뿐이었다. CLI 는 파일명이
+    같은지로만 건너뛰었는데, 이 방식은 <strong>항목마다 전체 추출을 수행한 뒤</strong> 판단하므로 재개가 느리고
+    제목이 바뀌면 같은 영상을 중복 저장한다.
+</p>
+<h4>수정</h4>
+<p>
+    <code>--download-archive PATH</code> 추가. ID 를 미리 아는 항목은 <strong>개별 영상 추출 전에</strong>
+    걸러진다. 다만 채널·해시태그의 <strong>항목 열거 요청은 여전히 필요</strong>하므로 재개가 무조건 즉시는 아니다.
+</p>
+<p>
+    추출·미디어 다운로드 실패로 archive 에 기록되지 않은 항목은 재실행 시 다시 시도된다.
+    <span class="badge note">주의</span> 다만 항상 켜져 있는 <code>--ignore-errors</code> 때문에
+    <strong>후처리 단계 오류는 archive 기록과 공존할 수 있다</strong> — 그런 항목은 재실행해도
+    건너뛰므로 결과물을 따로 확인해야 한다.
+    출력 폴더마다 다른 파일을 쓰라는 경고를 도움말에 넣었다 — 폴더가 달라도 같은 archive 를 공유하면
+    받지도 않은 영상을 건너뛴다.
+</p>
+
+<h3><span class="badge warn">WARN</span> 3-3. 강제 종료가 남긴 조각 파일</h3>
+<p>
+    <code>timeout</code> 으로 죽이면 머지 전 조각이 남는다. 한 영상이 파일 3개로 보여 중복처럼 오인했다.
+</p>
+<pre><code>&lt;제목&gt; [id].f251.webm   ← 오디오 조각
+&lt;제목&gt; [id].f399.mp4    ← 비디오 조각
+&lt;제목&gt; [id].mp4         ← 완성본</code></pre>
+<p>
+    실제로는 완성본 327개 + 조각 54개 + <code>.part</code> 5개였다. 완성본만 세려면
+    <code>.f&lt;숫자&gt;.</code> 패턴을 제외해야 한다. 조각과 <code>.part</code> 는 정리했고,
+    archive 의 중복 라인(410줄 → 327 unique)도 정리했다. <strong>중복 라인 자체는 조회에 무해하다.</strong>
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="pacing">4. 속도 조절을 넣은 뒤 드러난 3건</h2>
+
+<h3><span class="badge warn">WARN</span> 4-1. <code>max_sleep_interval</code> 단독 지정이 통째로 무시됐다</h3>
+<p>처음엔 <code>sleep_interval</code> 이 참일 때만 max 를 내보냈다. yt-dlp 실측 결과는 이렇다.</p>
+<pre><code>--max-sleep-interval 3                      → yt-dlp: error: min sleep interval must be specified
+--sleep-interval 0 --max-sleep-interval 3   → 정상 동작</code></pre>
+<p><strong>수정</strong>: 둘 중 하나라도 설정되면 min 을 (없으면 0으로) 항상 함께 내보낸다.</p>
+
+<h3><span class="badge warn">WARN</span> 4-2. <code>nan</code> / <code>inf</code> / 음수가 그대로 통과했다</h3>
+<p>
+    <code>float(raw)</code> 만 쓰고 유한성을 확인하지 않았다. <code>sleep_requests = nan</code> 같은 설정이
+    Settings 에 들어가면 yt-dlp 뿐 아니라 <strong>웹 서버가 먼저 터진다</strong> — Starlette 의 JSONResponse 는
+    <code>allow_nan=False</code> 라 <code>/api/settings</code> 응답 자체가 실패한다.
+</p>
+<p><strong>수정</strong>: <code>_sleep_or_none()</code> 을 두어 유한하고 음수가 아닌 값만 통과시키고, 나머지는 기본값을 유지한다.</p>
+
+<h3><span class="badge warn">WARN</span> 4-3. sidecar / GUI 경로만 설정이 누락됐다</h3>
+<p>
+    CLI 와 서버에는 전달했지만 sidecar 와 legacy GUI 는 빠져 있었다. 설정을 켜 놔도 그 경로로 도는 작업은
+    <strong>말없이 속도 조절 없이</strong> 돈다. <code>player_client</code> 도 sidecar 의 <code>ready.defaults</code> 에서 빠져 있었다.
+    <strong>수정</strong>: 두 경로 모두 전달하도록 보강.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="env">5. 실행 환경에서 나온 에러</h2>
+
+<h3><span class="badge err">ERROR</span> 5-1. 이모지 제목에서 <code>UnicodeEncodeError</code></h3>
+<div class="card accent">
+<pre><code>UnicodeEncodeError: 'cp949' codec can't encode character '\U0001f923'
+                    in position 68: illegal multibyte sequence</code></pre>
+</div>
+<p>
+    제목에 🤣 가 들어간 파일을 진행 로그로 출력하다 배치 전체가 죽었다. <strong>전사 자체와 무관한 곳</strong>에서
+    작업이 중단된 것이다. <strong>수정</strong>: 출력 스트림을 <code>utf-8</code> + <code>errors="replace"</code> 로 고정.
+</p>
+
+<h3><span class="badge warn">WARN</span> 5-2. 백그라운드 작업이 반복 강제 종료</h3>
+<p>
+    백그라운드 태스크가 세 번 종료됐고(다운로드 2회, 전사 1회) 당시 여유 메모리는 31.7GB 중 약 4GB 였다.
+    단일 독점 프로세스는 없었고 전체가 빠듯한 상태였다.
+    <span class="badge note">추정</span> 메모리 부족이 직접 원인인지는 확인하지 못했다.
+    <strong>조치</strong>: 다운로드와 전사를 모두 <strong>포그라운드 청크</strong>로 전환.
+    archive 와 skip-existing 덕에 <strong>완료된 산출물</strong>은 보존됐다 — 중단 시점에 진행 중이던
+    항목은 다시 받아야 했고, 실제로 조각 파일이 남았다(3-3).
+</p>
+
+<h3><span class="badge note">NOTE</span> 5-3. 셸 헤어로독이 백슬래시를 한 겹 먹었다</h3>
+<p>
+    패치 스크립트를 heredoc 으로 넘길 때 <code>"\\n"</code> 이 실제 개행으로 변환되어 정규식 치환이 계속 실패했다.
+    <strong>조치</strong>: 패치 스크립트를 파일로 쓴 뒤 실행. 백슬래시가 필요한 곳은 <code>chr(92)</code> 로 조립.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="mine">6. 내 판단 오류 1건</h2>
+<div class="card accent">
+<p>
+    403 이 해소됐다고 <strong>잘못 보고했다.</strong> 근거로 삼은 것이 <code>--skip-download</code> 실행이었는데,
+    그건 포맷 해석까지만 확인할 뿐 <strong>실제 미디어 fetch 를 하지 않는다.</strong>
+    실다운로드로 다시 확인하니 403 은 그대로였고, 그래서 <code>player_client</code> 우회를 도로 넣었다.
+</p>
+<p style="margin-bottom:0">
+    <strong>교훈</strong>: 다운로드 가능 여부는 <strong>반드시 실제 다운로드로</strong> 확인한다.
+    같은 함정이 하나 더 있다 — 이번 사례에서 작은 Range 요청(<code>curl -r 0-999</code>)이 206 을
+    돌려준 영상도 전체 다운로드는 403 으로 실패했다. <strong>206 만으로 다운로드 성공을 판정할 수 없다.</strong>
+</p>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="open">7. 미해결로 남긴 것</h2>
+<table>
+<tr><th>항목</th><th>상태</th></tr>
+<tr>
+    <td><code>server.py</code> 가 <code>on_log</code> 를 넘기지 않음</td>
+    <td>웹 UI 는 재생목록 부분 실패를 여전히 성공으로 보고한다. <strong>기존 버그</strong>이며 이번 범위 밖이라 남겼다.</td>
+</tr>
+<tr>
+    <td><code>web_embedded,default</code> 의 포맷 선택 위험</td>
+    <td>이론상 기본 클라이언트 포맷이 선택돼 403 이 날 수 있다. 코드로 막지 않고, 실패 항목을 재시도하는 운영으로 대응했다.</td>
+</tr>
+<tr>
+    <td>봇 차단의 일일 총량 한계</td>
+    <td>존재하는 것으로 보이나 수치는 확인하지 못했다.</td>
+</tr>
+<tr>
+    <td><code>--no-cookies</code> 플래그 부재</td>
+    <td>익명 쿠키를 끄려면 존재하지 않는 경로를 주는 우회가 필요하다.</td>
+</tr>
+</table>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="cheat">8. 요약</h2>
+<table>
+<tr><th>#</th><th>증상</th><th>진짜 원인</th><th>조치</th></tr>
+<tr><td>1-1</td><td>세로 영상이 608&times;1080</td><td><code>height</code> 는 세로에서 긴 변</td><td><code>-S res:N</code> (짧은 변 기준)</td></tr>
+<tr><td>1-2</td><td>313개 실패해도 exit 0</td><td>ERROR 줄을 정규식이 폐기</td><td>항목 실패 요약 출력</td></tr>
+<tr><td>1-3</td><td>재실행이 거짓 실패</td><td>archive 스킵 = 파일명 없음</td><td><code>already-archived</code> 구분</td></tr>
+<tr><td>2-1</td><td>HTTP 403</td><td>기본 클라이언트 SABR</td><td><code>player_client</code> 전달</td></tr>
+<tr><td>2-2</td><td>봇 감지 차단</td><td>요청 빈도</td><td><code>--sleep-*</code> 3종 추가</td></tr>
+<tr><td>2-3</td><td>Video unavailable</td><td>익명 쿠키 자동 전달</td><td>쿠키 비활성화</td></tr>
+<tr><td>3-1</td><td>작업이 멈춘 채 안 끝남</td><td>stderr 파이프 교착</td><td>전용 스레드 드레인</td></tr>
+<tr><td>3-2</td><td>재개가 느리고 중복 생성</td><td>CLI 에 archive 없음</td><td><code>--download-archive</code></td></tr>
+<tr><td>3-3</td><td>파일이 3배로 보임</td><td>머지 전 조각 잔여</td><td><code>.f&lt;숫자&gt;.</code> 제외 후 집계</td></tr>
+<tr><td>4-1</td><td>max 단독이 무시됨</td><td>min 없이는 yt-dlp 거부</td><td>min 항상 동반</td></tr>
+<tr><td>4-2</td><td><code>nan</code> 이 통과</td><td>유한성 미검사</td><td><code>_sleep_or_none()</code></td></tr>
+<tr><td>4-3</td><td>일부 경로만 설정 무시</td><td>호출부 누락</td><td>sidecar / GUI 보강</td></tr>
+</table>
+
+<div class="callout">
+<strong>검토.</strong> 코드 수정 전체는 codex(gpt-6-astra) 검토를 3회 받았다. 지적 12건 중 10건을 반영했고,
+반영하지 않은 2건은 위 <a href="#open">미해결</a> 에 적어 두었다.
+<strong>이 문서 자체도 같은 모델의 검토를 1회 받아</strong> 사실관계 8건을 교정했다 — 대부분
+"코드가 보장하지 않는 것을 보장한다고 쓴" 유형이었다(<code>res:N</code> 을 하드 상한으로,
+200줄 한도를 전역으로, stderr 마지막 진단을 항상 회수한다고 적은 것 등).
+<strong>1-3 · 3-1 · 4-1 · 4-2 · 4-3 은 이 검토에서 발견된 것</strong>이다.
+</div>
+
+<p class="subtitle" style="margin-top:40px">
+    관련 커밋: <code>feat/orientation-aware-quality</code> &mdash; 11파일 +474/&minus;30, 테스트 12개 추가.
+</p>
+
+</div>
+
+</body>
+</html>
